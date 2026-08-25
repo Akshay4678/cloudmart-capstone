@@ -48,6 +48,17 @@ Resources:
         - Key: Name
           Value: cloudmart-private-subnet
 
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CloudMartVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: cloudmart-private-subnet-2
+
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -77,6 +88,12 @@ Resources:
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateSubnet
+
+  PrivateSubnet2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
 
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -129,6 +146,11 @@ Outputs:
     Value: !Ref PrivateSubnet
     Export:
       Name: cloudmart-private-subnet-id
+
+  PrivateSubnet2Id:
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: cloudmart-private-subnet-2-id
 
   LambdaSG:
     Value: !Ref LambdaSecurityGroup

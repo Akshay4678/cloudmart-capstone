@@ -1,4 +1,3 @@
-
 AWSTemplateFormatVersion: '2010-09-09'
 Description: CloudMart Data Stack
 
@@ -44,52 +43,63 @@ Resources:
       VPCSecurityGroups:
         - Fn::ImportValue: cloudmart-rds-sg
       DBSubnetGroupName: !Ref DBSubnetGroup
+      BackupRetentionPeriod: 7
       DeletionProtection: false
-
-  OrdersTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: CloudMartOrders
-      BillingMode: PAY_PER_REQUEST
-
-      AttributeDefinitions:
-        - AttributeName: OrderId
-          AttributeType: S
-        - AttributeName: CustomerId
-          AttributeType: S
-
-      KeySchema:
-        - AttributeName: OrderId
-          KeyType: HASH
-
-      GlobalSecondaryIndexes:
-        - IndexName: CustomerIndex
-          KeySchema:
-            - AttributeName: CustomerId
-              KeyType: HASH
-          Projection:
-            ProjectionType: ALL
 
   LambdaArtifactsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub cloudmart-lambda-${AWS::AccountId}
+      BucketName: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
 
   ReportsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub cloudmart-reports-${AWS::AccountId}
+      BucketName: !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
+
+  DBUsernameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /cloudmart/db/username
+      Type: String
+      Value: !Ref DBUsername
+
+  DBPasswordParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /cloudmart/db/password
+      Type: SecureString
+      Value: !Ref DBPassword
 
 Outputs:
 
-  DBEndpoint:
+  DatabaseIdentifier:
+    Description: RDS Database Identifier
+    Value: !Ref CloudMartDB
+
+  DatabaseEndpoint:
+    Description: RDS Endpoint
     Value: !GetAtt CloudMartDB.Endpoint.Address
 
-  DynamoDBTable:
-    Value: !Ref OrdersTable
+  DatabasePort:
+    Description: RDS Port
+    Value: !GetAtt CloudMartDB.Endpoint.Port
 
-  LambdaBucket:
+  DatabaseSubnetGroup:
+    Description: DB Subnet Group
+    Value: !Ref DBSubnetGroup
+
+  LambdaArtifactsBucket:
+    Description: Lambda Deployment Bucket
     Value: !Ref LambdaArtifactsBucket
 
   ReportsBucket:
+    Description: Reports Bucket
     Value: !Ref ReportsBucket
+
+  DBUsernameSSM:
+    Description: Username Parameter
+    Value: !Ref DBUsernameParameter
+
+  DBPasswordSSM:
+    Description: Password Parameter
+    Value: !Ref DBPasswordParameter

@@ -54,23 +54,23 @@
                 Resource: "*"
 
 
-  Outputs:
-    AuthorizerRoleArn:
-      Value: !GetAtt AuthorizerLambdaRole.Arn
-      Export:
-        Name: cloudmart-authorizer-role-arn
+Outputs:
+  AuthorizerRoleArn:
+    Value: !GetAtt AuthorizerLambdaRole.Arn
+    Export:
+      Name: cloudmart-authorizer-role-arn
 
-    ProductRoleArn:
-      Value: !GetAtt ProductLambdaRole.Arn
-      Export:
-        Name: cloudmart-product-role-arn
+  ProductRoleArn:
+    Value: !GetAtt ProductLambdaRole.Arn
+    Export:
+      Name: cloudmart-product-role-arn
 
-    OrderRoleArn:
-      Value: !GetAtt OrderLambdaRole.Arn
-      Export:
-        Name: cloudmart-order-role-arn
+  OrderRoleArn:
+    Value: !GetAtt OrderLambdaRole.Arn
+    Export:
+      Name: cloudmart-order-role-arn
 
-    ReportRoleArn:
-      Value: !GetAtt ReportLambdaRole.Arn
-      Export:
-        Name: cloudmart-report-role-arn
+  ReportRoleArn:
+    Value: !GetAtt ReportLambdaRole.Arn
+    Export:
+      Name: cloudmart-report-role-arn

@@ -30,10 +30,10 @@ Resources:
     Properties:
       DBInstanceIdentifier: cloudmart-db
       Engine: mysql
-      EngineVersion: "8.0"
+      EngineVersion: "8.0.39"
       DBInstanceClass: db.t3.micro
       AllocatedStorage: 20
-      StorageType: gp2
+      StorageType: gp3
       MultiAZ: false
       PubliclyAccessible: false
       StorageEncrypted: true

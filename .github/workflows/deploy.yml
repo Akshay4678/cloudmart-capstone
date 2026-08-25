@@ -1,4 +1,4 @@
-name: Test AWS Access
+name: Deploy Network Stack
 
 on:
   workflow_dispatch:
@@ -8,15 +8,35 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-south-1
 
-      - run: aws sts get-caller-identity
+      - name: Verify AWS Access
+        run: aws sts get-caller-identity
+
+      - name: Validate CloudFormation Template
+        run: |
+          aws cloudformation validate-template \
+          --template-body file://cloudformation/network-stack.yaml
+
+      - name: Deploy Network Stack
+        run: |
+          aws cloudformation deploy \
+          --stack-name cloudmart-network-stack \
+          --template-file cloudformation/network-stack.yaml \
+          --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Check Stack Status
+        run: |
+          aws cloudformation describe-stacks \
+          --stack-name cloudmart-network-stack

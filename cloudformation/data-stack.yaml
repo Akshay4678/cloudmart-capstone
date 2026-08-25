@@ -19,12 +19,12 @@ Parameters:
 Resources:
 
   DBSubnetGroup:
-  Type: AWS::RDS::DBSubnetGroup
-  Properties:
-    DBSubnetGroupDescription: CloudMart DB Subnet Group
-    SubnetIds:
-      - Fn::ImportValue: cloudmart-private-subnet-id
-      - Fn::ImportValue: cloudmart-private-subnet-2-id
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CloudMart DB Subnet Group
+      SubnetIds:
+        - Fn::ImportValue: cloudmart-private-subnet-id
+        - Fn::ImportValue: cloudmart-private-subnet-2-id
 
   CloudMartDB:
     Type: AWS::RDS::DBInstance

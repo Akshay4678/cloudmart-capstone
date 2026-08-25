@@ -1,4 +1,4 @@
-name: Deploy Network Stack
+name: Deploy CloudMart Stacks
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
       - name: Verify AWS Access
         run: aws sts get-caller-identity
 
-      - name: Validate CloudFormation Template
+      - name: Validate Network Stack
         run: |
           aws cloudformation validate-template \
           --template-body file://cloudformation/network-stack.yaml
@@ -36,7 +36,24 @@ jobs:
           --template-file cloudformation/network-stack.yaml \
           --capabilities CAPABILITY_NAMED_IAM
 
-      - name: Check Stack Status
+      - name: Validate Data Stack
+        run: |
+          aws cloudformation validate-template \
+          --template-body file://cloudformation/data-stack.yaml
+
+      - name: Deploy Data Stack
+        run: |
+          aws cloudformation deploy \
+          --stack-name cloudmart-data-stack \
+          --template-file cloudformation/data-stack.yaml \
+          --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Check Network Stack Status
         run: |
           aws cloudformation describe-stacks \
           --stack-name cloudmart-network-stack
+
+      - name: Check Data Stack Status
+        run: |
+          aws cloudformation describe-stacks \
+          --stack-name cloudmart-data-stack

@@ -1,105 +1,320 @@
 AWSTemplateFormatVersion: '2010-09-09'
+ 
 Description: CloudMart Data Stack
-
+ 
+# =========================================================
+# PARAMETERS
+# =========================================================
+ 
 Parameters:
-
+ 
+  Environment:
+    Type: String
+    Default: dev
+ 
+    AllowedValues:
+      - dev
+      - test
+      - prod
+ 
+ 
   DBName:
     Type: String
     Default: cloudmart
-
+ 
+ 
   DBUsername:
     Type: String
-    Default: admin
-
+    Default: cloudmartadmin
+ 
+ 
   DBPassword:
     Type: String
     NoEcho: true
-
+ 
+ 
+# =========================================================
+# RESOURCES
+# =========================================================
+ 
 Resources:
-
-  DBSubnetGroup:
+ 
+ 
+  # =======================================================
+  # RDS SUBNET GROUP
+  # =======================================================
+  #
+  # Uses two private subnets in different Availability
+  # Zones because an RDS DB subnet group requires
+  # subnets in at least two AZs.
+  #
+  # This does NOT make the RDS instance Multi-AZ.
+  # The database itself remains Single-AZ.
+  # =======================================================
+ 
+  RdsSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
+ 
     Properties:
-      DBSubnetGroupDescription: CloudMart DB Subnet Group
+ 
+      DBSubnetGroupDescription:
+        CloudMart DB Subnet Group
+ 
       SubnetIds:
-        - Fn::ImportValue: cloudmart-private-subnet-id
-        - Fn::ImportValue: cloudmart-private-subnet-2-id
-
-  CloudMartDB:
+ 
+        # Primary private subnet
+        - Fn::ImportValue:
+            !Sub CloudMart-${Environment}-PrivateSubnetId
+ 
+        # Second private subnet in another AZ
+        - Fn::ImportValue:
+            !Sub CloudMart-${Environment}-RdsSupportPrivateSubnetId
+ 
+ 
+  # =======================================================
+  # RDS MYSQL DATABASE
+  # =======================================================
+ 
+  CloudMartDatabase:
     Type: AWS::RDS::DBInstance
+ 
     Properties:
-      DBInstanceIdentifier: cloudmart-db
+ 
+      # ---------------------------------------------------
+      # RDS INSTANCE IDENTIFIER
+      # ---------------------------------------------------
+ 
+      DBInstanceIdentifier:
+        !Sub cloudmart-${Environment}-db
+ 
+ 
+      # ---------------------------------------------------
+      # DATABASE ENGINE
+      # ---------------------------------------------------
+ 
       Engine: mysql
-      EngineVersion: "8.0.39"
+ 
+ 
+      # ---------------------------------------------------
+      # INSTANCE CLASS
+      # ---------------------------------------------------
+ 
       DBInstanceClass: db.t3.micro
+ 
+ 
+      # ---------------------------------------------------
+      # STORAGE
+      # ---------------------------------------------------
+ 
       AllocatedStorage: 20
+ 
       StorageType: gp3
+ 
+ 
+      # ---------------------------------------------------
+      # SINGLE-AZ
+      # ---------------------------------------------------
+ 
       MultiAZ: false
+ 
+ 
+      # ---------------------------------------------------
+      # PRIVATE DATABASE
+      # ---------------------------------------------------
+ 
       PubliclyAccessible: false
+ 
+ 
+      # ---------------------------------------------------
+      # STORAGE ENCRYPTION
+      # ---------------------------------------------------
+      #
+      # Keep the same setting as your successfully
+      # deployed configuration.
+      # ---------------------------------------------------
+ 
       StorageEncrypted: true
-      DBName: !Ref DBName
-      MasterUsername: !Ref DBUsername
-      MasterUserPassword: !Ref DBPassword
+ 
+ 
+      # ---------------------------------------------------
+      # DATABASE NAME
+      # ---------------------------------------------------
+ 
+      DBName:
+        !Ref DBName
+ 
+ 
+      # ---------------------------------------------------
+      # MASTER USER
+      # ---------------------------------------------------
+ 
+      MasterUsername:
+        !Ref DBUsername
+ 
+ 
+      # ---------------------------------------------------
+      # MASTER PASSWORD
+      # ---------------------------------------------------
+ 
+      MasterUserPassword:
+        !Ref DBPassword
+ 
+ 
+      # ---------------------------------------------------
+      # MYSQL PORT
+      # ---------------------------------------------------
+ 
+      Port: 3306
+ 
+ 
+      # ---------------------------------------------------
+      # RDS SECURITY GROUP
+      # ---------------------------------------------------
+ 
       VPCSecurityGroups:
-        - Fn::ImportValue: cloudmart-rds-sg
-      DBSubnetGroupName: !Ref DBSubnetGroup
-      BackupRetentionPeriod: 7
+ 
+        - Fn::ImportValue:
+            !Sub CloudMart-${Environment}-RdsSecurityGroupId
+ 
+ 
+      # ---------------------------------------------------
+      # RDS SUBNET GROUP
+      # ---------------------------------------------------
+ 
+      DBSubnetGroupName:
+        !Ref RdsSubnetGroup
+ 
+ 
+      # ---------------------------------------------------
+      # DELETION PROTECTION
+      # ---------------------------------------------------
+ 
       DeletionProtection: false
-
+ 
+ 
+      # ---------------------------------------------------
+      # AUTOMATED BACKUP RETENTION
+      # ---------------------------------------------------
+      #
+      # This is the value from the configuration that
+      # successfully deployed in your account.
+      # ---------------------------------------------------
+ 
+      BackupRetentionPeriod: 0
+ 
+ 
+  # =======================================================
+  # LAMBDA ARTIFACTS S3 BUCKET
+  # =======================================================
+  #
+  # Stores Lambda deployment artifacts/packages.
+  # =======================================================
+ 
   LambdaArtifactsBucket:
     Type: AWS::S3::Bucket
+ 
     Properties:
-      BucketName: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
-
+ 
+      BucketName:
+        !Sub cloudmart-${Environment}-lambda-${AWS::AccountId}
+ 
+ 
+  # =======================================================
+  # REPORTS S3 BUCKET
+  # =======================================================
+  #
+  # Stores CloudMart reports.
+  # =======================================================
+ 
   ReportsBucket:
     Type: AWS::S3::Bucket
+ 
     Properties:
-      BucketName: !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
-
-  DBUsernameParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /cloudmart/db/username
-      Type: String
-      Value: !Ref DBUsername
-
-  DBPasswordParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /cloudmart/db/password
-      Type: SecureString
-      Value: !Ref DBPassword
-
+ 
+      BucketName:
+        !Sub cloudmart-${Environment}-reports-${AWS::AccountId}
+ 
+ 
+# =========================================================
+# OUTPUTS
+# =========================================================
+ 
 Outputs:
-
-  DatabaseIdentifier:
-    Description: RDS Database Identifier
-    Value: !Ref CloudMartDB
-
-  DatabaseEndpoint:
-    Description: RDS Endpoint
-    Value: !GetAtt CloudMartDB.Endpoint.Address
-
-  DatabasePort:
-    Description: RDS Port
-    Value: !GetAtt CloudMartDB.Endpoint.Port
-
-  DatabaseSubnetGroup:
-    Description: DB Subnet Group
-    Value: !Ref DBSubnetGroup
-
-  LambdaArtifactsBucket:
-    Description: Lambda Deployment Bucket
-    Value: !Ref LambdaArtifactsBucket
-
-  ReportsBucket:
-    Description: Reports Bucket
-    Value: !Ref ReportsBucket
-
-  DBUsernameSSM:
-    Description: Username Parameter
-    Value: !Ref DBUsernameParameter
-
-  DBPasswordSSM:
-    Description: Password Parameter
-    Value: !Ref DBPasswordParameter
+ 
+ 
+  # =======================================================
+  # RDS ENDPOINT
+  # =======================================================
+ 
+  RdsEndpoint:
+ 
+    Description:
+      CloudMart RDS MySQL Endpoint
+ 
+    Value:
+      !GetAtt CloudMartDatabase.Endpoint.Address
+ 
+ 
+  # =======================================================
+  # RDS PORT
+  # =======================================================
+ 
+  RdsPort:
+ 
+    Description:
+      CloudMart RDS MySQL Port
+ 
+    Value:
+      !GetAtt CloudMartDatabase.Endpoint.Port
+ 
+ 
+  # =======================================================
+  # DATABASE NAME
+  # =======================================================
+ 
+  RdsDatabaseName:
+ 
+    Description:
+      CloudMart RDS Database Name
+ 
+    Value:
+      !Ref DBName
+ 
+ 
+  # =======================================================
+  # DATABASE USERNAME
+  # =======================================================
+ 
+  RdsUsername:
+ 
+    Description:
+      CloudMart RDS Username
+ 
+    Value:
+      !Ref DBUsername
+ 
+ 
+  # =======================================================
+  # LAMBDA ARTIFACTS BUCKET
+  # =======================================================
+ 
+  LambdaBucket:
+ 
+    Description:
+      CloudMart Lambda Artifacts Bucket
+ 
+    Value:
+      !Ref LambdaArtifactsBucket
+ 
+ 
+  # =======================================================
+  # REPORTS BUCKET
+  # =======================================================
+ 
+  ReportsBucketName:
+ 
+    Description:
+      CloudMart Reports Bucket
+ 
+    Value:
+      !Ref ReportsBucket

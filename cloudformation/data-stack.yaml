@@ -1,1 +1,94 @@
 
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudMart Data Stack
+
+Parameters:
+
+  DBName:
+    Type: String
+    Default: cloudmart
+
+  DBUsername:
+    Type: String
+    Default: admin
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+
+Resources:
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CloudMart DB Subnet Group
+      SubnetIds:
+        - Fn::ImportValue: cloudmart-private-subnet-id
+
+  CloudMartDB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: cloudmart-db
+      Engine: mysql
+      EngineVersion: "8.0"
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      StorageType: gp2
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - Fn::ImportValue: cloudmart-rds-sg
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DeletionProtection: false
+
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: CloudMartOrders
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: OrderId
+          AttributeType: S
+        - AttributeName: CustomerId
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: OrderId
+          KeyType: HASH
+
+      GlobalSecondaryIndexes:
+        - IndexName: CustomerIndex
+          KeySchema:
+            - AttributeName: CustomerId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  LambdaArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cloudmart-lambda-${AWS::AccountId}
+
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cloudmart-reports-${AWS::AccountId}
+
+Outputs:
+
+  DBEndpoint:
+    Value: !GetAtt CloudMartDB.Endpoint.Address
+
+  DynamoDBTable:
+    Value: !Ref OrdersTable
+
+  LambdaBucket:
+    Value: !Ref LambdaArtifactsBucket
+
+  ReportsBucket:
+    Value: !Ref ReportsBucket

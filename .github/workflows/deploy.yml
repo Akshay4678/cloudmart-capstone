@@ -43,10 +43,12 @@ jobs:
 
       - name: Deploy Data Stack
         run: |
-          aws cloudformation deploy \
-          --stack-name cloudmart-data-stack \
-          --template-file cloudformation/data-stack.yaml \
-          --capabilities CAPABILITY_NAMED_IAM
+              aws cloudformation deploy \
+                --stack-name cloudmart-data-stack \
+                --template-file cloudformation/data-stack.yaml \
+                --parameter-overrides \
+                DBPassword=${{ secrets.DB_PASSWORD }}
+
 
       - name: Check Network Stack Status
         run: |

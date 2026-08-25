@@ -55,7 +55,6 @@
 
 
   Outputs:
-
     AuthorizerRoleArn:
       Value: !GetAtt AuthorizerLambdaRole.Arn
       Export:

@@ -54,21 +54,11 @@ jobs:
       - name: CloudFormation Validate Data Stack
         run: |
           aws cloudformation validate-template \
-            --template-body file://cloud
-
-      - name: CloudFormation Validate Data Stack
-        run: |
-          aws cloudformation validate-template \
           --template-body file://cloudformation/data-stack.yaml
 
       #################################################
       # VALIDATE IAM STACK
       #################################################
-
-      - name: Validate IAM Stack
-        run: |
-          aws cloudformation validate-template \
-          --template-body file://cloudformation/iam-stack.yaml
 
       - name: CloudFormation Validate IAM Stack
         run: |
@@ -93,17 +83,17 @@ jobs:
       - name: Deploy Data Stack
         run: |
           aws cloudformation deploy \
-            --stack-name cloudmart-data-stack \
-            --template-file cloudformation/data-stack.yaml \
-            --parameter-overrides \
-            DBPassword=${{ secrets.DB_PASSWORD }}
+          --stack-name cloudmart-data-stack \
+          --template-file cloudformation/data-stack.yaml \
+          --parameter-overrides \
+          DBPassword=${{ secrets.DB_PASSWORD }}
 
       - name: Show Data Stack Errors
         if: failure()
         run: |
           aws cloudformation describe-stack-events \
-            --stack-name cloudmart-data-stack \
-            --max-items 20
+          --stack-name cloudmart-data-stack \
+          --max-items 20
 
       #################################################
       # DEPLOY IAM STACK
@@ -114,7 +104,11 @@ jobs:
           aws cloudformation deploy \
           --stack-name cloudmart-iam-stack \
           --template-file cloudformation/iam-stack.yaml \
-          --capabilities CAPABILITY_NAMED_IAM
+          --capabilities CAPABILITY_NAMED_IAM \
+          --parameter-overrides \
+          DBUsername=cloudmartadmin \
+          DBPassword=${{ secrets.DB_PASSWORD }} \
+          AuthToken=${{ secrets.AUTH_TOKEN }}
 
       #################################################
       # STACK STATUS
@@ -134,18 +128,3 @@ jobs:
         run: |
           aws cloudformation describe-stacks \
           --stack-name cloudmart-iam-stack
-
-      #################################################
-      # DEPLOY IAM STACK
-      #################################################
-
-      - name: Deploy IAM Stack
-        run: |
-          aws cloudformation deploy \
-            --stack-name cloudmart-iam-stack \
-            --template-file cloudformation/iam-stack.yaml \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides \
-            DBUsername=cloudmartadmin \
-            DBPassword=${{ secrets.DB_PASSWORD }} \
-            AuthToken=${{ secrets.AUTH_TOKEN }}

@@ -125,3 +125,18 @@ jobs:
         run: |
           aws cloudformation describe-stacks \
           --stack-name cloudmart-iam-stack
+
+      #################################################
+      # DEPLOY IAM STACK
+      #################################################
+
+      - name: Deploy IAM Stack
+        run: |
+          aws cloudformation deploy \
+          --stack-name cloudmart-iam-stack \
+          --template-file cloudformation/iam-stack.yaml \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --parameter-overrides \
+          DBUsername=cloudmartadmin \
+          DBPassword=${{ secrets.DB_PASSWORD }} \
+          AuthToken=${{ secrets.AUTH_TOKEN }}

@@ -2,6 +2,20 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart IAM Stack
 
+Parameters:
+
+  DBUsername:
+    Type: String
+    Default: cloudmartadmin
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+
+  AuthToken:
+    Type: String
+    NoEcho: true
+
 Resources:
 
   #################################################
@@ -38,7 +52,7 @@ Resources:
                 Resource: "*"
 
   #################################################
-  # PRODUCT SERVICE ROLE
+  # PRODUCT ROLE
   #################################################
 
   ProductLambdaRole:
@@ -64,6 +78,7 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+
               - Effect: Allow
                 Action:
                   - rds:DescribeDBInstances
@@ -90,7 +105,7 @@ Resources:
                 Resource: "*"
 
   #################################################
-  # ORDER SERVICE ROLE
+  # ORDER ROLE
   #################################################
 
   OrderLambdaRole:
@@ -204,6 +219,31 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
                 Resource: "*"
 
+  #################################################
+  # SSM PARAMETERS
+  #################################################
+
+  DBUsernameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /cloudmart/db/username
+      Type: String
+      Value: !Ref DBUsername
+
+  DBPasswordParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /cloudmart/db/password
+      Type: SecureString
+      Value: !Ref DBPassword
+
+  AuthTokenParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /cloudmart/auth/token
+      Type: SecureString
+      Value: !Ref AuthToken
+
 Outputs:
 
   AuthorizerRoleArn:
@@ -225,3 +265,12 @@ Outputs:
     Value: !GetAtt ReportLambdaRole.Arn
     Export:
       Name: cloudmart-report-role-arn
+
+  DBUsernameParameterName:
+    Value: !Ref DBUsernameParameter
+
+  DBPasswordParameterName:
+    Value: !Ref DBPasswordParameter
+
+  AuthTokenParameterName:
+    Value: !Ref AuthTokenParameter

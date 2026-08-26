@@ -1,14 +1,99 @@
-- name: Deploy Data Stack
-  run: |
-    aws cloudformation deploy \
-      --stack-name cloudmart-data-stack \
-      --template-file cloudformation/data-stack.yaml \
-      --parameter-overrides \
-      DBPassword=${{ secrets.DB_PASSWORD }}
+AWSTemplateFormatVersion: '2010-09-09'
 
-- name: Show Data Stack Errors
-  if: failure()
-  run: |
-    aws cloudformation describe-stack-events \
-      --stack-name cloudmart-data-stack \
-      --max-items 20
+Description: CloudMart Data Stack
+
+Parameters:
+
+  DBName:
+    Type: String
+    Default: cloudmart
+
+  DBUsername:
+    Type: String
+    Default: cloudmartadmin
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+
+Resources:
+
+  RdsSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CloudMart DB Subnet Group
+      SubnetIds:
+        - Fn::ImportValue: cloudmart-private-subnet-id
+        - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+  CloudMartDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: cloudmart-db
+
+      Engine: mysql
+
+      DBInstanceClass: db.t3.micro
+
+      AllocatedStorage: 20
+
+      StorageType: gp3
+
+      MultiAZ: false
+
+      PubliclyAccessible: false
+
+      StorageEncrypted: true
+
+      DBName: !Ref DBName
+
+      MasterUsername: !Ref DBUsername
+
+      MasterUserPassword: !Ref DBPassword
+
+      Port: 3306
+
+      VPCSecurityGroups:
+        - Fn::ImportValue: cloudmart-rds-sg
+
+      DBSubnetGroupName: !Ref RdsSubnetGroup
+
+      DeletionProtection: false
+
+      BackupRetentionPeriod: 0
+
+  LambdaArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
+
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
+
+Outputs:
+
+  DatabaseIdentifier:
+    Description: RDS Database Identifier
+    Value: !Ref CloudMartDatabase
+
+  DatabaseEndpoint:
+    Description: RDS Endpoint
+    Value: !GetAtt CloudMartDatabase.Endpoint.Address
+
+  DatabasePort:
+    Description: RDS Port
+    Value: !GetAtt CloudMartDatabase.Endpoint.Port
+
+  DatabaseSubnetGroup:
+    Description: Database Subnet Group
+    Value: !Ref RdsSubnetGroup
+
+  LambdaBucket:
+    Description: Lambda Artifacts Bucket
+    Value: !Ref LambdaArtifactsBucket
+
+  ReportsBucket:
+    Description: Reports Bucket
+    Value: !Ref ReportsBucket

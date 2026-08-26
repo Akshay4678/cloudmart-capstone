@@ -51,6 +51,10 @@ jobs:
       # VALIDATE DATA STACK
       #################################################
 
+      - name: Print Data Stack File
+        run: |
+          cat cloudformation/data-stack.yaml
+
       - name: CloudFormation Validate Data Stack
         run: |
           aws cloudformation validate-template \

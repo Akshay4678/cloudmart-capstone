@@ -29,8 +29,6 @@ Resources:
   CloudMartDatabase:
     Type: AWS::RDS::DBInstance
     Properties:
-      DBInstanceIdentifier: cloudmart-db
-
       Engine: mysql
 
       DBInstanceClass: db.t3.micro

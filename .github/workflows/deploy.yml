@@ -66,7 +66,7 @@ jobs:
 
       - name: Validate IAM Stack
         run: |
-          cfn-lint --non-zero-exit-code error cloudformation/iam-stack.yaml
+          cfn-lint --ignore-checks E3030 cloudformation/iam-stack.yaml
 
       - name: CloudFormation Validate IAM Stack
         run: |

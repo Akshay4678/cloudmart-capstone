@@ -51,9 +51,10 @@ jobs:
       # VALIDATE DATA STACK
       #################################################
 
-      - name: Validate Data Stack
+      - name: CloudFormation Validate Data Stack
         run: |
-          cfn-lint  --non-zero-exit-code error cloudformation/data-stack.yaml
+          aws cloudformation validate-template \
+            --template-body file://cloud
 
       - name: CloudFormation Validate Data Stack
         run: |

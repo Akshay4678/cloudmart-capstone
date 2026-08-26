@@ -1,11 +1,17 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: CloudMart IAM Stack
+
+Resources:
+
   #################################################
-  # REPORTING ROLE
+  # AUTHORIZER LAMBDA ROLE
   #################################################
 
-  ReportLambdaRole:
+  AuthorizerLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: cloudmart-report-role
+      RoleName: cloudmart-authorizer-role
 
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -21,18 +27,43 @@
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
-        - PolicyName: ReportingPolicy
+        - PolicyName: AuthorizerPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-
               - Effect: Allow
                 Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:ListBucket
+                  - ssm:GetParameter
+                  - ssm:GetParameters
                 Resource: "*"
 
+  #################################################
+  # PRODUCT SERVICE ROLE
+  #################################################
+
+  ProductLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cloudmart-product-role
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
+        - PolicyName: ProductPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
               - Effect: Allow
                 Action:
                   - rds:DescribeDBInstances
@@ -46,6 +77,11 @@
 
               - Effect: Allow
                 Action:
+                  - events:PutEvents
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
@@ -53,24 +89,45 @@
                   - ec2:UnassignPrivateIpAddresses
                 Resource: "*"
 
+  #################################################
+  # ORDER SERVICE ROLE
+  #################################################
 
-Outputs:
-  AuthorizerRoleArn:
-    Value: !GetAtt AuthorizerLambdaRole.Arn
-    Export:
-      Name: cloudmart-authorizer-role-arn
+  OrderLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cloudmart-order-role
 
-  ProductRoleArn:
-    Value: !GetAtt ProductLambdaRole.Arn
-    Export:
-      Name: cloudmart-product-role-arn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
 
-  OrderRoleArn:
-    Value: !GetAtt OrderLambdaRole.Arn
-    Export:
-      Name: cloudmart-order-role-arn
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
-  ReportRoleArn:
-    Value: !GetAtt ReportLambdaRole.Arn
-    Export:
-      Name: cloudmart-report-role-arn
+      Policies:
+        - PolicyName: OrderPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                Resource: "*"
+
+              - Effect: Allow
+             

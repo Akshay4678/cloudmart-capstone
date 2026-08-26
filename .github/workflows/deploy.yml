@@ -1,4 +1,4 @@
-name: Deploy CloudMart Stacks
+name: Deploy CloudMart Infrastructure
 
 on:
   workflow_dispatch:
@@ -9,9 +9,11 @@ permissions:
 
 jobs:
   deploy:
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -24,10 +26,56 @@ jobs:
       - name: Verify AWS Access
         run: aws sts get-caller-identity
 
+      #################################################
+      # INSTALL CFN-LINT
+      #################################################
+
+      - name: Install cfn-lint
+        run: |
+          pip install cfn-lint
+
+      #################################################
+      # VALIDATE NETWORK STACK
+      #################################################
+
       - name: Validate Network Stack
+        run: |
+          cfn-lint cloudformation/network-stack.yaml
+
+      - name: CloudFormation Validate Network Stack
         run: |
           aws cloudformation validate-template \
           --template-body file://cloudformation/network-stack.yaml
+
+      #################################################
+      # VALIDATE DATA STACK
+      #################################################
+
+      - name: Validate Data Stack
+        run: |
+          cfn-lint cloudformation/data-stack.yaml
+
+      - name: CloudFormation Validate Data Stack
+        run: |
+          aws cloudformation validate-template \
+          --template-body file://cloudformation/data-stack.yaml
+
+      #################################################
+      # VALIDATE IAM STACK
+      #################################################
+
+      - name: Validate IAM Stack
+        run: |
+          cfn-lint cloudformation/iam-stack.yaml
+
+      - name: CloudFormation Validate IAM Stack
+        run: |
+          aws cloudformation validate-template \
+          --template-body file://cloudformation/iam-stack.yaml
+
+      #################################################
+      # DEPLOY NETWORK STACK
+      #################################################
 
       - name: Deploy Network Stack
         run: |
@@ -36,19 +84,32 @@ jobs:
           --template-file cloudformation/network-stack.yaml \
           --capabilities CAPABILITY_NAMED_IAM
 
-      - name: Validate Data Stack
-        run: |
-          aws cloudformation validate-template \
-          --template-body file://cloudformation/data-stack.yaml
+      #################################################
+      # DEPLOY DATA STACK
+      #################################################
 
       - name: Deploy Data Stack
         run: |
-              aws cloudformation deploy \
-                --stack-name cloudmart-data-stack \
-                --template-file cloudformation/data-stack.yaml \
-                --parameter-overrides \
-                DBPassword=${{ secrets.DB_PASSWORD }}
+          aws cloudformation deploy \
+          --stack-name cloudmart-data-stack \
+          --template-file cloudformation/data-stack.yaml \
+          --parameter-overrides \
+          DBPassword=${{ secrets.DB_PASSWORD }}
 
+      #################################################
+      # DEPLOY IAM STACK
+      #################################################
+
+      - name: Deploy IAM Stack
+        run: |
+          aws cloudformation deploy \
+          --stack-name cloudmart-iam-stack \
+          --template-file cloudformation/iam-stack.yaml \
+          --capabilities CAPABILITY_NAMED_IAM
+
+      #################################################
+      # STACK STATUS
+      #################################################
 
       - name: Check Network Stack Status
         run: |
@@ -59,3 +120,8 @@ jobs:
         run: |
           aws cloudformation describe-stacks \
           --stack-name cloudmart-data-stack
+
+      - name: Check IAM Stack Status
+        run: |
+          aws cloudformation describe-stacks \
+          --stack-name cloudmart-iam-stack

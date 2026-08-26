@@ -234,14 +234,14 @@ Resources:
     Type: AWS::SSM::Parameter
     Properties:
       Name: /cloudmart/db/password
-      Type: SecureString
+      Type: String
       Value: !Ref DBPassword
 
   AuthTokenParameter:
     Type: AWS::SSM::Parameter
     Properties:
       Name: /cloudmart/auth/token
-      Type: SecureString
+      Type: String
       Value: !Ref AuthToken
 
 Outputs:

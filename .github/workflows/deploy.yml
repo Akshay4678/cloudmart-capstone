@@ -40,7 +40,7 @@ jobs:
 
       - name: Validate Network Stack
         run: |
-          cfn-lint cloudformation/network-stack.yaml
+          cfn-lint --non-zero-exit-code error cloudformation/network-stack.yaml
 
       - name: CloudFormation Validate Network Stack
         run: |
@@ -53,7 +53,7 @@ jobs:
 
       - name: Validate Data Stack
         run: |
-          cfn-lint cloudformation/data-stack.yaml
+          cfn-lint  --non-zero-exit-code error cloudformation/data-stack.yaml
 
       - name: CloudFormation Validate Data Stack
         run: |
@@ -66,7 +66,7 @@ jobs:
 
       - name: Validate IAM Stack
         run: |
-          cfn-lint cloudformation/iam-stack.yaml
+          cfn-lint --non-zero-exit-code error cloudformation/iam-stack.yaml
 
       - name: CloudFormation Validate IAM Stack
         run: |

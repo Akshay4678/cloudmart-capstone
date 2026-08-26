@@ -130,4 +130,98 @@ Resources:
                 Resource: "*"
 
               - Effect: Allow
-             
+                Action:
+                  - events:PutEvents
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+
+  #################################################
+  # REPORTING ROLE
+  #################################################
+
+  ReportLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cloudmart-report-role
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
+        - PolicyName: ReportingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: "*"
+
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: "*"
+
+Outputs:
+
+  AuthorizerRoleArn:
+    Value: !GetAtt AuthorizerLambdaRole.Arn
+    Export:
+      Name: cloudmart-authorizer-role-arn
+
+  ProductRoleArn:
+    Value: !GetAtt ProductLambdaRole.Arn
+    Export:
+      Name: cloudmart-product-role-arn
+
+  OrderRoleArn:
+    Value: !GetAtt OrderLambdaRole.Arn
+    Export:
+      Name: cloudmart-order-role-arn
+
+  ReportRoleArn:
+    Value: !GetAtt ReportLambdaRole.Arn
+    Export:
+      Name: cloudmart-report-role-arn

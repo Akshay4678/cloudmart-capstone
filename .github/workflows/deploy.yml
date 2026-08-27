@@ -115,6 +115,21 @@ jobs:
           DBPassword=${{ secrets.DB_PASSWORD }} \
           AuthToken=${{ secrets.AUTH_TOKEN }}
 
+          
+      #################################################
+      # DEPLOY AUTH STACK
+      #################################################
+
+      - name: Deploy Auth Stack
+        run: |
+          aws cloudformation deploy \
+          --stack-name cloudmart-auth-stack \
+          --template-file cloudformation/auth-stack.yaml \
+          --capabilities CAPABILITY_NAMED_IAM \
+          --parameter-overrides \
+          AuthToken=${{ secrets.AUTH_TOKEN }}
+
+
       #################################################
       # STACK STATU
       #################################################

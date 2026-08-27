@@ -1,1 +1,87 @@
+AWSTemplateFormatVersion: '2010-09-09'
 
+Description: CloudMart Authentication Stack
+
+Parameters:
+
+  AuthToken:
+    Type: String
+    NoEcho: true
+
+Resources:
+
+  #################################################
+  # AUTH TOKEN IN SSM
+  #################################################
+
+  AuthTokenParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /cloudmart/auth/token
+      Type: String
+      Value: !Ref AuthToken
+
+  #################################################
+  # AUTHORIZER LAMBDA
+  #################################################
+
+  AuthorizerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cloudmart-authorizer
+
+      Runtime: python3.13
+
+      Handler: index.lambda_handler
+
+      Role:
+        Fn::ImportValue: cloudmart-authorizer-role-arn
+
+      Timeout: 10
+
+      Code:
+        ZipFile: |
+          import boto3
+
+          def lambda_handler(event, context):
+
+              token = event.get("headers", {}).get("Authorization", "")
+
+              ssm = boto3.client("ssm")
+
+              secret = ssm.get_parameter(
+                  Name="/cloudmart/auth/token"
+              )["Parameter"]["Value"]
+
+              if token == secret:
+                  return {
+                      "isAuthorized": True,
+                      "context": {
+                          "user": "cloudmart-user"
+                      }
+                  }
+
+              return {
+                  "isAuthorized": False
+              }
+
+  #################################################
+  # API GATEWAY PERMISSION
+  #################################################
+
+  AuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AuthorizerLambda
+      Principal: apigateway.amazonaws.com
+
+Outputs:
+
+  AuthorizerLambdaArn:
+    Value: !GetAtt AuthorizerLambda.Arn
+    Export:
+      Name: cloudmart-authorizer-lambda-arn
+
+  AuthTokenParameterName:
+    Value: !Ref AuthTokenParameter

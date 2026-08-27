@@ -2,28 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart Authentication Stack
 
-Parameters:
-
-  AuthToken:
-    Type: String
-    NoEcho: true
-
 Resources:
-
-  #################################################
-  # AUTH TOKEN IN SSM
-  #################################################
-
-  AuthTokenParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /cloudmart/auth/token
-      Type: String
-      Value: !Ref AuthToken
-
-  #################################################
-  # AUTHORIZER LAMBDA
-  #################################################
 
   AuthorizerLambda:
     Type: AWS::Lambda::Function
@@ -65,10 +44,6 @@ Resources:
                   "isAuthorized": False
               }
 
-  #################################################
-  # API GATEWAY PERMISSION
-  #################################################
-
   AuthorizerPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -82,6 +57,3 @@ Outputs:
     Value: !GetAtt AuthorizerLambda.Arn
     Export:
       Name: cloudmart-authorizer-lambda-arn
-
-  AuthTokenParameterName:
-    Value: !Ref AuthTokenParameter

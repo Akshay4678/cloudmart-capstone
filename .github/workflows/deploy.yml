@@ -123,11 +123,9 @@ jobs:
       - name: Deploy Auth Stack
         run: |
           aws cloudformation deploy \
-          --stack-name cloudmart-auth-stack \
-          --template-file cloudformation/auth-stack.yaml \
-          --capabilities CAPABILITY_NAMED_IAM \
-          --parameter-overrides \
-          AuthToken=${{ secrets.AUTH_TOKEN }}
+            --stack-name cloudmart-auth-stack \
+            --template-file cloudformation/auth-stack.yaml \
+            --capabilities CAPABILITY_NAMED_IAM
 
 
       #################################################

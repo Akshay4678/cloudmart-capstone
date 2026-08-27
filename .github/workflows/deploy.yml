@@ -101,7 +101,7 @@ jobs:
             --output table
 
       #################################################
-      # DEPLOY IAM STACK
+      # DEPLOY IAM STAC
       #################################################
 
       - name: Deploy IAM Stack
@@ -116,7 +116,7 @@ jobs:
           AuthToken=${{ secrets.AUTH_TOKEN }}
 
       #################################################
-      # STACK STATUS
+      # STACK STATU
       #################################################
 
       - name: Check Network Stack Status

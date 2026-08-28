@@ -128,6 +128,25 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM
 
 
+
+      #################################################
+      # DEPLOY API STACK
+      #################################################
+
+      - name: Deploy API Stack
+        run: |
+          aws cloudformation deploy \
+          --stack-name cloudmart-api-stack \
+          --template-file cloudformation/api-stack.yaml \
+          --capabilities CAPABILITY_NAMED_IAM
+
+
+      - name: Check API Stack Status
+        run: |
+          aws cloudformation describe-stacks \
+          --stack-name cloudmart-api-stack
+
+
       #################################################
       # STACK STATU
       #################################################

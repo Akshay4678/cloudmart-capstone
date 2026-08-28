@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: CloudMart API Stack
+
+Resources:
+
+  #################################################
+  # PRODUCT LAMBDA
+  #################################################
+
+  ProductLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cloudmart-product
+
+      Runtime: python3.13
+
+      Handler: index.lambda_handler
+
+      Role:
+        Fn::ImportValue: cloudmart-product-role-arn
+
+      Timeout: 15
+
+      Code:
+        ZipFile: |
+          import json
+
+          def lambda_handler(event, context):
+
+              return {
+                  "statusCode": 200,
+                  "headers": {
+                      "Content-Type": "application/json"
+                  },
+                  "body": json.dumps({
+                      "message": "CloudMart Product Service"
+                  })
+              }
+
+  #################################################
+  # API GATEWAY
+  #################################################
+
+  CloudMartApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: cloudmart-api
+
+  #################################################
+  # AUTHORIZER
+  #################################################
+
+  CloudMartAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: cloudmart-authorizer
+
+      RestApiId: !Ref CloudMartApi
+
+      Type: TOKEN
+
+      IdentitySource: method.request.header.Authorization
+
+      AuthorizerResultTtlInSeconds: 300
+
+      AuthorizerUri:
+        Fn::Sub:
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerArn}/invocations
+          - AuthorizerArn:
+              Fn::ImportValue: cloudmart-authorizer-lambda-arn
+
+  #################################################
+  # /products
+  #################################################
+
+  ProductsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ParentId: !GetAtt CloudMartApi.RootResourceId
+      PathPart: products
+
+  ProductsGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref ProductsResource
+
+      HttpMethod: GET
+
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - LambdaArn: !GetAtt ProductLambda.Arn
+
+  #################################################
+  # LAMBDA PERMISSION
+  #################################################
+
+  ProductLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ProductLambda
+      Principal: apigateway.amazonaws.com
+
+      SourceArn:
+        !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
+
+  #################################################
+  # API DEPLOYMENT
+  #################################################
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+
+    DependsOn:
+      - ProductsGetMethod
+
+    Properties:
+      RestApiId: !Ref CloudMartApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+
+Outputs:
+
+  ApiId:
+    Value: !Ref CloudMartApi
+    Export:
+      Name: cloudmart-api-id
+
+  ApiInvokeUrl:
+    Value: !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+
+  ProductLambdaArn:
+    Value: !GetAtt ProductLambda.Arn
+    Export:
+      Name: cloudmart-product-lambda-arn

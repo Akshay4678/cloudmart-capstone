@@ -26,20 +26,13 @@ Resources:
 
           def lambda_handler(event, context):
 
-              method = event.get("httpMethod")
-              path_parameters = event.get("pathParameters")
-
               return {
                   "statusCode": 200,
-                  "headers": {
-                      "Content-Type": "application/json"
-                  },
                   "body": json.dumps({
-                      "method": method,
-                      "pathParameters": path_parameters,
-                      "message": "CloudMart Product Service"
+                      "message": "GET Products Working"
                   })
               }
+
 
   #################################################
   # API GATEWAY

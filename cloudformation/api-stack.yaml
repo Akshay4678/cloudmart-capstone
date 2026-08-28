@@ -12,9 +12,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: cloudmart-product
-
       Runtime: python3.13
-
       Handler: index.lambda_handler
 
       Role:
@@ -28,12 +26,17 @@ Resources:
 
           def lambda_handler(event, context):
 
+              method = event.get("httpMethod")
+              path_parameters = event.get("pathParameters")
+
               return {
                   "statusCode": 200,
                   "headers": {
                       "Content-Type": "application/json"
                   },
                   "body": json.dumps({
+                      "method": method,
+                      "pathParameters": path_parameters,
                       "message": "CloudMart Product Service"
                   })
               }
@@ -55,13 +58,9 @@ Resources:
     Type: AWS::ApiGateway::Authorizer
     Properties:
       Name: cloudmart-authorizer
-
       RestApiId: !Ref CloudMartApi
-
       Type: TOKEN
-
       IdentitySource: method.request.header.Authorization
-
       AuthorizerResultTtlInSeconds: 300
 
       AuthorizerUri:
@@ -86,16 +85,92 @@ Resources:
     Properties:
       RestApiId: !Ref CloudMartApi
       ResourceId: !Ref ProductsResource
-
       HttpMethod: GET
-
       AuthorizationType: CUSTOM
       AuthorizerId: !Ref CloudMartAuthorizer
 
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - LambdaArn: !GetAtt ProductLambda.Arn
 
+  ProductsPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref ProductsResource
+      HttpMethod: POST
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - LambdaArn: !GetAtt ProductLambda.Arn
+
+  #################################################
+  # /products/{id}
+  #################################################
+
+  ProductIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ParentId: !Ref ProductsResource
+      PathPart: "{id}"
+
+  ProductIdGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref ProductIdResource
+      HttpMethod: GET
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - LambdaArn: !GetAtt ProductLambda.Arn
+
+  ProductIdPutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref ProductIdResource
+      HttpMethod: PUT
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+            - LambdaArn: !GetAtt ProductLambda.Arn
+
+  ProductIdDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref ProductIdResource
+      HttpMethod: DELETE
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
         Uri:
           Fn::Sub:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
@@ -124,6 +199,10 @@ Resources:
 
     DependsOn:
       - ProductsGetMethod
+      - ProductsPostMethod
+      - ProductIdGetMethod
+      - ProductIdPutMethod
+      - ProductIdDeleteMethod
 
     Properties:
       RestApiId: !Ref CloudMartApi

@@ -24,25 +24,66 @@ Resources:
 
           def lambda_handler(event, context):
 
-              token = event.get("headers", {}).get("Authorization", "")
+              print("========== AUTHORIZER START ==========")
+              print("Event:", event)
+
+              token = event.get("authorizationToken", "")
+              method_arn = event.get("methodArn", "")
+
+              print("Received token:", token)
 
               ssm = boto3.client("ssm")
 
-              secret = ssm.get_parameter(
-                  Name="/cloudmart/auth/token"
-              )["Parameter"]["Value"]
+              try:
+                  secret = ssm.get_parameter(
+                      Name="/cloudmart/auth/token"
+                  )["Parameter"]["Value"]
 
-              if token == secret:
+                  print("Successfully retrieved token from SSM")
+
+                  if token == secret:
+
+                      print("TOKEN VALID - ALLOW")
+
+                      return {
+                          "principalId": "cloudmart-user",
+                          "policyDocument": {
+                              "Version": "2012-10-17",
+                              "Statement": [
+                                  {
+                                      "Action": "execute-api:Invoke",
+                                      "Effect": "Allow",
+                                      "Resource": method_arn
+                                  }
+                              ]
+                          },
+                          "context": {
+                              "user": "cloudmart-user"
+                          }
+                      }
+
+                  print("TOKEN INVALID - DENY")
+
                   return {
-                      "isAuthorized": True,
-                      "context": {
-                          "user": "cloudmart-user"
+                      "principalId": "cloudmart-user",
+                      "policyDocument": {
+                          "Version": "2012-10-17",
+                          "Statement": [
+                              {
+                                  "Action": "execute-api:Invoke",
+                                  "Effect": "Deny",
+                                  "Resource": method_arn
+                              }
+                          ]
                       }
                   }
 
-              return {
-                  "isAuthorized": False
-              }
+              except Exception as e:
+
+                  print("========== AUTHORIZER ERROR ==========")
+                  print("ERROR:", str(e))
+
+                  raise
 
   AuthorizerPermission:
     Type: AWS::Lambda::Permission

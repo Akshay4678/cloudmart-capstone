@@ -20,6 +20,13 @@ Resources:
 
       Timeout: 15
 
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: cloudmart-private-subnet-id
+          - Fn::ImportValue: cloudmart-private-subnet-2-id
+        SecurityGroupIds:
+          - Fn::ImportValue: cloudmart-lambda-sg
+
       Environment:
         Variables:
           DB_HOST: cloudmart-data-stack-cloudmartdatabase-zjxdxen8ubpj.chyoy06e4uh2.ap-south-1.rds.amazonaws.com

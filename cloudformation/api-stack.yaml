@@ -40,6 +40,9 @@ Resources:
           import json
           import os
           import pymysql
+          import boto3
+
+          events_client = boto3.client("events")
 
           DB_HOST = os.environ["DB_HOST"]
           DB_NAME = os.environ["DB_NAME"]
@@ -69,6 +72,30 @@ Resources:
                   },
                   "body": json.dumps(body, default=str)
               }
+
+
+          # =========================================================
+          # PUBLISH INVENTORY CHANGE EVENT
+          # =========================================================
+
+          def publish_inventory_event(product_id, stock_count):
+
+              event_detail = {
+                  "product_id": int(product_id),
+                  "stock_count": int(stock_count)
+              }
+
+              result = events_client.put_events(
+                  Entries=[
+                      {
+                          "Source": "cloudmart.inventory",
+                          "DetailType": "InventoryChanged",
+                          "Detail": json.dumps(event_detail)
+                      }
+                  ]
+              )
+
+              print("EventBridge result:", json.dumps(result))
 
 
           def lambda_handler(event, context):
@@ -176,7 +203,6 @@ Resources:
                       price = data.get("price")
                       stock_count = data.get("stock_count")
 
-                      # Validate required fields
                       if not name or price is None or stock_count is None:
                           return response(
                               400,
@@ -206,6 +232,12 @@ Resources:
                           new_product_id = cursor.lastrowid
 
                       connection.commit()
+
+                      # Publish inventory event
+                      publish_inventory_event(
+                          new_product_id,
+                          stock_count
+                      )
 
                       return response(
                           201,
@@ -288,6 +320,12 @@ Resources:
                                   "message": "Product not found"
                               }
                           )
+
+                      # Publish inventory event
+                      publish_inventory_event(
+                          product_id,
+                          stock_count
+                      )
 
                       return response(
                           200,
@@ -377,6 +415,89 @@ Resources:
 
 
   #################################################
+  # SNS LOW STOCK ALERT
+  #################################################
+
+  LowStockTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cloudmart-low-stock-alerts
+
+
+  LowStockEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref LowStockTopic
+      Protocol: email
+      Endpoint: uppu4678@gmail.com
+
+
+  #################################################
+  # EVENTBRIDGE LOW STOCK RULE
+  #################################################
+
+  InventoryLowStockRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cloudmart-inventory-low-stock-rule
+
+      Description: Send SNS alert when product stock is low
+
+      EventPattern:
+        source:
+          - cloudmart.inventory
+
+        detail-type:
+          - InventoryChanged
+
+        detail:
+          stock_count:
+            - numeric:
+                - "<="
+                - 5
+
+      State: ENABLED
+
+      Targets:
+        - Arn: !Ref LowStockTopic
+          Id: LowStockSNSTarget
+
+
+  #################################################
+  # SNS TOPIC POLICY
+  #################################################
+
+  LowStockTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+
+      Topics:
+        - !Ref LowStockTopic
+
+      PolicyDocument:
+        Version: "2012-10-17"
+
+        Statement:
+
+          - Sid: AllowEventBridgePublish
+
+            Effect: Allow
+
+            Principal:
+              Service: events.amazonaws.com
+
+            Action:
+              - sns:Publish
+
+            Resource: !Ref LowStockTopic
+
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/cloudmart-inventory-low-stock-rule
+
+
+  #################################################
   # API GATEWAY
   #################################################
 
@@ -384,6 +505,7 @@ Resources:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: cloudmart-api
+
 
   #################################################
   # AUTHORIZER
@@ -404,6 +526,7 @@ Resources:
           - AuthorizerArn:
               Fn::ImportValue: cloudmart-authorizer-lambda-arn
 
+
   #################################################
   # /products
   #################################################
@@ -414,6 +537,7 @@ Resources:
       RestApiId: !Ref CloudMartApi
       ParentId: !GetAtt CloudMartApi.RootResourceId
       PathPart: products
+
 
   ProductsGetMethod:
     Type: AWS::ApiGateway::Method
@@ -432,6 +556,7 @@ Resources:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
             - LambdaArn: !GetAtt ProductLambda.Arn
 
+
   ProductsPostMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -449,6 +574,7 @@ Resources:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
             - LambdaArn: !GetAtt ProductLambda.Arn
 
+
   #################################################
   # /products/{id}
   #################################################
@@ -459,6 +585,7 @@ Resources:
       RestApiId: !Ref CloudMartApi
       ParentId: !Ref ProductsResource
       PathPart: "{id}"
+
 
   ProductIdGetMethod:
     Type: AWS::ApiGateway::Method
@@ -477,6 +604,7 @@ Resources:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
             - LambdaArn: !GetAtt ProductLambda.Arn
 
+
   ProductIdPutMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -493,6 +621,7 @@ Resources:
           Fn::Sub:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
             - LambdaArn: !GetAtt ProductLambda.Arn
+
 
   ProductIdDeleteMethod:
     Type: AWS::ApiGateway::Method
@@ -511,29 +640,37 @@ Resources:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
             - LambdaArn: !GetAtt ProductLambda.Arn
 
+
   #################################################
   # LAMBDA PERMISSION
   #################################################
-
 
   AuthorizerLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
+
       FunctionName:
         Fn::ImportValue: cloudmart-authorizer-lambda-arn
+
       Principal: apigateway.amazonaws.com
+
       SourceArn:
         !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
+
 
   ProductLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
+
       FunctionName: !Ref ProductLambda
+
       Principal: apigateway.amazonaws.com
+
       SourceArn:
         !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
+
 
   #################################################
   # API DEPLOYMENT
@@ -552,12 +689,14 @@ Resources:
     Properties:
       RestApiId: !Ref CloudMartApi
 
+
   ApiStage:
     Type: AWS::ApiGateway::Stage
     Properties:
       RestApiId: !Ref CloudMartApi
       DeploymentId: !Ref ApiDeployment
       StageName: prod
+
 
 Outputs:
 
@@ -566,8 +705,10 @@ Outputs:
     Export:
       Name: cloudmart-api-id
 
+
   ApiInvokeUrl:
     Value: !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+
 
   ProductLambdaArn:
     Value: !GetAtt ProductLambda.Arn

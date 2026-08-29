@@ -16,6 +16,7 @@ Parameters:
     Type: String
     NoEcho: true
 
+
 Resources:
 
   #################################################
@@ -45,14 +46,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
                 Resource: "*"
 
+
   #################################################
-  # PRODUCT ROLE
+  # PRODUCT LAMBDA ROLE
   #################################################
 
   ProductLambdaRole:
@@ -79,10 +82,18 @@ Resources:
             Version: '2012-10-17'
             Statement:
 
+              #################################################
+              # RDS
+              #################################################
+
               - Effect: Allow
                 Action:
                   - rds:DescribeDBInstances
                 Resource: "*"
+
+              #################################################
+              # SSM
+              #################################################
 
               - Effect: Allow
                 Action:
@@ -90,10 +101,18 @@ Resources:
                   - ssm:GetParameters
                 Resource: "*"
 
+              #################################################
+              # EVENTBRIDGE
+              #################################################
+
               - Effect: Allow
                 Action:
                   - events:PutEvents
                 Resource: "*"
+
+              #################################################
+              # VPC NETWORK INTERFACES
+              #################################################
 
               - Effect: Allow
                 Action:
@@ -104,8 +123,9 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
                 Resource: "*"
 
+
   #################################################
-  # ORDER ROLE
+  # ORDER LAMBDA ROLE
   #################################################
 
   OrderLambdaRole:
@@ -132,10 +152,18 @@ Resources:
             Version: '2012-10-17'
             Statement:
 
+              #################################################
+              # SNS
+              #################################################
+
               - Effect: Allow
                 Action:
                   - sns:Publish
                 Resource: "*"
+
+              #################################################
+              # SQS
+              #################################################
 
               - Effect: Allow
                 Action:
@@ -144,16 +172,28 @@ Resources:
                   - sqs:DeleteMessage
                 Resource: "*"
 
+              #################################################
+              # EVENTBRIDGE
+              #################################################
+
               - Effect: Allow
                 Action:
                   - events:PutEvents
                 Resource: "*"
+
+              #################################################
+              # SSM
+              #################################################
 
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
                 Resource: "*"
+
+              #################################################
+              # VPC NETWORK INTERFACES
+              #################################################
 
               - Effect: Allow
                 Action:
@@ -164,8 +204,9 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
                 Resource: "*"
 
+
   #################################################
-  # REPORTING ROLE
+  # REPORTING LAMBDA ROLE
   #################################################
 
   ReportLambdaRole:
@@ -192,6 +233,10 @@ Resources:
             Version: '2012-10-17'
             Statement:
 
+              #################################################
+              # S3
+              #################################################
+
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -199,16 +244,28 @@ Resources:
                   - s3:ListBucket
                 Resource: "*"
 
+              #################################################
+              # RDS
+              #################################################
+
               - Effect: Allow
                 Action:
                   - rds:DescribeDBInstances
                 Resource: "*"
+
+              #################################################
+              # SSM
+              #################################################
 
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
                 Resource: "*"
+
+              #################################################
+              # VPC NETWORK INTERFACES
+              #################################################
 
               - Effect: Allow
                 Action:
@@ -218,6 +275,38 @@ Resources:
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
                 Resource: "*"
+
+
+  #################################################
+  # EVENTBRIDGE ROLE
+  #################################################
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cloudmart-eventbridge-role
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+      Policies:
+        - PolicyName: EventBridgeSNSPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: "*"
+
 
   #################################################
   # SSM PARAMETERS
@@ -230,12 +319,14 @@ Resources:
       Type: String
       Value: !Ref DBUsername
 
+
   DBPasswordParameter:
     Type: AWS::SSM::Parameter
     Properties:
       Name: /cloudmart/db/password
       Type: String
       Value: !Ref DBPassword
+
 
   AuthTokenParameter:
     Type: AWS::SSM::Parameter
@@ -244,33 +335,58 @@ Resources:
       Type: String
       Value: !Ref AuthToken
 
+
 Outputs:
+
+  #################################################
+  # LAMBDA ROLE ARNs
+  #################################################
 
   AuthorizerRoleArn:
     Value: !GetAtt AuthorizerLambdaRole.Arn
     Export:
       Name: cloudmart-authorizer-role-arn
 
+
   ProductRoleArn:
     Value: !GetAtt ProductLambdaRole.Arn
     Export:
       Name: cloudmart-product-role-arn
+
 
   OrderRoleArn:
     Value: !GetAtt OrderLambdaRole.Arn
     Export:
       Name: cloudmart-order-role-arn
 
+
   ReportRoleArn:
     Value: !GetAtt ReportLambdaRole.Arn
     Export:
       Name: cloudmart-report-role-arn
 
+
+  #################################################
+  # EVENTBRIDGE ROLE ARN
+  #################################################
+
+  EventBridgeRoleArn:
+    Value: !GetAtt EventBridgeRole.Arn
+    Export:
+      Name: cloudmart-eventbridge-role-arn
+
+
+  #################################################
+  # SSM PARAMETER NAMES
+  #################################################
+
   DBUsernameParameterName:
     Value: !Ref DBUsernameParameter
 
+
   DBPasswordParameterName:
     Value: !Ref DBPasswordParameter
+
 
   AuthTokenParameterName:
     Value: !Ref AuthTokenParameter

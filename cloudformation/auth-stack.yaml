@@ -54,7 +54,7 @@ Resources:
                                   {
                                       "Action": "execute-api:Invoke",
                                       "Effect": "Allow",
-                                      "Resource": method_arn
+                                      "Resource": method_arn.rsplit("/", 1)[0] + "/*"
                                   }
                               ]
                           },

@@ -265,7 +265,7 @@ Resources:
   #################################################
 
 
-    AuthorizerLambdaPermission:
+  AuthorizerLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction

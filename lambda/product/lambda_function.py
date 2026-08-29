@@ -1,6 +1,29 @@
 import json
 import os
 import pymysql
+import boto3
+from botocore.config import Config
+
+
+# =========================================================
+# AWS CLIENTS
+# =========================================================
+
+events_client = boto3.client(
+    "events",
+    config=Config(
+        connect_timeout=3,
+        read_timeout=3,
+        retries={
+            "max_attempts": 1
+        }
+    )
+)
+
+
+# =========================================================
+# DATABASE CONFIGURATION
+# =========================================================
 
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
@@ -9,8 +32,15 @@ DB_PASSWORD = os.environ["DB_PASSWORD"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 
+# =========================================================
+# DATABASE CONNECTION
+# =========================================================
+
 def get_connection():
-    return pymysql.connect(
+
+    print("BEFORE DB CONNECTION")
+
+    connection = pymysql.connect(
         host=DB_HOST,
         user=DB_USER,
         password=DB_PASSWORD,
@@ -20,8 +50,17 @@ def get_connection():
         cursorclass=pymysql.cursors.DictCursor
     )
 
+    print("AFTER DB CONNECTION")
+
+    return connection
+
+
+# =========================================================
+# API RESPONSE
+# =========================================================
 
 def response(status_code, body):
+
     return {
         "statusCode": status_code,
         "headers": {
@@ -32,49 +71,123 @@ def response(status_code, body):
     }
 
 
+# =========================================================
+# PUBLISH INVENTORY CHANGE EVENT
+# =========================================================
+
+def publish_inventory_event(product_id, stock_count):
+
+    print("BEFORE EVENTBRIDGE")
+
+    event_detail = {
+        "product_id": int(product_id),
+        "stock_count": int(stock_count)
+    }
+
+    try:
+
+        result = events_client.put_events(
+            Entries=[
+                {
+                    "Source": "cloudmart.inventory",
+                    "DetailType": "InventoryChanged",
+                    "Detail": json.dumps(event_detail)
+                }
+            ]
+        )
+
+        print(
+            "EventBridge result:",
+            json.dumps(result, default=str)
+        )
+
+        # Check if EventBridge rejected the event
+        if result.get("FailedEntryCount", 0) > 0:
+
+            print(
+                "WARNING: EventBridge failed to publish event:",
+                json.dumps(result, default=str)
+            )
+
+        else:
+
+            print("AFTER EVENTBRIDGE - Event published successfully")
+
+    except Exception as e:
+
+        # Do not fail the product operation if EventBridge
+        # is temporarily unreachable.
+        print("WARNING: EventBridge publish failed")
+        print("EVENTBRIDGE ERROR TYPE:", type(e).__name__)
+        print("EVENTBRIDGE ERROR MESSAGE:", str(e))
+
+
+# =========================================================
+# LAMBDA HANDLER
+# =========================================================
+
 def lambda_handler(event, context):
 
     print("========== LAMBDA START ==========")
-    print("Event:", json.dumps(event))
+
+    print(
+        "Event:",
+        json.dumps(event, default=str)
+    )
 
     connection = None
 
     try:
 
+        # =====================================================
+        # GET REQUEST INFORMATION
+        # =====================================================
+
         http_method = event.get("httpMethod", "GET")
 
         path_parameters = event.get("pathParameters") or {}
+
         product_id = path_parameters.get("id")
 
         print("HTTP Method:", http_method)
         print("Product ID:", product_id)
 
-        # =========================================================
+
+        # =====================================================
         # GET /products/{id}
-        # =========================================================
+        # =====================================================
 
         if http_method == "GET" and product_id:
-
-            print("Getting product:", product_id)
 
             connection = get_connection()
 
             with connection.cursor() as cursor:
 
+                print("BEFORE SELECT PRODUCT")
+
                 cursor.execute(
-                    "SELECT * FROM products WHERE product_id = %s",
+                    """
+                    SELECT *
+                    FROM products
+                    WHERE product_id = %s
+                    """,
                     (product_id,)
                 )
 
                 product = cursor.fetchone()
 
+                print("AFTER SELECT PRODUCT")
+
+
             if not product:
+
                 return response(
                     404,
                     {
                         "message": "Product not found"
                     }
                 )
+
 
             return response(
                 200,
@@ -84,21 +197,30 @@ def lambda_handler(event, context):
                 }
             )
 
-        # =========================================================
+
+        # =====================================================
         # GET /products
-        # =========================================================
+        # =====================================================
 
         if http_method == "GET":
-
-            print("Getting all products")
 
             connection = get_connection()
 
             with connection.cursor() as cursor:
 
-                cursor.execute("SELECT * FROM products")
+                print("BEFORE SELECT ALL PRODUCTS")
+
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM products
+                    """
+                )
 
                 products = cursor.fetchall()
+
+                print("AFTER SELECT ALL PRODUCTS")
+
 
             return response(
                 200,
@@ -109,17 +231,20 @@ def lambda_handler(event, context):
                 }
             )
 
-        # =========================================================
+
+        # =====================================================
         # POST /products
-        # =========================================================
+        # =====================================================
 
         if http_method == "POST":
 
-            print("Creating new product")
-
             body = event.get("body")
 
+            print("Request body:", body)
+
+
             if not body:
+
                 return response(
                     400,
                     {
@@ -127,9 +252,17 @@ def lambda_handler(event, context):
                     }
                 )
 
+
+            # =================================================
+            # PARSE JSON
+            # =================================================
+
             try:
+
                 data = json.loads(body)
+
             except json.JSONDecodeError:
+
                 return response(
                     400,
                     {
@@ -137,12 +270,19 @@ def lambda_handler(event, context):
                     }
                 )
 
+
             name = data.get("name")
             description = data.get("description")
             price = data.get("price")
             stock_count = data.get("stock_count")
 
+
+            # =================================================
+            # VALIDATION
+            # =================================================
+
             if not name or price is None or stock_count is None:
+
                 return response(
                     400,
                     {
@@ -150,14 +290,26 @@ def lambda_handler(event, context):
                     }
                 )
 
+
+            # =================================================
+            # DATABASE INSERT
+            # =================================================
+
             connection = get_connection()
 
             with connection.cursor() as cursor:
 
+                print("BEFORE INSERT")
+
                 cursor.execute(
                     """
                     INSERT INTO products
-                    (name, description, price, stock_count)
+                    (
+                        name,
+                        description,
+                        price,
+                        stock_count
+                    )
                     VALUES (%s, %s, %s, %s)
                     """,
                     (
@@ -170,9 +322,34 @@ def lambda_handler(event, context):
 
                 new_product_id = cursor.lastrowid
 
+                print(
+                    "AFTER INSERT - Product ID:",
+                    new_product_id
+                )
+
+
+            # =================================================
+            # COMMIT
+            # =================================================
+
             connection.commit()
 
-            print("Product created:", new_product_id)
+            print("AFTER COMMIT")
+
+
+            # =================================================
+            # PUBLISH EVENT
+            # =================================================
+
+            publish_inventory_event(
+                new_product_id,
+                stock_count
+            )
+
+
+            # =================================================
+            # RESPONSE
+            # =================================================
 
             return response(
                 201,
@@ -182,17 +359,18 @@ def lambda_handler(event, context):
                 }
             )
 
-        # =========================================================
+
+        # =====================================================
         # PUT /products/{id}
-        # =========================================================
+        # =====================================================
 
         if http_method == "PUT" and product_id:
 
-            print("Updating product:", product_id)
-
             body = event.get("body")
 
+
             if not body:
+
                 return response(
                     400,
                     {
@@ -200,9 +378,13 @@ def lambda_handler(event, context):
                     }
                 )
 
+
             try:
+
                 data = json.loads(body)
+
             except json.JSONDecodeError:
+
                 return response(
                     400,
                     {
@@ -210,12 +392,15 @@ def lambda_handler(event, context):
                     }
                 )
 
+
             name = data.get("name")
             description = data.get("description")
             price = data.get("price")
             stock_count = data.get("stock_count")
 
+
             if not name or price is None or stock_count is None:
+
                 return response(
                     400,
                     {
@@ -223,9 +408,16 @@ def lambda_handler(event, context):
                     }
                 )
 
+
+            # =================================================
+            # DATABASE UPDATE
+            # =================================================
+
             connection = get_connection()
 
             with connection.cursor() as cursor:
+
+                print("BEFORE UPDATE")
 
                 cursor.execute(
                     """
@@ -248,15 +440,36 @@ def lambda_handler(event, context):
 
                 affected_rows = cursor.rowcount
 
+                print(
+                    "AFTER UPDATE - Rows:",
+                    affected_rows
+                )
+
+
             connection.commit()
 
+            print("AFTER COMMIT")
+
+
             if affected_rows == 0:
+
                 return response(
                     404,
                     {
                         "message": "Product not found"
                     }
                 )
+
+
+            # =================================================
+            # PUBLISH INVENTORY EVENT
+            # =================================================
+
+            publish_inventory_event(
+                product_id,
+                stock_count
+            )
+
 
             return response(
                 200,
@@ -266,17 +479,18 @@ def lambda_handler(event, context):
                 }
             )
 
-        # =========================================================
+
+        # =====================================================
         # DELETE /products/{id}
-        # =========================================================
+        # =====================================================
 
         if http_method == "DELETE" and product_id:
-
-            print("Deleting product:", product_id)
 
             connection = get_connection()
 
             with connection.cursor() as cursor:
+
+                print("BEFORE DELETE")
 
                 cursor.execute(
                     """
@@ -288,9 +502,19 @@ def lambda_handler(event, context):
 
                 affected_rows = cursor.rowcount
 
+                print(
+                    "AFTER DELETE - Rows:",
+                    affected_rows
+                )
+
+
             connection.commit()
 
+            print("AFTER COMMIT")
+
+
             if affected_rows == 0:
+
                 return response(
                     404,
                     {
@@ -298,7 +522,6 @@ def lambda_handler(event, context):
                     }
                 )
 
-            print("Product deleted:", product_id)
 
             return response(
                 200,
@@ -308,9 +531,10 @@ def lambda_handler(event, context):
                 }
             )
 
-        # =========================================================
+
+        # =====================================================
         # INVALID REQUEST
-        # =========================================================
+        # =====================================================
 
         return response(
             405,
@@ -319,17 +543,41 @@ def lambda_handler(event, context):
             }
         )
 
+
+    # =========================================================
+    # ERROR HANDLING
+    # =========================================================
+
     except Exception as e:
 
         print("========== ERROR ==========")
-        print("ERROR TYPE:", type(e).__name__)
-        print("ERROR MESSAGE:", str(e))
+
+        print(
+            "ERROR TYPE:",
+            type(e).__name__
+        )
+
+        print(
+            "ERROR MESSAGE:",
+            str(e)
+        )
+
 
         if connection:
+
             try:
+
                 connection.rollback()
-            except Exception:
-                pass
+
+                print("Database transaction rolled back")
+
+            except Exception as rollback_error:
+
+                print(
+                    "Rollback error:",
+                    str(rollback_error)
+                )
+
 
         return response(
             500,
@@ -339,11 +587,26 @@ def lambda_handler(event, context):
             }
         )
 
+
+    # =========================================================
+    # CLEANUP
+    # =========================================================
+
     finally:
 
         if connection:
+
             try:
+
                 connection.close()
+
                 print("RDS connection closed")
-            except Exception:
-                pass
+
+            except Exception as close_error:
+
+                print(
+                    "Connection close error:",
+                    str(close_error)
+                )
+
+        print("========== LAMBDA END ==========")

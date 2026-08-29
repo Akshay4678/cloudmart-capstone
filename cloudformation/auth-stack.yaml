@@ -6,7 +6,9 @@ Resources:
 
   AuthorizerLambda:
     Type: AWS::Lambda::Function
+
     Properties:
+
       FunctionName: cloudmart-authorizer
 
       Runtime: python3.13
@@ -21,81 +23,226 @@ Resources:
       Code:
         ZipFile: |
           import boto3
+          import hmac
+
+
+          # =========================================================
+          # AWS CLIENT
+          # =========================================================
+
+          ssm = boto3.client("ssm")
+
+
+          # =========================================================
+          # LAMBDA HANDLER
+          # =========================================================
 
           def lambda_handler(event, context):
 
               print("========== AUTHORIZER START ==========")
               print("Event:", event)
 
-              token = event.get("authorizationToken", "")
-              method_arn = event.get("methodArn", "")
+              authorization = event.get(
+                  "authorizationToken",
+                  ""
+              )
 
-              print("Received token:", token)
+              method_arn = event.get(
+                  "methodArn",
+                  ""
+              )
+
+              print("Received token:", authorization)
               print("METHOD ARN:", method_arn)
 
-              ssm = boto3.client("ssm")
+
+              # =====================================================
+              # VALIDATE AUTHORIZATION HEADER
+              # =====================================================
+
+              if not authorization:
+
+                  print("TOKEN MISSING")
+
+                  raise Exception("Unauthorized")
+
+
+              # =====================================================
+              # GET TOKEN FROM SSM
+              # =====================================================
 
               try:
+
                   secret = ssm.get_parameter(
-                      Name="/cloudmart/auth/token"
+                      Name="/cloudmart/auth/token",
+                      WithDecryption=True
                   )["Parameter"]["Value"]
 
-                  print("Successfully retrieved token from SSM")
+                  print(
+                      "Successfully retrieved token from SSM"
+                  )
 
-                  if token == secret:
 
-                      print("TOKEN VALID - ALLOW")
+                  # =================================================
+                  # COMPARE TOKEN
+                  # =================================================
 
-                      return {
-                          "principalId": "cloudmart-user",
-                          "policyDocument": {
-                              "Version": "2012-10-17",
-                              "Statement": [
-                                  {
-                                      "Action": "execute-api:Invoke",
-                                      "Effect": "Allow",
-                                      "Resource":  method_arn
-                                  }
-                              ]
-                          },
-                          "context": {
-                              "user": "cloudmart-user"
-                          }
-                      }
+                  if not hmac.compare_digest(
+                      authorization,
+                      secret
+                  ):
 
-                  print("TOKEN INVALID - DENY")
+                      print("TOKEN INVALID")
+
+                      raise Exception("Unauthorized")
+
+
+                  print("TOKEN VALID - ALLOW")
+
+
+                  # =================================================
+                  # CREATE API ARN BASE
+                  #
+                  # Example methodArn:
+                  #
+                  # arn:aws:execute-api:ap-south-1:123456789:
+                  # abc123/prod/GET/products/1
+                  #
+                  # Result:
+                  #
+                  # arn:aws:execute-api:ap-south-1:123456789:
+                  # abc123/prod
+                  # =================================================
+
+                  arn_parts = method_arn.split("/")
+
+                  if len(arn_parts) < 3:
+
+                      print("INVALID METHOD ARN")
+
+                      raise Exception(
+                          "Invalid methodArn"
+                      )
+
+
+                  api_arn_base = "/".join(
+                      arn_parts[:2]
+                  )
+
+
+                  # =================================================
+                  # ALLOW ALL CRUD METHODS AND RESOURCES
+                  # =================================================
+
+                  resource = (
+                      api_arn_base
+                      + "/*/*"
+                  )
+
+
+                  print(
+                      "AUTHORIZED RESOURCE:",
+                      resource
+                  )
+
+
+                  # =================================================
+                  # RETURN ALLOW POLICY
+                  # =================================================
 
                   return {
-                      "principalId": "cloudmart-user",
+
+                      "principalId":
+                          "cloudmart-user",
+
                       "policyDocument": {
-                          "Version": "2012-10-17",
+
+                          "Version":
+                              "2012-10-17",
+
                           "Statement": [
+
                               {
-                                  "Action": "execute-api:Invoke",
-                                  "Effect": "Deny",
-                                  "Resource": method_arn
+
+                                  "Action":
+                                      "execute-api:Invoke",
+
+                                  "Effect":
+                                      "Allow",
+
+                                  "Resource":
+                                      resource
+
                               }
+
                           ]
+
+                      },
+
+                      "context": {
+
+                          "user":
+                              "cloudmart-user"
+
                       }
+
                   }
+
+
+              # =====================================================
+              # AUTHORIZATION ERROR
+              # =====================================================
 
               except Exception as e:
 
-                  print("========== AUTHORIZER ERROR ==========")
-                  print("ERROR:", str(e))
+                  print(
+                      "========== AUTHORIZER ERROR =========="
+                  )
 
-                  raise
+                  print(
+                      "ERROR:",
+                      str(e)
+                  )
+
+                  raise Exception(
+                      "Unauthorized"
+                  )
+
+
+  # ===============================================================
+  # API GATEWAY → AUTHORZIER LAMBDA PERMISSION
+  # ===============================================================
 
   AuthorizerPermission:
+
     Type: AWS::Lambda::Permission
+
     Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref AuthorizerLambda
-      Principal: apigateway.amazonaws.com
+
+      Action:
+        lambda:InvokeFunction
+
+      FunctionName:
+        !Ref AuthorizerLambda
+
+      Principal:
+        apigateway.amazonaws.com
+
+
+# ================================================================
+# OUTPUTS
+# ================================================================
 
 Outputs:
 
   AuthorizerLambdaArn:
-    Value: !GetAtt AuthorizerLambda.Arn
+
+    Description:
+      CloudMart Authorizer Lambda ARN
+
+    Value:
+      !GetAtt AuthorizerLambda.Arn
+
     Export:
-      Name: cloudmart-authorizer-lambda-arn
+      Name:
+        cloudmart-authorizer-lambda-arn

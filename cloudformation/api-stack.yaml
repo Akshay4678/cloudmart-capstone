@@ -66,8 +66,11 @@ Resources:
               try:
 
                   http_method = event.get("httpMethod", "GET")
+                  path_parameters = event.get("pathParameters") or {}
+                  product_id = path_parameters.get("id")
 
                   print("HTTP Method:", http_method)
+                  print("Product ID:", product_id)
 
                   if http_method != "GET":
                       return {
@@ -88,13 +91,52 @@ Resources:
 
                   with connection.cursor() as cursor:
 
-                      print("Executing SELECT query...")
+                      # GET /products/{id}
+                      if product_id:
+
+                          print("Getting product:", product_id)
+
+                          cursor.execute(
+                              "SELECT * FROM products WHERE product_id = %s",
+                              (product_id,)
+                          )
+
+                          product = cursor.fetchone()
+
+                          if not product:
+                              connection.close()
+
+                              return {
+                                  "statusCode": 404,
+                                  "headers": {
+                                      "Content-Type": "application/json",
+                                      "Access-Control-Allow-Origin": "*"
+                                  },
+                                  "body": json.dumps({
+                                      "message": "Product not found"
+                                  })
+                              }
+
+                          connection.close()
+
+                          return {
+                              "statusCode": 200,
+                              "headers": {
+                                  "Content-Type": "application/json",
+                                  "Access-Control-Allow-Origin": "*"
+                              },
+                              "body": json.dumps({
+                                  "message": "Product retrieved successfully",
+                                  "product": product
+                              }, default=str)
+                          }
+
+                      # GET /products
+                      print("Getting all products")
 
                       cursor.execute("SELECT * FROM products")
 
                       products = cursor.fetchall()
-
-                      print("Products found:", len(products))
 
                   connection.close()
 

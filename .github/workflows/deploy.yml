@@ -139,6 +139,9 @@ jobs:
           --stack-name cloudmart-api-stack \
           --template-file cloudformation/api-stack.yaml \
           --capabilities CAPABILITY_NAMED_IAM
+          --parameter-overrides \
+            DBPassword=${{ secrets.DB_PASSWORD }} \
+            CodeVersion=${{ github.sha }}
 
 
       - name: Check API Stack Status

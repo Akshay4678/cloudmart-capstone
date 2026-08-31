@@ -14,8 +14,17 @@ jobs:
 
     steps:
 
+      #################################################
+      # CHECKOUT
+      #################################################
+
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+
+      #################################################
+      # AWS CREDENTIALS
+      #################################################
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -23,8 +32,15 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-south-1
 
+
+      #################################################
+      # VERIFY AWS ACCESS
+      #################################################
+
       - name: Verify AWS Access
-        run: aws sts get-caller-identity
+        run: |
+          aws sts get-caller-identity
+
 
       #################################################
       # INSTALL CFN-LINT
@@ -34,18 +50,21 @@ jobs:
         run: |
           pip install cfn-lint
 
+
       #################################################
       # VALIDATE NETWORK STACK
       #################################################
 
       - name: Validate Network Stack
         run: |
-          cfn-lint --non-zero-exit-code error cloudformation/network-stack.yaml
+          cfn-lint --non-zero-exit-code error \
+            cloudformation/network-stack.yaml
 
       - name: CloudFormation Validate Network Stack
         run: |
           aws cloudformation validate-template \
-          --template-body file://cloudformation/network-stack.yaml
+            --template-body file://cloudformation/network-stack.yaml
+
 
       #################################################
       # VALIDATE DATA STACK
@@ -58,7 +77,8 @@ jobs:
       - name: CloudFormation Validate Data Stack
         run: |
           aws cloudformation validate-template \
-          --template-body file://cloudformation/data-stack.yaml
+            --template-body file://cloudformation/data-stack.yaml
+
 
       #################################################
       # VALIDATE IAM STACK
@@ -67,7 +87,31 @@ jobs:
       - name: CloudFormation Validate IAM Stack
         run: |
           aws cloudformation validate-template \
-          --template-body file://cloudformation/iam-stack.yaml
+            --template-body file://cloudformation/iam-stack.yaml
+
+
+      #################################################
+      # VALIDATE API STACK
+      #################################################
+
+      - name: Validate API Stack
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://cloudformation/api-stack.yaml
+
+
+      #################################################
+      # SHOW API STACK PARAMETERS
+      #################################################
+
+      - name: Check API Stack Template
+        run: |
+          echo "===== API STACK PARAMETERS ====="
+          grep -A15 "^Parameters:" cloudformation/api-stack.yaml
+
+          echo "===== PRODUCT LAMBDA CONFIGURATION ====="
+          grep -A45 "^  ProductLambda:" cloudformation/api-stack.yaml
+
 
       #################################################
       # DEPLOY NETWORK STACK
@@ -76,9 +120,10 @@ jobs:
       - name: Deploy Network Stack
         run: |
           aws cloudformation deploy \
-          --stack-name cloudmart-network-stack \
-          --template-file cloudformation/network-stack.yaml \
-          --capabilities CAPABILITY_NAMED_IAM
+            --stack-name cloudmart-network-stack \
+            --template-file cloudformation/network-stack.yaml \
+            --capabilities CAPABILITY_NAMED_IAM
+
 
       #################################################
       # DEPLOY DATA STACK
@@ -87,10 +132,15 @@ jobs:
       - name: Deploy Data Stack
         run: |
           aws cloudformation deploy \
-          --stack-name cloudmart-data-stack \
-          --template-file cloudformation/data-stack.yaml \
-          --parameter-overrides \
-          DBPassword=${{ secrets.DB_PASSWORD }}
+            --stack-name cloudmart-data-stack \
+            --template-file cloudformation/data-stack.yaml \
+            --parameter-overrides \
+              "DBPassword=${{ secrets.DB_PASSWORD }}"
+
+
+      #################################################
+      # SHOW DATA STACK ERRORS
+      #################################################
 
       - name: Show Data Stack Errors
         if: failure()
@@ -100,22 +150,23 @@ jobs:
             --query "StackEvents[?contains(ResourceStatus,'FAILED')].[LogicalResourceId,ResourceStatusReason]" \
             --output table
 
+
       #################################################
-      # DEPLOY IAM STAC
+      # DEPLOY IAM STACK
       #################################################
 
       - name: Deploy IAM Stack
         run: |
           aws cloudformation deploy \
-          --stack-name cloudmart-iam-stack \
-          --template-file cloudformation/iam-stack.yaml \
-          --capabilities CAPABILITY_NAMED_IAM \
-          --parameter-overrides \
-          DBUsername=cloudmartadmin \
-          DBPassword=${{ secrets.DB_PASSWORD }} \
-          AuthToken=${{ secrets.AUTH_TOKEN }}
+            --stack-name cloudmart-iam-stack \
+            --template-file cloudformation/iam-stack.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              "DBUsername=cloudmartadmin" \
+              "DBPassword=${{ secrets.DB_PASSWORD }}" \
+              "AuthToken=${{ secrets.AUTH_TOKEN }}"
 
-          
+
       #################################################
       # DEPLOY AUTH STACK
       #################################################
@@ -128,6 +179,53 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM
 
 
+      #################################################
+      # PACKAGE PRODUCT LAMBDA
+      #################################################
+
+      - name: Package Product Lambda
+        run: |
+          rm -rf build
+          mkdir -p build/product
+
+          cp lambda/product/index.py build/product/index.py
+
+          pip install \
+            -r lambda/product/requirements.txt \
+            -t build/product
+
+          cd build/product
+
+          zip -r ../product-lambda-${{ github.sha }}.zip .
+
+
+      #################################################
+      # GET LAMBDA ARTIFACT BUCKET
+      #################################################
+
+      - name: Get Lambda Artifact Bucket
+        id: lambda_bucket
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-data-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaBucket'].OutputValue" \
+            --output text)
+
+          echo "Lambda bucket: $BUCKET"
+
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+
+
+      #################################################
+      # UPLOAD PRODUCT LAMBDA
+      #################################################
+
+      - name: Upload Product Lambda
+        run: |
+          aws s3 cp \
+            "build/product-lambda-${{ github.sha }}.zip" \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/product-lambda-${{ github.sha }}.zip"
+
 
       #################################################
       # DEPLOY API STACK
@@ -136,35 +234,49 @@ jobs:
       - name: Deploy API Stack
         run: |
           aws cloudformation deploy \
-          --stack-name cloudmart-api-stack \
-          --template-file cloudformation/api-stack.yaml \
-          --capabilities CAPABILITY_NAMED_IAM \
-          --parameter-overrides \
-            DBPassword=${{ secrets.DB_PASSWORD }} \
-            CodeVersion=${{ github.sha }}
+            --stack-name cloudmart-api-stack \
+            --template-file cloudformation/api-stack.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              "DBPassword=${{ secrets.DB_PASSWORD }}" \
+              "CodeVersion=${{ github.sha }}"
 
+
+      #################################################
+      # CHECK API STACK STATUS
+      #################################################
 
       - name: Check API Stack Status
         run: |
           aws cloudformation describe-stacks \
-          --stack-name cloudmart-api-stack
+            --stack-name cloudmart-api-stack
 
 
       #################################################
-      # STACK STATU
+      # CHECK NETWORK STACK STATUS
       #################################################
 
       - name: Check Network Stack Status
         run: |
           aws cloudformation describe-stacks \
-          --stack-name cloudmart-network-stack
+            --stack-name cloudmart-network-stack
+
+
+      #################################################
+      # CHECK DATA STACK STATUS
+      #################################################
 
       - name: Check Data Stack Status
-        run: |
+      run: |
           aws cloudformation describe-stacks \
-          --stack-name cloudmart-data-stack
+            --stack-name cloudmart-data-stack
+
+
+      #################################################
+      # CHECK IAM STACK STATUS
+      #################################################
 
       - name: Check IAM Stack Status
         run: |
           aws cloudformation describe-stacks \
-          --stack-name cloudmart-iam-stack
+            --stack-name cloudmart-iam-stack

@@ -229,6 +229,19 @@ jobs:
 
 
       #################################################
+      # SHOW API STACK ERRORS
+      #################################################
+
+      - name: Show API Stack Events
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name cloudmart-api-stack \
+            --query "StackEvents[?contains(ResourceStatus,'FAILED')].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table
+
+
+      #################################################
       # CHECK API STACK STATUS
       #################################################
 

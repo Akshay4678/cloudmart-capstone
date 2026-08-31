@@ -166,23 +166,13 @@ jobs:
 
 
       #################################################
-      # PACKAGE PRODUCT LAMBDA
+      # FIND PRODUCT LAMBDA FILES
       #################################################
 
-      - name: Package Product Lambda
+      - name: Find Product Lambda Files
         run: |
-          rm -rf build
-          mkdir -p build/product
-
-          cp lambda/product/index.py build/product/index.py
-
-          pip install \
-            -r lambda/product/requirements.txt \
-            -t build/product
-
-          cd build/product
-
-          zip -r ../product-lambda-${{ github.sha }}.zip .
+          echo "===== REPOSITORY FILES ====="
+          find . -type f | sort
 
 
       #################################################

@@ -233,11 +233,13 @@ jobs:
       #################################################
 
       - name: Show API Stack Events
-        if: failure()
+        if: always()
         run: |
+          echo "===== API STACK EVENTS ====="
+
           aws cloudformation describe-stack-events \
             --stack-name cloudmart-api-stack \
-            --query "StackEvents[?contains(ResourceStatus,'FAILED')].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --query "StackEvents[0:20].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table
 
 

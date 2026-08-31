@@ -72,6 +72,81 @@ def response(status_code, body):
 
 
 # =========================================================
+# DATABASE INITIALIZATION
+# =========================================================
+
+def initialize_database():
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS products (
+                    product_id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    description TEXT,
+                    price DECIMAL(10,2) NOT NULL,
+                    stock_count INT NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS inventory (
+                    inventory_id INT AUTO_INCREMENT PRIMARY KEY,
+                    product_id INT NOT NULL,
+                    quantity INT NOT NULL DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    ON UPDATE CURRENT_TIMESTAMP,
+                    CONSTRAINT fk_inventory_product
+                    FOREIGN KEY (product_id)
+                    REFERENCES products(product_id)
+                    ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("SELECT COUNT(*) AS count FROM products")
+            product_count = cursor.fetchone()["count"]
+
+            if product_count == 0:
+                cursor.execute("""
+                    INSERT INTO products
+                    (name, description, price, stock_count)
+                    VALUES
+                    ('Laptop', 'Gaming Laptop', 75000.00, 10),
+                    ('Mouse', 'Wireless Mouse', 1500.00, 25),
+                    ('Keyboard', 'Mechanical Keyboard', 3500.00, 15)
+                """)
+
+                cursor.execute("SELECT product_id, stock_count FROM products ORDER BY product_id")
+                products = cursor.fetchall()
+
+                for product in products:
+                    cursor.execute("""
+                        INSERT INTO inventory (product_id, quantity)
+                        VALUES (%s, %s)
+                    """, (product["product_id"], product["stock_count"]))
+
+        connection.commit()
+        print("DATABASE INITIALIZATION SUCCESSFUL")
+
+    except Exception as e:
+        connection.rollback()
+        print("DATABASE INITIALIZATION FAILED")
+        print("DATABASE ERROR TYPE:", type(e).__name__)
+        print("DATABASE ERROR MESSAGE:", str(e))
+        raise
+
+    finally:
+        connection.close()
+        print("DATABASE INITIALIZATION CONNECTION CLOSED")
+
+
+# =========================================================
 # PUBLISH INVENTORY CHANGE EVENT
 # =========================================================
 
@@ -134,6 +209,8 @@ def lambda_handler(event, context):
         "Event:",
         json.dumps(event, default=str)
     )
+
+    initialize_database()
 
     connection = None
 

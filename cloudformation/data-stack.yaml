@@ -79,6 +79,8 @@ Outputs:
   DatabaseEndpoint:
     Description: RDS Endpoint
     Value: !GetAtt CloudMartDatabase.Endpoint.Address
+    Export:
+      Name: cloudmart-database-endpoint
 
   DatabasePort:
     Description: RDS Port

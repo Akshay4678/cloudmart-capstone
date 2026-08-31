@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   deploy:
-
     runs-on: ubuntu-latest
 
     steps:
@@ -98,19 +97,6 @@ jobs:
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/api-stack.yaml
-
-
-      #################################################
-      # SHOW API STACK PARAMETERS
-      #################################################
-
-      - name: Check API Stack Template
-        run: |
-          echo "===== API STACK PARAMETERS ====="
-          grep -A15 "^Parameters:" cloudformation/api-stack.yaml
-
-          echo "===== PRODUCT LAMBDA CONFIGURATION ====="
-          grep -A45 "^  ProductLambda:" cloudformation/api-stack.yaml
 
 
       #################################################
@@ -267,7 +253,7 @@ jobs:
       #################################################
 
       - name: Check Data Stack Status
-      run: |
+        run: |
           aws cloudformation describe-stacks \
             --stack-name cloudmart-data-stack
 

@@ -176,15 +176,12 @@ jobs:
           echo "===== PRODUCT LAMBDA ====="
           ls -la lambda/product/
 
-          echo "===== ORDER LAMBDA ====="
-          ls -la lambda/order/
-
           echo "===== ORDER PROCESSOR LAMBDA ====="
           ls -la lambda/order_processor/
 
 
       #################################################
-      # PACKAGE LAMBDAS
+      # PACKAGE LAMBDA FUNCTIONS
       #################################################
 
       - name: Package Lambda Functions
@@ -192,11 +189,11 @@ jobs:
           rm -rf build
 
           mkdir -p build/product
-          mkdir -p build/order
           mkdir -p build/order_processor
 
+
           #################################################
-          # PRODUCT
+          # PRODUCT LAMBDA
           #################################################
 
           cp lambda/product/lambda_function.py \
@@ -214,29 +211,11 @@ jobs:
 
 
           #################################################
-          # ORDER
-          #################################################
-
-          cp lambda/order/lambda_function.py \
-            build/order/lambda_function.py
-
-          pip install \
-            -r lambda/order/requirements.txt \
-            -t build/order
-
-          cd build/order
-
-          zip -r ../order-lambda-${{ github.sha }}.zip .
-
-          cd ../..
-
-
-          #################################################
-          # ORDER PROCESSOR
+          # ORDER PROCESSOR LAMBDA
           #################################################
 
           cp lambda/order_processor/lambda_function.py \
-            build/order_processor/lambda_function.py
+            build/order_processor/index.py
 
           pip install \
             -r lambda/order_processor/requirements.txt \
@@ -294,17 +273,6 @@ jobs:
 
 
       #################################################
-      # UPLOAD ORDER LAMBDA
-      #################################################
-
-      - name: Upload Order Lambda
-        run: |
-          aws s3 cp \
-            "build/order-lambda-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/order-lambda-${{ github.sha }}.zip"
-
-
-      #################################################
       # UPLOAD ORDER PROCESSOR LAMBDA
       #################################################
 
@@ -321,13 +289,13 @@ jobs:
 
       - name: Verify S3 Lambda Artifacts
         run: |
-          echo "===== S3 LAMBDA ARTIFACTS ====="
+          echo "===== PRODUCT LAMBDA ARTIFACTS ====="
 
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/"
 
-          aws s3 ls \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/"
+
+          echo "===== ORDER PROCESSOR LAMBDA ARTIFACTS ====="
 
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/"

@@ -15,20 +15,36 @@ Parameters:
   DBPassword:
     Type: String
     NoEcho: true
+    Description: CloudMart RDS master password
+
 
 Resources:
 
+  #################################################
+  # RDS SUBNET GROUP
+  #################################################
+
   RdsSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
+
     Properties:
       DBSubnetGroupDescription: CloudMart DB Subnet Group
+
       SubnetIds:
         - Fn::ImportValue: cloudmart-private-subnet-id
+
         - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+
+  #################################################
+  # CLOUDMART MYSQL DATABASE
+  #################################################
 
   CloudMartDatabase:
     Type: AWS::RDS::DBInstance
+
     Properties:
+
       Engine: mysql
 
       DBInstanceClass: db.t3.micro
@@ -60,40 +76,130 @@ Resources:
 
       BackupRetentionPeriod: 0
 
+
+  #################################################
+  # LAMBDA ARTIFACTS BUCKET
+  #################################################
+
   LambdaArtifactsBucket:
     Type: AWS::S3::Bucket
+
     Properties:
       BucketName: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
 
+
+  #################################################
+  # REPORTS BUCKET
+  #################################################
+
   ReportsBucket:
     Type: AWS::S3::Bucket
+
     Properties:
       BucketName: !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
 
+
 Outputs:
+
+  #################################################
+  # DATABASE IDENTIFIER
+  #################################################
 
   DatabaseIdentifier:
     Description: RDS Database Identifier
+
     Value: !Ref CloudMartDatabase
 
+    Export:
+      Name: cloudmart-database-identifier
+
+
+  #################################################
+  # DATABASE ENDPOINT
+  #################################################
+
   DatabaseEndpoint:
-    Description: RDS Endpoint
+    Description: RDS MySQL Endpoint
+
     Value: !GetAtt CloudMartDatabase.Endpoint.Address
+
     Export:
       Name: cloudmart-database-endpoint
 
+
+  #################################################
+  # DATABASE PORT
+  #################################################
+
   DatabasePort:
-    Description: RDS Port
+    Description: RDS MySQL Port
+
     Value: !GetAtt CloudMartDatabase.Endpoint.Port
 
+    Export:
+      Name: cloudmart-database-port
+
+
+  #################################################
+  # DATABASE NAME
+  #################################################
+
+  DatabaseName:
+    Description: CloudMart Database Name
+
+    Value: !Ref DBName
+
+    Export:
+      Name: cloudmart-database-name
+
+
+  #################################################
+  # DATABASE USERNAME
+  #################################################
+
+  DatabaseUsername:
+    Description: CloudMart Database Username
+
+    Value: !Ref DBUsername
+
+    Export:
+      Name: cloudmart-database-username
+
+
+  #################################################
+  # DATABASE SUBNET GROUP
+  #################################################
+
   DatabaseSubnetGroup:
-    Description: Database Subnet Group
+    Description: CloudMart RDS Subnet Group
+
     Value: !Ref RdsSubnetGroup
 
+    Export:
+      Name: cloudmart-database-subnet-group
+
+
+  #################################################
+  # LAMBDA ARTIFACTS BUCKET
+  #################################################
+
   LambdaBucket:
-    Description: Lambda Artifacts Bucket
+    Description: S3 bucket used for Lambda deployment packages
+
     Value: !Ref LambdaArtifactsBucket
 
+    Export:
+      Name: cloudmart-lambda-bucket
+
+
+  #################################################
+  # REPORTS BUCKET
+  #################################################
+
   ReportsBucket:
-    Description: Reports Bucket
+    Description: S3 bucket used for reports
+
     Value: !Ref ReportsBucket
+
+    Export:
+      Name: cloudmart-reports-bucket

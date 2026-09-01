@@ -93,7 +93,7 @@ jobs:
       # VALIDATE API STACK
       #################################################
 
-      - name: Validate API Stack
+      - name: CloudFormation Validate API Stack
         run: |
           aws cloudformation validate-template \
             --template-body file://cloudformation/api-stack.yaml
@@ -131,9 +131,11 @@ jobs:
       - name: Show Data Stack Errors
         if: failure()
         run: |
+          echo "===== DATA STACK EVENTS ====="
+
           aws cloudformation describe-stack-events \
             --stack-name cloudmart-data-stack \
-            --query "StackEvents[?contains(ResourceStatus,'FAILED')].[LogicalResourceId,ResourceStatusReason]" \
+            --query "StackEvents[0:20].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table
 
 
@@ -166,15 +168,39 @@ jobs:
 
 
       #################################################
-      # PACKAGE PRODUCT LAMBDA
+      # CHECK LAMBDA SOURCE FILES
       #################################################
 
-      - name: Package Product Lambda
+      - name: Check Lambda Source Files
+        run: |
+          echo "===== PRODUCT LAMBDA ====="
+          ls -la lambda/product/
+
+          echo "===== ORDER LAMBDA ====="
+          ls -la lambda/order/
+
+          echo "===== ORDER PROCESSOR LAMBDA ====="
+          ls -la lambda/order_processor/
+
+
+      #################################################
+      # PACKAGE LAMBDAS
+      #################################################
+
+      - name: Package Lambda Functions
         run: |
           rm -rf build
-          mkdir -p build/product
 
-          cp lambda/product/lambda_function.py build/product/index.py
+          mkdir -p build/product
+          mkdir -p build/order
+          mkdir -p build/order_processor
+
+          #################################################
+          # PRODUCT
+          #################################################
+
+          cp lambda/product/lambda_function.py \
+            build/product/index.py
 
           pip install \
             -r lambda/product/requirements.txt \
@@ -183,6 +209,55 @@ jobs:
           cd build/product
 
           zip -r ../product-lambda-${{ github.sha }}.zip .
+
+          cd ../..
+
+
+          #################################################
+          # ORDER
+          #################################################
+
+          cp lambda/order/lambda_function.py \
+            build/order/lambda_function.py
+
+          pip install \
+            -r lambda/order/requirements.txt \
+            -t build/order
+
+          cd build/order
+
+          zip -r ../order-lambda-${{ github.sha }}.zip .
+
+          cd ../..
+
+
+          #################################################
+          # ORDER PROCESSOR
+          #################################################
+
+          cp lambda/order_processor/lambda_function.py \
+            build/order_processor/lambda_function.py
+
+          pip install \
+            -r lambda/order_processor/requirements.txt \
+            -t build/order_processor
+
+          cd build/order_processor
+
+          zip -r ../order-processor-${{ github.sha }}.zip .
+
+
+      #################################################
+      # VERIFY BUILD ARTIFACTS
+      #################################################
+
+      - name: Verify Lambda Packages
+        run: |
+          echo "===== BUILD DIRECTORY ====="
+          find build -type f | sort
+
+          echo "===== ZIP FILES ====="
+          ls -lh build/*.zip
 
 
       #################################################
@@ -199,6 +274,11 @@ jobs:
 
           echo "Lambda bucket: $BUCKET"
 
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
+            echo "ERROR: Lambda artifact bucket was not found."
+            exit 1
+          fi
+
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
 
@@ -211,6 +291,46 @@ jobs:
           aws s3 cp \
             "build/product-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/product-lambda-${{ github.sha }}.zip"
+
+
+      #################################################
+      # UPLOAD ORDER LAMBDA
+      #################################################
+
+      - name: Upload Order Lambda
+        run: |
+          aws s3 cp \
+            "build/order-lambda-${{ github.sha }}.zip" \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/order-lambda-${{ github.sha }}.zip"
+
+
+      #################################################
+      # UPLOAD ORDER PROCESSOR LAMBDA
+      #################################################
+
+      - name: Upload Order Processor Lambda
+        run: |
+          aws s3 cp \
+            "build/order-processor-${{ github.sha }}.zip" \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/order-processor-${{ github.sha }}.zip"
+
+
+      #################################################
+      # SHOW S3 ARTIFACTS
+      #################################################
+
+      - name: Verify S3 Lambda Artifacts
+        run: |
+          echo "===== S3 LAMBDA ARTIFACTS ====="
+
+          aws s3 ls \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/"
+
+          aws s3 ls \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/"
+
+          aws s3 ls \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/"
 
 
       #################################################

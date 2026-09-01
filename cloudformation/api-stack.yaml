@@ -6,7 +6,7 @@ Parameters:
 
   CodeVersion:
     Type: String
-    Description: Git commit SHA used to identify the Product Lambda deployment package
+    Description: Git commit SHA used to identify the Lambda deployment packages
 
   DBPassword:
     Type: String
@@ -44,6 +44,7 @@ Resources:
         Variables:
           DB_HOST:
             Fn::ImportValue: cloudmart-database-endpoint
+
           DB_NAME: cloudmart
           DB_USER: cloudmartadmin
           DB_PASSWORD: !Ref DBPassword
@@ -55,7 +56,7 @@ Resources:
 
 
   #################################################
-  # SNS LOW STOCK ALERT
+  # LOW STOCK SNS TOPIC
   #################################################
 
   LowStockTopic:
@@ -63,6 +64,10 @@ Resources:
     Properties:
       TopicName: cloudmart-low-stock-alerts
 
+
+  #################################################
+  # LOW STOCK EMAIL SUBSCRIPTION
+  #################################################
 
   LowStockEmailSubscription:
     Type: AWS::SNS::Subscription
@@ -73,7 +78,7 @@ Resources:
 
 
   #################################################
-  # EVENTBRIDGE LOW STOCK RULE
+  # LOW STOCK EVENTBRIDGE RULE
   #################################################
 
   InventoryLowStockRule:
@@ -104,7 +109,7 @@ Resources:
 
 
   #################################################
-  # SNS TOPIC POLICY
+  # LOW STOCK SNS TOPIC POLICY
   #################################################
 
   LowStockTopicPolicy:
@@ -138,6 +143,209 @@ Resources:
 
 
   #################################################
+  # ORDER LAMBDA
+  #################################################
+
+  OrderLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cloudmart-order
+      Runtime: python3.13
+      Handler: lambda_function.lambda_handler
+
+      Role:
+        Fn::ImportValue: cloudmart-order-role-arn
+
+      Timeout: 15
+
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: cloudmart-private-subnet-id
+          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+        SecurityGroupIds:
+          - Fn::ImportValue: cloudmart-lambda-sg
+
+      Environment:
+        Variables:
+          DB_HOST:
+            Fn::ImportValue: cloudmart-database-endpoint
+
+          DB_NAME: cloudmart
+          DB_USER: cloudmartadmin
+          DB_PASSWORD: !Ref DBPassword
+          DB_PORT: "3306"
+
+      Code:
+        S3Bucket: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
+
+        S3Key: !Sub order/order-lambda-${CodeVersion}.zip
+
+
+  #################################################
+  # ORDER PROCESSOR LAMBDA
+  #################################################
+
+  OrderProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cloudmart-order-processor
+      Runtime: python3.13
+      Handler: lambda_function.lambda_handler
+
+      Role:
+        Fn::ImportValue: cloudmart-order-role-arn
+
+      Timeout: 30
+
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: cloudmart-private-subnet-id
+          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+        SecurityGroupIds:
+          - Fn::ImportValue: cloudmart-lambda-sg
+
+      Environment:
+        Variables:
+          DB_HOST:
+            Fn::ImportValue: cloudmart-database-endpoint
+
+          DB_NAME: cloudmart
+          DB_USER: cloudmartadmin
+          DB_PASSWORD: !Ref DBPassword
+          DB_PORT: "3306"
+
+      Code:
+        S3Bucket: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
+
+        S3Key: !Sub order-processor/order-processor-${CodeVersion}.zip
+
+
+  #################################################
+  # ORDER CONFIRMATION SNS TOPIC
+  #################################################
+
+  OrderConfirmationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cloudmart-order-confirmations
+
+
+  #################################################
+  # ORDER CONFIRMATION EMAIL
+  #################################################
+
+  OrderConfirmationEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref OrderConfirmationTopic
+      Protocol: email
+      Endpoint: uppu4678@gmail.com
+
+
+  #################################################
+  # ORDER CONFIRMATION EVENTBRIDGE RULE
+  #################################################
+
+  OrderConfirmedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cloudmart-order-confirmed-rule
+
+      Description: Send email when an order is confirmed
+
+      EventPattern:
+        source:
+          - cloudmart.orders
+
+        detail-type:
+          - OrderConfirmed
+
+      State: ENABLED
+
+      Targets:
+        - Arn: !Ref OrderConfirmationTopic
+          Id: OrderConfirmationSNSTarget
+
+
+  #################################################
+  # ORDER CONFIRMATION SNS POLICY
+  #################################################
+
+  OrderConfirmationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+
+      Topics:
+        - !Ref OrderConfirmationTopic
+
+      PolicyDocument:
+        Version: "2012-10-17"
+
+        Statement:
+
+          - Sid: AllowEventBridgePublish
+
+            Effect: Allow
+
+            Principal:
+              Service: events.amazonaws.com
+
+            Action:
+              - sns:Publish
+
+            Resource: !Ref OrderConfirmationTopic
+
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  !GetAtt OrderConfirmedRule.Arn
+
+
+  #################################################
+  # ORDER PLACED EVENTBRIDGE RULE
+  #################################################
+
+  OrderPlacedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cloudmart-order-placed-rule
+
+      Description: Process newly placed orders
+
+      EventPattern:
+        source:
+          - cloudmart.orders
+
+        detail-type:
+          - OrderPlaced
+
+      State: ENABLED
+
+      Targets:
+        - Arn: !GetAtt OrderProcessorLambda.Arn
+          Id: OrderProcessorTarget
+
+
+  #################################################
+  # ORDER PROCESSOR EVENTBRIDGE PERMISSION
+  #################################################
+
+  OrderProcessorEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+
+      FunctionName: !Ref OrderProcessorLambda
+
+      Principal: events.amazonaws.com
+
+      SourceArn:
+        !GetAtt OrderPlacedRule.Arn
+
+
+  #################################################
   # API GATEWAY
   #################################################
 
@@ -155,14 +363,19 @@ Resources:
     Type: AWS::ApiGateway::Authorizer
     Properties:
       Name: cloudmart-authorizer
+
       RestApiId: !Ref CloudMartApi
+
       Type: TOKEN
+
       IdentitySource: method.request.header.Authorization
+
       AuthorizerResultTtlInSeconds: 0
 
       AuthorizerUri:
         Fn::Sub:
           - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerArn}/invocations
+
           - AuthorizerArn:
               Fn::ImportValue: cloudmart-authorizer-lambda-arn
 
@@ -179,39 +392,59 @@ Resources:
       PathPart: products
 
 
+  #################################################
+  # GET /products
+  #################################################
+
   ProductsGetMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref CloudMartApi
       ResourceId: !Ref ProductsResource
+
       HttpMethod: GET
+
       AuthorizationType: CUSTOM
+
       AuthorizerId: !Ref CloudMartAuthorizer
 
       Integration:
         Type: AWS_PROXY
+
         IntegrationHttpMethod: POST
+
         Uri:
           Fn::Sub:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
             - LambdaArn: !GetAtt ProductLambda.Arn
 
+
+  #################################################
+  # POST /products
+  #################################################
 
   ProductsPostMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref CloudMartApi
       ResourceId: !Ref ProductsResource
+
       HttpMethod: POST
+
       AuthorizationType: CUSTOM
+
       AuthorizerId: !Ref CloudMartAuthorizer
 
       Integration:
         Type: AWS_PROXY
+
         IntegrationHttpMethod: POST
+
         Uri:
           Fn::Sub:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
             - LambdaArn: !GetAtt ProductLambda.Arn
 
 
@@ -227,62 +460,200 @@ Resources:
       PathPart: "{id}"
 
 
+  #################################################
+  # GET /products/{id}
+  #################################################
+
   ProductIdGetMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref CloudMartApi
       ResourceId: !Ref ProductIdResource
+
       HttpMethod: GET
+
       AuthorizationType: CUSTOM
+
       AuthorizerId: !Ref CloudMartAuthorizer
 
       Integration:
         Type: AWS_PROXY
+
         IntegrationHttpMethod: POST
+
         Uri:
           Fn::Sub:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
             - LambdaArn: !GetAtt ProductLambda.Arn
 
+
+  #################################################
+  # PUT /products/{id}
+  #################################################
 
   ProductIdPutMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref CloudMartApi
       ResourceId: !Ref ProductIdResource
+
       HttpMethod: PUT
+
       AuthorizationType: CUSTOM
+
       AuthorizerId: !Ref CloudMartAuthorizer
 
       Integration:
         Type: AWS_PROXY
+
         IntegrationHttpMethod: POST
+
         Uri:
           Fn::Sub:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
             - LambdaArn: !GetAtt ProductLambda.Arn
 
+
+  #################################################
+  # DELETE /products/{id}
+  #################################################
 
   ProductIdDeleteMethod:
     Type: AWS::ApiGateway::Method
     Properties:
       RestApiId: !Ref CloudMartApi
       ResourceId: !Ref ProductIdResource
+
       HttpMethod: DELETE
+
       AuthorizationType: CUSTOM
+
       AuthorizerId: !Ref CloudMartAuthorizer
 
       Integration:
         Type: AWS_PROXY
+
         IntegrationHttpMethod: POST
+
         Uri:
           Fn::Sub:
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
             - LambdaArn: !GetAtt ProductLambda.Arn
 
 
   #################################################
-  # LAMBDA PERMISSION
+  # /orders
+  #################################################
+
+  OrdersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ParentId: !GetAtt CloudMartApi.RootResourceId
+      PathPart: orders
+
+
+  #################################################
+  # POST /orders
+  #################################################
+
+  OrdersPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref OrdersResource
+
+      HttpMethod: POST
+
+      AuthorizationType: CUSTOM
+
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn: !GetAtt OrderLambda.Arn
+
+
+  #################################################
+  # GET /orders?customerId=X
+  #################################################
+
+  OrdersGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref OrdersResource
+
+      HttpMethod: GET
+
+      AuthorizationType: CUSTOM
+
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn: !GetAtt OrderLambda.Arn
+
+
+  #################################################
+  # /orders/{id}
+  #################################################
+
+  OrderIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ParentId: !Ref OrdersResource
+      PathPart: "{id}"
+
+
+  #################################################
+  # GET /orders/{id}
+  #################################################
+
+  OrderIdGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CloudMartApi
+      ResourceId: !Ref OrderIdResource
+
+      HttpMethod: GET
+
+      AuthorizationType: CUSTOM
+
+      AuthorizerId: !Ref CloudMartAuthorizer
+
+      Integration:
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+          Fn::Sub:
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn: !GetAtt OrderLambda.Arn
+
+
+  #################################################
+  # AUTHORIZE AUTHORIZE LAMBDA
   #################################################
 
   AuthorizerLambdaPermission:
@@ -299,12 +670,33 @@ Resources:
         !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
 
 
+  #################################################
+  # PRODUCT LAMBDA PERMISSION
+  #################################################
+
   ProductLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
 
       FunctionName: !Ref ProductLambda
+
+      Principal: apigateway.amazonaws.com
+
+      SourceArn:
+        !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
+
+
+  #################################################
+  # ORDER LAMBDA PERMISSION
+  #################################################
+
+  OrderLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+
+      FunctionName: !Ref OrderLambda
 
       Principal: apigateway.amazonaws.com
 
@@ -326,9 +718,17 @@ Resources:
       - ProductIdPutMethod
       - ProductIdDeleteMethod
 
+      - OrdersPostMethod
+      - OrdersGetMethod
+      - OrderIdGetMethod
+
     Properties:
       RestApiId: !Ref CloudMartApi
 
+
+  #################################################
+  # API STAGE
+  #################################################
 
   ApiStage:
     Type: AWS::ApiGateway::Stage
@@ -340,17 +740,64 @@ Resources:
 
 Outputs:
 
+  #################################################
+  # API ID
+  #################################################
+
   ApiId:
     Value: !Ref CloudMartApi
+
     Export:
       Name: cloudmart-api-id
 
+
+  #################################################
+  # API INVOKE URL
+  #################################################
 
   ApiInvokeUrl:
     Value: !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/prod
 
 
+  #################################################
+  # PRODUCT LAMBDA ARN
+  #################################################
+
   ProductLambdaArn:
     Value: !GetAtt ProductLambda.Arn
+
     Export:
       Name: cloudmart-product-lambda-arn
+
+
+  #################################################
+  # ORDER LAMBDA ARN
+  #################################################
+
+  OrderLambdaArn:
+    Value: !GetAtt OrderLambda.Arn
+
+    Export:
+      Name: cloudmart-order-lambda-arn
+
+
+  #################################################
+  # ORDER PROCESSOR LAMBDA ARN
+  #################################################
+
+  OrderProcessorLambdaArn:
+    Value: !GetAtt OrderProcessorLambda.Arn
+
+    Export:
+      Name: cloudmart-order-processor-lambda-arn
+
+
+  #################################################
+  # ORDER SNS TOPIC ARN
+  #################################################
+
+  OrderConfirmationTopicArn:
+    Value: !Ref OrderConfirmationTopic
+
+    Export:
+      Name: cloudmart-order-confirmation-topic-arn

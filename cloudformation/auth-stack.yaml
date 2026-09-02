@@ -2,14 +2,112 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart Authentication Stack
 
+
+# ================================================================
+# PARAMETERS
+# ================================================================
+
+Parameters:
+
+  AuthToken:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: >
+      Authentication token used by the CloudMart Lambda Authorizer.
+      Stored in SSM Parameter Store as SecureString.
+
+
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: CloudMart deployment environment
+
+
+# ================================================================
+# RESOURCES
+# ================================================================
+
 Resources:
+
+
+  # ==============================================================
+  # SSM - AUTHENTICATION TOKEN
+  #
+  # Sensitive value:
+  # SecureString
+  #
+  # Document:
+  # /cloudmart/dev/auth/token
+  # ==============================================================
+
+  AuthTokenParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+
+      Name: !Sub /cloudmart/${EnvironmentName}/auth/token
+
+      Type: SecureString
+
+      Value: !Ref AuthToken
+
+      Description: CloudMart authentication token
+
+      Tier: Standard
+
+      Tags:
+
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: Authentication
+
+
+  # ==============================================================
+  # SSM - APPLICATION ENVIRONMENT
+  #
+  # Non-sensitive configuration:
+  # String
+  #
+  # Document:
+  # /cloudmart/dev/app/environment
+  # ==============================================================
+
+  EnvironmentParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+
+      Name: !Sub /cloudmart/${EnvironmentName}/app/environment
+
+      Type: String
+
+      Value: !Ref EnvironmentName
+
+      Description: CloudMart application environment
+
+      Tier: Standard
+
+      Tags:
+
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: ApplicationConfiguration
+
+
+  # ==============================================================
+  # LAMBDA AUTHORIZER
+  # ==============================================================
 
   AuthorizerLambda:
     Type: AWS::Lambda::Function
 
     Properties:
 
-      FunctionName: cloudmart-authorizer
+      FunctionName: !Sub cloudmart-authorizer-${EnvironmentName}
 
       Runtime: python3.13
 
@@ -20,8 +118,22 @@ Resources:
 
       Timeout: 10
 
+      MemorySize: 128
+
+      Environment:
+
+        Variables:
+
+          AUTH_TOKEN_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/auth/token
+
+          APP_ENVIRONMENT_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/app/environment
+
       Code:
+
         ZipFile: |
+
           import boto3
           import hmac
 
@@ -34,13 +146,24 @@ Resources:
 
 
           # =========================================================
+          # ENVIRONMENT VARIABLES
+          # =========================================================
+
+          import os
+
+
+          AUTH_TOKEN_PARAMETER = os.environ[
+              "AUTH_TOKEN_PARAMETER"
+          ]
+
+
+          # =========================================================
           # LAMBDA HANDLER
           # =========================================================
 
           def lambda_handler(event, context):
 
               print("========== AUTHORIZER START ==========")
-              print("Event:", event)
 
               authorization = event.get(
                   "authorizationToken",
@@ -51,9 +174,6 @@ Resources:
                   "methodArn",
                   ""
               )
-
-              print("Received token:", authorization)
-              print("METHOD ARN:", method_arn)
 
 
               # =====================================================
@@ -73,14 +193,16 @@ Resources:
 
               try:
 
-                  secret = ssm.get_parameter(
-                      Name="/cloudmart/auth/token",
+                  parameter = ssm.get_parameter(
+                      Name=AUTH_TOKEN_PARAMETER,
                       WithDecryption=True
-                  )["Parameter"]["Value"]
-
-                  print(
-                      "Successfully retrieved token from SSM"
                   )
+
+                  secret = parameter[
+                      "Parameter"
+                  ][
+                      "Value"
+                  ]
 
 
                   # =================================================
@@ -94,27 +216,20 @@ Resources:
 
                       print("TOKEN INVALID")
 
-                      raise Exception("Unauthorized")
+                      raise Exception(
+                          "Unauthorized"
+                      )
 
 
-                  print("TOKEN VALID - ALLOW")
+                  print("TOKEN VALID")
 
 
                   # =================================================
-                  # CREATE API ARN BASE
-                  #
-                  # Example methodArn:
-                  #
-                  # arn:aws:execute-api:ap-south-1:123456789:
-                  # abc123/prod/GET/products/1
-                  #
-                  # Result:
-                  #
-                  # arn:aws:execute-api:ap-south-1:123456789:
-                  # abc123/prod
+                  # VALIDATE METHOD ARN
                   # =================================================
 
                   arn_parts = method_arn.split("/")
+
 
                   if len(arn_parts) < 3:
 
@@ -125,24 +240,32 @@ Resources:
                       )
 
 
+                  # =================================================
+                  # CREATE API ARN BASE
+                  #
+                  # Example:
+                  #
+                  # arn:aws:execute-api:ap-south-1:
+                  # 123456789:abc123/prod/GET/products
+                  #
+                  # Base:
+                  #
+                  # arn:aws:execute-api:ap-south-1:
+                  # 123456789:abc123/prod
+                  # =================================================
+
                   api_arn_base = "/".join(
                       arn_parts[:2]
                   )
 
 
                   # =================================================
-                  # ALLOW ALL CRUD METHODS AND RESOURCES
+                  # ALLOW AUTHENTICATED API ACCESS
                   # =================================================
 
                   resource = (
                       api_arn_base
                       + "/*/*"
-                  )
-
-
-                  print(
-                      "AUTHORIZED RESOURCE:",
-                      resource
                   )
 
 
@@ -182,7 +305,12 @@ Resources:
                       "context": {
 
                           "user":
-                              "cloudmart-user"
+                              "cloudmart-user",
+
+                          "environment":
+                              os.environ[
+                                  "APP_ENVIRONMENT_PARAMETER"
+                              ]
 
                       }
 
@@ -209,12 +337,11 @@ Resources:
                   )
 
 
-  # ===============================================================
-  # API GATEWAY → AUTHORZIER LAMBDA PERMISSION
-  # ===============================================================
+  # ==============================================================
+  # API GATEWAY -> AUTHORIZE LAMBDA PERMISSION
+  # ==============================================================
 
   AuthorizerPermission:
-
     Type: AWS::Lambda::Permission
 
     Properties:
@@ -235,10 +362,14 @@ Resources:
 
 Outputs:
 
+
+  # ==============================================================
+  # AUTHORIZE LAMBDA ARN
+  # ==============================================================
+
   AuthorizerLambdaArn:
 
-    Description:
-      CloudMart Authorizer Lambda ARN
+    Description: CloudMart Authorizer Lambda ARN
 
     Value:
       !GetAtt AuthorizerLambda.Arn
@@ -246,3 +377,51 @@ Outputs:
     Export:
       Name:
         cloudmart-authorizer-lambda-arn
+
+
+  # ==============================================================
+  # AUTHORIZE LAMBDA NAME
+  # ==============================================================
+
+  AuthorizerLambdaName:
+
+    Description: CloudMart Authorizer Lambda Name
+
+    Value:
+      !Ref AuthorizerLambda
+
+    Export:
+      Name:
+        cloudmart-authorizer-lambda-name
+
+
+  # ==============================================================
+  # AUTH TOKEN PARAMETER NAME
+  # ==============================================================
+
+  AuthTokenParameterName:
+
+    Description: SSM parameter containing the CloudMart authentication token
+
+    Value:
+      !Ref AuthTokenParameter
+
+    Export:
+      Name:
+        cloudmart-auth-token-parameter
+
+
+  # ==============================================================
+  # ENVIRONMENT PARAMETER NAME
+  # ==============================================================
+
+  EnvironmentParameterName:
+
+    Description: SSM parameter containing the CloudMart environment
+
+    Value:
+      !Ref EnvironmentParameter
+
+    Export:
+      Name:
+        cloudmart-environment-parameter

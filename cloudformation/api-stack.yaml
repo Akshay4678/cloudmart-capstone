@@ -1,30 +1,53 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
-Description: CloudMart API Stack
+Description: CloudMart Application Stack
+
+
+############################################################
+# PARAMETERS
+############################################################
 
 Parameters:
 
   CodeVersion:
     Type: String
-    Description: Git commit SHA used to identify the Product Lambda deployment package
+    Description: Git commit SHA used for Lambda deployment packages
 
   DBPassword:
     Type: String
     NoEcho: true
     Description: CloudMart RDS master password
 
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: CloudMart environment
+
+
+############################################################
+# RESOURCES
+############################################################
 
 Resources:
 
-  #################################################
+
+  ############################################################
   # PRODUCT LAMBDA
-  #################################################
+  ############################################################
 
   ProductLambda:
     Type: AWS::Lambda::Function
+
     Properties:
-      FunctionName: cloudmart-product
+
+      FunctionName:
+        !Sub cloudmart-product-${EnvironmentName}
+
       Runtime: python3.13
+
       Handler: index.lambda_handler
 
       Role:
@@ -33,6 +56,7 @@ Resources:
       Timeout: 15
 
       VpcConfig:
+
         SubnetIds:
           - Fn::ImportValue: cloudmart-private-subnet-id
           - Fn::ImportValue: cloudmart-private-subnet-2-id
@@ -41,49 +65,269 @@ Resources:
           - Fn::ImportValue: cloudmart-lambda-sg
 
       Environment:
+
         Variables:
+
           DB_HOST:
             Fn::ImportValue: cloudmart-database-endpoint
-          DB_NAME: cloudmart
-          DB_USER: cloudmartadmin
-          DB_PASSWORD: !Ref DBPassword
-          DB_PORT: "3306"
+
+          DB_NAME:
+            Fn::ImportValue: cloudmart-database-name
+
+          DB_USER:
+            Fn::ImportValue: cloudmart-database-username
+
+          DB_PASSWORD:
+            !Ref DBPassword
+
+          DB_PORT:
+            "3306"
+
+          ENVIRONMENT:
+            !Ref EnvironmentName
 
       Code:
-        S3Bucket: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
-        S3Key: !Sub product/product-lambda-${CodeVersion}.zip
+
+        S3Bucket:
+          Fn::ImportValue: cloudmart-lambda-bucket
+
+        S3Key:
+          !Sub product/product-lambda-${CodeVersion}.zip
 
 
-  #################################################
-  # SNS LOW STOCK ALERT
-  #################################################
+  ############################################################
+  # ORDER DLQ
+  ############################################################
+
+  OrderDeadLetterQueue:
+    Type: AWS::SQS::Queue
+
+    Properties:
+
+      QueueName:
+        !Sub cloudmart-orders-dlq-${EnvironmentName}
+
+      MessageRetentionPeriod:
+        1209600
+
+
+  ############################################################
+  # ORDER QUEUE
+  ############################################################
+
+  OrderQueue:
+    Type: AWS::SQS::Queue
+
+    Properties:
+
+      QueueName:
+        !Sub cloudmart-orders-${EnvironmentName}
+
+      VisibilityTimeout:
+        120
+
+      MessageRetentionPeriod:
+        345600
+
+      ReceiveMessageWaitTimeSeconds:
+        10
+
+      RedrivePolicy:
+
+        deadLetterTargetArn:
+          !GetAtt OrderDeadLetterQueue.Arn
+
+        maxReceiveCount:
+          3
+
+
+  ############################################################
+  # ORDER LAMBDA
+  ############################################################
+
+  OrderLambda:
+    Type: AWS::Lambda::Function
+
+    Properties:
+
+      FunctionName:
+        !Sub cloudmart-order-${EnvironmentName}
+
+      Runtime: python3.13
+
+      Handler: index.lambda_handler
+
+      Role:
+        Fn::ImportValue: cloudmart-order-role-arn
+
+      Timeout: 15
+
+      VpcConfig:
+
+        SubnetIds:
+          - Fn::ImportValue: cloudmart-private-subnet-id
+          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+        SecurityGroupIds:
+          - Fn::ImportValue: cloudmart-lambda-sg
+
+      Environment:
+
+        Variables:
+
+          ORDERS_TABLE:
+            Fn::ImportValue: cloudmart-orders-table-name
+
+          ORDER_QUEUE_URL:
+            !Ref OrderQueue
+
+          ENVIRONMENT:
+            !Ref EnvironmentName
+
+      Code:
+
+        S3Bucket:
+          Fn::ImportValue: cloudmart-lambda-bucket
+
+        S3Key:
+          !Sub order/order-lambda-${CodeVersion}.zip
+
+
+  ############################################################
+  # ORDER PROCESSING LAMBDA
+  ############################################################
+
+  OrderProcessorLambda:
+    Type: AWS::Lambda::Function
+
+    Properties:
+
+      FunctionName:
+        !Sub cloudmart-order-processor-${EnvironmentName}
+
+      Runtime: python3.13
+
+      Handler: index.lambda_handler
+
+      Role:
+        Fn::ImportValue: cloudmart-order-processing-role-arn
+
+      Timeout: 30
+
+      VpcConfig:
+
+        SubnetIds:
+          - Fn::ImportValue: cloudmart-private-subnet-id
+          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+        SecurityGroupIds:
+          - Fn::ImportValue: cloudmart-lambda-sg
+
+      Environment:
+
+        Variables:
+
+          DB_HOST:
+            Fn::ImportValue: cloudmart-database-endpoint
+
+          DB_NAME:
+            Fn::ImportValue: cloudmart-database-name
+
+          DB_USER:
+            Fn::ImportValue: cloudmart-database-username
+
+          DB_PASSWORD:
+            !Ref DBPassword
+
+          DB_PORT:
+            "3306"
+
+          ORDERS_TABLE:
+            Fn::ImportValue: cloudmart-orders-table-name
+
+          ENVIRONMENT:
+            !Ref EnvironmentName
+
+      Code:
+
+        S3Bucket:
+          Fn::ImportValue: cloudmart-lambda-bucket
+
+        S3Key:
+          !Sub order-processor/order-processor-${CodeVersion}.zip
+
+
+  ############################################################
+  # SQS → ORDER PROCESSING LAMBDA
+  ############################################################
+
+  OrderProcessorEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+
+    Properties:
+
+      EventSourceArn:
+        !GetAtt OrderQueue.Arn
+
+      FunctionName:
+        !GetAtt OrderProcessorLambda.Arn
+
+      BatchSize:
+        1
+
+      Enabled:
+        true
+
+
+  ############################################################
+  # LOW STOCK SNS
+  ############################################################
 
   LowStockTopic:
     Type: AWS::SNS::Topic
-    Properties:
-      TopicName: cloudmart-low-stock-alerts
 
+    Properties:
+
+      TopicName:
+        !Sub cloudmart-low-stock-alerts-${EnvironmentName}
+
+
+  ############################################################
+  # LOW STOCK EMAIL
+  ############################################################
 
   LowStockEmailSubscription:
     Type: AWS::SNS::Subscription
+
     Properties:
-      TopicArn: !Ref LowStockTopic
-      Protocol: email
-      Endpoint: uppu4678@gmail.com
+
+      TopicArn:
+        !Ref LowStockTopic
+
+      Protocol:
+        email
+
+      Endpoint:
+        uppu4678@gmail.com
 
 
-  #################################################
-  # EVENTBRIDGE LOW STOCK RULE
-  #################################################
+  ############################################################
+  # LOW STOCK EVENTBRIDGE RULE
+  ############################################################
 
   InventoryLowStockRule:
     Type: AWS::Events::Rule
-    Properties:
-      Name: cloudmart-inventory-low-stock-rule
 
-      Description: Send SNS alert when product stock is low
+    Properties:
+
+      Name:
+        !Sub cloudmart-inventory-low-stock-rule-${EnvironmentName}
+
+      Description:
+        Send notification when inventory becomes low
 
       EventPattern:
+
         source:
           - cloudmart.inventory
 
@@ -91,266 +335,1498 @@ Resources:
           - InventoryChanged
 
         detail:
+
           stock_count:
+
             - numeric:
                 - "<="
                 - 5
 
-      State: ENABLED
+      State:
+        ENABLED
 
       Targets:
-        - Arn: !Ref LowStockTopic
-          Id: LowStockSNSTarget
+
+        - Arn:
+            !Ref LowStockTopic
+
+          Id:
+            LowStockSNSTarget
 
 
-  #################################################
-  # SNS TOPIC POLICY
-  #################################################
+  ############################################################
+  # LOW STOCK SNS POLICY
+  ############################################################
 
   LowStockTopicPolicy:
     Type: AWS::SNS::TopicPolicy
+
     Properties:
 
       Topics:
         - !Ref LowStockTopic
 
       PolicyDocument:
-        Version: "2012-10-17"
+
+        Version:
+          "2012-10-17"
 
         Statement:
 
-          - Sid: AllowEventBridgePublish
+          - Sid:
+              AllowEventBridgePublish
 
-            Effect: Allow
+            Effect:
+              Allow
 
             Principal:
-              Service: events.amazonaws.com
+
+              Service:
+                events.amazonaws.com
 
             Action:
-              - sns:Publish
+              sns:Publish
 
-            Resource: !Ref LowStockTopic
+            Resource:
+              !Ref LowStockTopic
 
             Condition:
+
               ArnEquals:
+
                 aws:SourceArn:
-                  !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/cloudmart-inventory-low-stock-rule
+                  !GetAtt InventoryLowStockRule.Arn
 
 
-  #################################################
+  ############################################################
+  # ORDER CONFIRMATION SNS
+  ############################################################
+
+  OrderConfirmationTopic:
+    Type: AWS::SNS::Topic
+
+    Properties:
+
+      TopicName:
+        !Sub cloudmart-order-confirmations-${EnvironmentName}
+
+
+  ############################################################
+  # ORDER CONFIRMATION EMAIL
+  ############################################################
+
+  OrderConfirmationEmailSubscription:
+    Type: AWS::SNS::Subscription
+
+    Properties:
+
+      TopicArn:
+        !Ref OrderConfirmationTopic
+
+      Protocol:
+        email
+
+      Endpoint:
+        uppu4678@gmail.com
+
+
+  ############################################################
+  # ORDER PROCESSED EVENTBRIDGE RULE
+  ############################################################
+
+  OrderProcessedRule:
+    Type: AWS::Events::Rule
+
+    Properties:
+
+      Name:
+        !Sub cloudmart-order-processed-rule-${EnvironmentName}
+
+      Description:
+        Send notification after successful order processing
+
+      EventPattern:
+
+        source:
+          - cloudmart.orders
+
+        detail-type:
+          - OrderProcessed
+
+      State:
+        ENABLED
+
+      Targets:
+
+        - Arn:
+            !Ref OrderConfirmationTopic
+
+          Id:
+            OrderConfirmationSNSTarget
+
+
+  ############################################################
+  # ORDER CONFIRMATION SNS POLICY
+  ############################################################
+
+  OrderConfirmationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+
+    Properties:
+
+      Topics:
+        - !Ref OrderConfirmationTopic
+
+      PolicyDocument:
+
+        Version:
+          "2012-10-17"
+
+        Statement:
+
+          - Sid:
+              AllowEventBridgePublish
+
+            Effect:
+              Allow
+
+            Principal:
+
+              Service:
+                events.amazonaws.com
+
+            Action:
+              sns:Publish
+
+            Resource:
+              !Ref OrderConfirmationTopic
+
+            Condition:
+
+              ArnEquals:
+
+                aws:SourceArn:
+                  !GetAtt OrderProcessedRule.Arn
+
+
+  ############################################################
+  # ORDER FAILURE SNS
+  ############################################################
+
+  OrderFailureTopic:
+    Type: AWS::SNS::Topic
+
+    Properties:
+
+      TopicName:
+        !Sub cloudmart-order-processing-failures-${EnvironmentName}
+
+
+  ############################################################
+  # ORDER FAILURE EMAIL
+  ############################################################
+
+  OrderFailureEmailSubscription:
+    Type: AWS::SNS::Subscription
+
+    Properties:
+
+      TopicArn:
+        !Ref OrderFailureTopic
+
+      Protocol:
+        email
+
+      Endpoint:
+        uppu4678@gmail.com
+
+
+  ############################################################
+  # ORDER FAILED EVENTBRIDGE RULE
+  ############################################################
+
+  OrderFailedRule:
+    Type: AWS::Events::Rule
+
+    Properties:
+
+      Name:
+        !Sub cloudmart-order-failed-rule-${EnvironmentName}
+
+      Description:
+        Notify when order processing fails
+
+      EventPattern:
+
+        source:
+          - cloudmart.orders
+
+        detail-type:
+          - OrderFailed
+
+      State:
+        ENABLED
+
+      Targets:
+
+        - Arn:
+            !Ref OrderFailureTopic
+
+          Id:
+            OrderFailureSNSTarget
+
+
+  ############################################################
+  # ORDER FAILURE SNS POLICY
+  ############################################################
+
+  OrderFailureTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+
+    Properties:
+
+      Topics:
+        - !Ref OrderFailureTopic
+
+      PolicyDocument:
+
+        Version:
+          "2012-10-17"
+
+        Statement:
+
+          - Sid:
+              AllowEventBridgePublish
+
+            Effect:
+              Allow
+
+            Principal:
+
+              Service:
+                events.amazonaws.com
+
+            Action:
+              sns:Publish
+
+            Resource:
+              !Ref OrderFailureTopic
+
+            Condition:
+
+              ArnEquals:
+
+                aws:SourceArn:
+                  !GetAtt OrderFailedRule.Arn
+
+
+  ############################################################
+  # REPORT LAMBDA
+  ############################################################
+
+  ReportLambda:
+    Type: AWS::Lambda::Function
+
+    Properties:
+
+      FunctionName:
+        !Sub cloudmart-report-${EnvironmentName}
+
+      Runtime:
+        python3.13
+
+      Handler:
+        index.lambda_handler
+
+      Role:
+        Fn::ImportValue: cloudmart-report-role-arn
+
+      Timeout:
+        60
+
+      VpcConfig:
+
+        SubnetIds:
+          - Fn::ImportValue: cloudmart-private-subnet-id
+          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+        SecurityGroupIds:
+          - Fn::ImportValue: cloudmart-lambda-sg
+
+      Environment:
+
+        Variables:
+
+          REPORTS_BUCKET:
+            Fn::ImportValue: cloudmart-reports-bucket
+
+          ORDERS_TABLE:
+            Fn::ImportValue: cloudmart-orders-table-name
+
+          DB_HOST:
+            Fn::ImportValue: cloudmart-database-endpoint
+
+          DB_NAME:
+            Fn::ImportValue: cloudmart-database-name
+
+          DB_USER:
+            Fn::ImportValue: cloudmart-database-username
+
+          DB_PASSWORD:
+            !Ref DBPassword
+
+          DB_PORT:
+            "3306"
+
+          ENVIRONMENT:
+            !Ref EnvironmentName
+
+      Code:
+
+        S3Bucket:
+          Fn::ImportValue: cloudmart-lambda-bucket
+
+        S3Key:
+          !Sub report/report-lambda-${CodeVersion}.zip
+
+
+  ############################################################
+  # DAILY REPORT EVENTBRIDGE RULE
+  ############################################################
+
+  DailyReportRule:
+    Type: AWS::Events::Rule
+
+    Properties:
+
+      Name:
+        !Sub cloudmart-daily-report-rule-${EnvironmentName}
+
+      Description:
+        Generate the daily CloudMart report
+
+      ScheduleExpression:
+        cron(0 18 * * ? *)
+
+      State:
+        ENABLED
+
+      Targets:
+
+        - Arn:
+            !GetAtt ReportLambda.Arn
+
+          Id:
+            ReportLambdaTarget
+
+
+  ############################################################
+  # EVENTBRIDGE → REPORT LAMBDA PERMISSION
+  ############################################################
+
+  ReportLambdaPermission:
+    Type: AWS::Lambda::Permission
+
+    Properties:
+
+      Action:
+        lambda:InvokeFunction
+
+      FunctionName:
+        !Ref ReportLambda
+
+      Principal:
+        events.amazonaws.com
+
+      SourceArn:
+        !GetAtt DailyReportRule.Arn
+
+
+  ############################################################
   # API GATEWAY
-  #################################################
+  ############################################################
 
   CloudMartApi:
     Type: AWS::ApiGateway::RestApi
+
     Properties:
-      Name: cloudmart-api
+
+      Name:
+        !Sub cloudmart-api-${EnvironmentName}
 
 
-  #################################################
-  # AUTHORIZER
-  #################################################
+  ############################################################
+  # API GATEWAY AUTHORIZER
+  ############################################################
 
   CloudMartAuthorizer:
     Type: AWS::ApiGateway::Authorizer
+
     Properties:
-      Name: cloudmart-authorizer
-      RestApiId: !Ref CloudMartApi
-      Type: TOKEN
-      IdentitySource: method.request.header.Authorization
-      AuthorizerResultTtlInSeconds: 0
+
+      Name:
+        !Sub cloudmart-authorizer-${EnvironmentName}
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      Type:
+        TOKEN
+
+      IdentitySource:
+        method.request.header.Authorization
+
+      AuthorizerResultTtlInSeconds:
+        0
 
       AuthorizerUri:
+
         Fn::Sub:
+
           - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerArn}/invocations
+
           - AuthorizerArn:
               Fn::ImportValue: cloudmart-authorizer-lambda-arn
 
 
-  #################################################
+  ############################################################
   # /products
-  #################################################
+  ############################################################
 
   ProductsResource:
     Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref CloudMartApi
-      ParentId: !GetAtt CloudMartApi.RootResourceId
-      PathPart: products
 
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ParentId:
+        !GetAtt CloudMartApi.RootResourceId
+
+      PathPart:
+        products
+
+
+  ############################################################
+  # GET /products
+  ############################################################
 
   ProductsGetMethod:
     Type: AWS::ApiGateway::Method
+
     Properties:
-      RestApiId: !Ref CloudMartApi
-      ResourceId: !Ref ProductsResource
-      HttpMethod: GET
-      AuthorizationType: CUSTOM
-      AuthorizerId: !Ref CloudMartAuthorizer
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref ProductsResource
+
+      HttpMethod:
+        GET
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
 
       Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri:
-          Fn::Sub:
-            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
 
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt ProductLambda.Arn
+
+
+  ############################################################
+  # POST /products
+  ############################################################
 
   ProductsPostMethod:
     Type: AWS::ApiGateway::Method
+
     Properties:
-      RestApiId: !Ref CloudMartApi
-      ResourceId: !Ref ProductsResource
-      HttpMethod: POST
-      AuthorizationType: CUSTOM
-      AuthorizerId: !Ref CloudMartAuthorizer
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref ProductsResource
+
+      HttpMethod:
+        POST
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
 
       Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
         Uri:
+
           Fn::Sub:
+
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
+
+            - LambdaArn:
+                !GetAtt ProductLambda.Arn
 
 
-  #################################################
-  # /products/{id}
-  #################################################
+  ############################################################
+  # /products/{productId}
+  ############################################################
 
   ProductIdResource:
     Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref CloudMartApi
-      ParentId: !Ref ProductsResource
-      PathPart: "{id}"
 
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ParentId:
+        !Ref ProductsResource
+
+      PathPart:
+        "{productId}"
+
+
+  ############################################################
+  # GET /products/{productId}
+  ############################################################
 
   ProductIdGetMethod:
     Type: AWS::ApiGateway::Method
+
     Properties:
-      RestApiId: !Ref CloudMartApi
-      ResourceId: !Ref ProductIdResource
-      HttpMethod: GET
-      AuthorizationType: CUSTOM
-      AuthorizerId: !Ref CloudMartAuthorizer
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref ProductIdResource
+
+      HttpMethod:
+        GET
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
 
       Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri:
-          Fn::Sub:
-            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
 
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt ProductLambda.Arn
+
+
+  ############################################################
+  # PUT /products/{productId}
+  ############################################################
 
   ProductIdPutMethod:
     Type: AWS::ApiGateway::Method
+
     Properties:
-      RestApiId: !Ref CloudMartApi
-      ResourceId: !Ref ProductIdResource
-      HttpMethod: PUT
-      AuthorizationType: CUSTOM
-      AuthorizerId: !Ref CloudMartAuthorizer
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref ProductIdResource
+
+      HttpMethod:
+        PUT
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
 
       Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri:
-          Fn::Sub:
-            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
 
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt ProductLambda.Arn
+
+
+  ############################################################
+  # DELETE /products/{productId}
+  ############################################################
 
   ProductIdDeleteMethod:
     Type: AWS::ApiGateway::Method
+
     Properties:
-      RestApiId: !Ref CloudMartApi
-      ResourceId: !Ref ProductIdResource
-      HttpMethod: DELETE
-      AuthorizationType: CUSTOM
-      AuthorizerId: !Ref CloudMartAuthorizer
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref ProductIdResource
+
+      HttpMethod:
+        DELETE
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
 
       Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
         Uri:
+
           Fn::Sub:
+
             - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-            - LambdaArn: !GetAtt ProductLambda.Arn
+
+            - LambdaArn:
+                !GetAtt ProductLambda.Arn
 
 
-  #################################################
-  # LAMBDA PERMISSION
-  #################################################
+  ############################################################
+  # /orders
+  ############################################################
+
+  OrdersResource:
+    Type: AWS::ApiGateway::Resource
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ParentId:
+        !GetAtt CloudMartApi.RootResourceId
+
+      PathPart:
+        orders
+
+
+  ############################################################
+  # POST /orders
+  ############################################################
+
+  OrdersPostMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref OrdersResource
+
+      HttpMethod:
+        POST
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt OrderLambda.Arn
+
+
+  ############################################################
+  # GET /orders
+  ############################################################
+
+  OrdersGetMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref OrdersResource
+
+      HttpMethod:
+        GET
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt OrderLambda.Arn
+
+
+  ############################################################
+  # /orders/{orderId}
+  ############################################################
+
+  OrderIdResource:
+    Type: AWS::ApiGateway::Resource
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ParentId:
+        !Ref OrdersResource
+
+      PathPart:
+        "{orderId}"
+
+
+  ############################################################
+  # GET /orders/{orderId}
+  ############################################################
+
+  OrderIdGetMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref OrderIdResource
+
+      HttpMethod:
+        GET
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt OrderLambda.Arn
+
+
+  ############################################################
+  # PUT /orders/{orderId}
+  ############################################################
+
+  OrderIdPutMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref OrderIdResource
+
+      HttpMethod:
+        PUT
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt OrderLambda.Arn
+
+
+  ############################################################
+  # /orders/{orderId}/cancel
+  ############################################################
+
+  OrderCancelResource:
+    Type: AWS::ApiGateway::Resource
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ParentId:
+        !Ref OrderIdResource
+
+      PathPart:
+        cancel
+
+
+  ############################################################
+  # POST /orders/{orderId}/cancel
+  ############################################################
+
+  OrderCancelPostMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref OrderCancelResource
+
+      HttpMethod:
+        POST
+
+      AuthorizationType:
+        CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type:
+          AWS_PROXY
+
+        IntegrationHttpMethod:
+          POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt OrderLambda.Arn
+
+
+  ############################################################
+  # API GATEWAY → AUTHORIZER PERMISSION
+  ############################################################
 
   AuthorizerLambdaPermission:
     Type: AWS::Lambda::Permission
+
     Properties:
-      Action: lambda:InvokeFunction
+
+      Action:
+        lambda:InvokeFunction
 
       FunctionName:
         Fn::ImportValue: cloudmart-authorizer-lambda-arn
 
-      Principal: apigateway.amazonaws.com
+      Principal:
+        apigateway.amazonaws.com
 
       SourceArn:
         !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
 
+
+  ############################################################
+  # API GATEWAY → PRODUCT LAMBDA
+  ############################################################
 
   ProductLambdaPermission:
     Type: AWS::Lambda::Permission
+
     Properties:
-      Action: lambda:InvokeFunction
 
-      FunctionName: !Ref ProductLambda
+      Action:
+        lambda:InvokeFunction
 
-      Principal: apigateway.amazonaws.com
+      FunctionName:
+        !Ref ProductLambda
+
+      Principal:
+        apigateway.amazonaws.com
 
       SourceArn:
         !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
 
 
-  #################################################
+  ############################################################
+  # API GATEWAY → ORDER LAMBDA
+  ############################################################
+
+  OrderLambdaApiPermission:
+    Type: AWS::Lambda::Permission
+
+    Properties:
+
+      Action:
+        lambda:InvokeFunction
+
+      FunctionName:
+        !Ref OrderLambda
+
+      Principal:
+        apigateway.amazonaws.com
+
+      SourceArn:
+        !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
+
+
+  ############################################################
+  # CLOUDWATCH LOG GROUP - PRODUCT
+  ############################################################
+
+  ProductLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+
+    Properties:
+
+      LogGroupName:
+        !Sub /aws/lambda/${ProductLambda}
+
+      RetentionInDays:
+        14
+
+
+  ############################################################
+  # CLOUDWATCH LOG GROUP - ORDER
+  ############################################################
+
+  OrderLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+
+    Properties:
+
+      LogGroupName:
+        !Sub /aws/lambda/${OrderLambda}
+
+      RetentionInDays:
+        14
+
+
+  ############################################################
+  # CLOUDWATCH LOG GROUP - ORDER PROCESSOR
+  ############################################################
+
+  OrderProcessorLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+
+    Properties:
+
+      LogGroupName:
+        !Sub /aws/lambda/${OrderProcessorLambda}
+
+      RetentionInDays:
+        14
+
+
+  ############################################################
+  # CLOUDWATCH LOG GROUP - REPORT
+  ############################################################
+
+  ReportLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+
+    Properties:
+
+      LogGroupName:
+        !Sub /aws/lambda/${ReportLambda}
+
+      RetentionInDays:
+        14
+
+
+  ############################################################
+  # ORDER PROCESSING FAILURE ALARM
+  ############################################################
+
+  OrderProcessingFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-order-processing-failure-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when order processing failures occur
+
+      Namespace:
+        CloudMart/Application
+
+      MetricName:
+        OrderProcessingFailures
+
+      Dimensions:
+
+        - Name:
+            Environment
+
+          Value:
+            !Ref EnvironmentName
+
+        - Name:
+            Service
+
+          Value:
+            OrderProcessing
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - !Ref OrderFailureTopic
+
+
+  ############################################################
+  # LOW STOCK ALARM
+  ############################################################
+
+  LowStockAlarm:
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-low-stock-alarm-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when low stock events occur
+
+      Namespace:
+        CloudMart/Application
+
+      MetricName:
+        LowStockEvents
+
+      Dimensions:
+
+        - Name:
+            Environment
+
+          Value:
+            !Ref EnvironmentName
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - !Ref LowStockTopic
+
+
+  ############################################################
+  # ORDER PROCESSOR LAMBDA ERROR ALARM
+  ############################################################
+
+  OrderProcessorLambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-order-processor-lambda-errors-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when Order Processing Lambda reports errors
+
+      Namespace:
+        AWS/Lambda
+
+      MetricName:
+        Errors
+
+      Dimensions:
+
+        - Name:
+            FunctionName
+
+          Value:
+            !Ref OrderProcessorLambda
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - !Ref OrderFailureTopic
+
+
+  ############################################################
   # API DEPLOYMENT
-  #################################################
+  ############################################################
 
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
 
     DependsOn:
+
       - ProductsGetMethod
       - ProductsPostMethod
+
       - ProductIdGetMethod
       - ProductIdPutMethod
       - ProductIdDeleteMethod
 
-    Properties:
-      RestApiId: !Ref CloudMartApi
+      - OrdersPostMethod
+      - OrdersGetMethod
+      - OrderIdGetMethod
+      - OrderIdPutMethod
+      - OrderCancelPostMethod
 
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+
+  ############################################################
+  # API STAGE
+  ############################################################
 
   ApiStage:
     Type: AWS::ApiGateway::Stage
-    Properties:
-      RestApiId: !Ref CloudMartApi
-      DeploymentId: !Ref ApiDeployment
-      StageName: prod
 
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      DeploymentId:
+        !Ref ApiDeployment
+
+      StageName:
+        prod
+
+
+############################################################
+# OUTPUTS
+############################################################
 
 Outputs:
 
-  ApiId:
-    Value: !Ref CloudMartApi
-    Export:
-      Name: cloudmart-api-id
 
+  ############################################################
+  # API ID
+  ############################################################
+
+  ApiId:
+
+    Value:
+      !Ref CloudMartApi
+
+    Export:
+      Name:
+        cloudmart-api-id
+
+
+  ############################################################
+  # API INVOKE URL
+  ############################################################
 
   ApiInvokeUrl:
-    Value: !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/prod
 
+    Value:
+      !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+
+    Export:
+      Name:
+        cloudmart-api-invoke-url
+
+
+  ############################################################
+  # PRODUCT LAMBDA ARN
+  ############################################################
 
   ProductLambdaArn:
-    Value: !GetAtt ProductLambda.Arn
+
+    Value:
+      !GetAtt ProductLambda.Arn
+
     Export:
-      Name: cloudmart-product-lambda-arn
+      Name:
+        cloudmart-product-lambda-arn
+
+
+  ############################################################
+  # ORDER LAMBDA ARN
+  ############################################################
+
+  OrderLambdaArn:
+
+    Value:
+      !GetAtt OrderLambda.Arn
+
+    Export:
+      Name:
+        cloudmart-order-lambda-arn
+
+
+  ############################################################
+  # ORDER PROCESSOR LAMBDA ARN
+  ############################################################
+
+  OrderProcessorLambdaArn:
+
+    Value:
+      !GetAtt OrderProcessorLambda.Arn
+
+    Export:
+      Name:
+        cloudmart-order-processor-lambda-arn
+
+
+  ############################################################
+  # ORDER QUEUE URL
+  ############################################################
+
+  OrderQueueUrl:
+
+    Value:
+      !Ref OrderQueue
+
+    Export:
+      Name:
+        cloudmart-order-queue-url
+
+
+  ############################################################
+  # ORDER QUEUE ARN
+  ############################################################
+
+  OrderQueueArn:
+
+    Value:
+      !GetAtt OrderQueue.Arn
+
+    Export:
+      Name:
+        cloudmart-order-queue-arn
+
+
+  ############################################################
+  # ORDER DLQ ARN
+  ############################################################
+
+  OrderDeadLetterQueueArn:
+
+    Value:
+      !GetAtt OrderDeadLetterQueue.Arn
+
+    Export:
+      Name:
+        cloudmart-order-dlq-arn
+
+
+  ############################################################
+  # ORDER CONFIRMATION SNS ARN
+  ############################################################
+
+  OrderConfirmationTopicArn:
+
+    Value:
+      !Ref OrderConfirmationTopic
+
+    Export:
+      Name:
+        cloudmart-order-confirmation-topic-arn
+
+
+  ############################################################
+  # LOW STOCK SNS ARN
+  ############################################################
+
+  LowStockTopicArn:
+
+    Value:
+      !Ref LowStockTopic
+
+    Export:
+      Name:
+        cloudmart-low-stock-topic-arn
+
+
+  ############################################################
+  # ORDER FAILURE SNS ARN
+  ############################################################
+
+  OrderFailureTopicArn:
+
+    Value:
+      !Ref OrderFailureTopic
+
+    Export:
+      Name:
+        cloudmart-order-failure-topic-arn
+
+
+  ############################################################
+  # REPORT LAMBDA ARN
+  ############################################################
+
+  ReportLambdaArn:
+
+    Value:
+      !GetAtt ReportLambda.Arn
+
+    Export:
+      Name:
+        cloudmart-report-lambda-arn
+
+
+  ############################################################
+  # REPORTS BUCKET
+  ############################################################
+
+  ReportsBucket:
+
+    Value:
+      Fn::ImportValue: cloudmart-reports-bucket
+
+    Export:
+      Name:
+        cloudmart-application-reports-bucket

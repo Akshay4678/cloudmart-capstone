@@ -2,7 +2,19 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart IAM Stack
 
+
+#################################################
+# PARAMETERS
+#################################################
+
 Parameters:
+
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
 
   DBUsername:
     Type: String
@@ -17,7 +29,12 @@ Parameters:
     NoEcho: true
 
 
+#################################################
+# RESOURCES
+#################################################
+
 Resources:
+
 
   #################################################
   # AUTHORIZER LAMBDA ROLE
@@ -25,33 +42,50 @@ Resources:
 
   AuthorizerLambdaRole:
     Type: AWS::IAM::Role
+
     Properties:
-      RoleName: cloudmart-authorizer-role
+
+      RoleName:
+        !Sub cloudmart-authorizer-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - lambda.amazonaws.com
+
             Action:
               - sts:AssumeRole
 
       ManagedPolicyArns:
+
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
-        - PolicyName: AuthorizerPolicy
+
+        - PolicyName: AuthorizerSSMPolicy
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
 
-              - Effect: Allow
+              - Sid: ReadAuthToken
+
+                Effect: Allow
+
                 Action:
                   - ssm:GetParameter
-                  - ssm:GetParameters
-                Resource: "*"
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/token
 
 
   #################################################
@@ -60,68 +94,127 @@ Resources:
 
   ProductLambdaRole:
     Type: AWS::IAM::Role
+
     Properties:
-      RoleName: cloudmart-product-role
+
+      RoleName:
+        !Sub cloudmart-product-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - lambda.amazonaws.com
+
             Action:
               - sts:AssumeRole
 
       ManagedPolicyArns:
+
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
+
         - PolicyName: ProductPolicy
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
 
+
               #################################################
-              # RDS
+              # RDS DESCRIBE
               #################################################
 
-              - Effect: Allow
+              - Sid: DescribeCloudMartDatabase
+
+                Effect: Allow
+
                 Action:
                   - rds:DescribeDBInstances
-                Resource: "*"
 
-              #################################################
-              # SSM
-              #################################################
+                Resource:
+                  !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cloudmart
 
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:GetParameters
-                Resource: "*"
 
               #################################################
               # EVENTBRIDGE
+              #
+              # Required when Product Lambda publishes
+              # InventoryChanged events.
               #################################################
 
-              - Effect: Allow
+              - Sid: PublishInventoryEvents
+
+                Effect: Allow
+
                 Action:
                   - events:PutEvents
-                Resource: "*"
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+
 
               #################################################
               # VPC NETWORK INTERFACES
+              #
+              # These EC2 actions do not support normal
+              # resource-level restrictions.
               #################################################
 
-              - Effect: Allow
+              - Sid: ManageLambdaNetworkInterfaces
+
+                Effect: Allow
+
                 Action:
+
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
+
                 Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    aws:RequestedRegion:
+                      - !Ref AWS::Region
+
+
+              #################################################
+              # CLOUDWATCH CUSTOM METRICS
+              #
+              # PutMetricData requires Resource "*"
+              # because CloudWatch does not support resource
+              # ARNs for this action.
+              #################################################
+
+              - Sid: PublishProductMetrics
+
+                Effect: Allow
+
+                Action:
+                  - cloudwatch:PutMetricData
+
+                Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    cloudwatch:namespace:
+                      - CloudMart/Application
 
 
   #################################################
@@ -130,79 +223,264 @@ Resources:
 
   OrderLambdaRole:
     Type: AWS::IAM::Role
+
     Properties:
-      RoleName: cloudmart-order-role
+
+      RoleName:
+        !Sub cloudmart-order-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - lambda.amazonaws.com
+
             Action:
               - sts:AssumeRole
 
       ManagedPolicyArns:
+
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
+
         - PolicyName: OrderPolicy
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
 
+
               #################################################
-              # SNS
+              # DYNAMODB - ORDERS TABLE
               #################################################
 
-              - Effect: Allow
+              - Sid: ReadWriteOrders
+
+                Effect: Allow
+
                 Action:
-                  - sns:Publish
-                Resource: "*"
+
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+
+                Resource:
+
+                  - Fn::ImportValue: cloudmart-orders-table-arn
+
+                  - !Sub
+                      - ${OrdersTableArn}/index/customer_id-index
+                      - OrdersTableArn:
+                          Fn::ImportValue: cloudmart-orders-table-arn
+
 
               #################################################
-              # SQS
+              # SQS - SEND ONLY
               #################################################
 
-              - Effect: Allow
+              - Sid: SendOrdersToQueue
+
+                Effect: Allow
+
                 Action:
                   - sqs:SendMessage
-                  - sqs:ReceiveMessage
-                  - sqs:DeleteMessage
-                Resource: "*"
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:cloudmart-orders-${EnvironmentName}
+
 
               #################################################
-              # EVENTBRIDGE
+              # CLOUDWATCH CUSTOM METRICS
               #################################################
 
-              - Effect: Allow
+              - Sid: PublishOrderMetrics
+
+                Effect: Allow
+
                 Action:
-                  - events:PutEvents
+                  - cloudwatch:PutMetricData
+
                 Resource: "*"
 
-              #################################################
-              # SSM
-              #################################################
+                Condition:
 
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:GetParameters
-                Resource: "*"
+                  StringEquals:
+
+                    cloudwatch:namespace:
+                      - CloudMart/Application
+
 
               #################################################
               # VPC NETWORK INTERFACES
               #################################################
 
-              - Effect: Allow
+              - Sid: ManageLambdaNetworkInterfaces
+
+                Effect: Allow
+
                 Action:
+
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
+
                 Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    aws:RequestedRegion:
+                      - !Ref AWS::Region
+
+
+  #################################################
+  # ORDER PROCESSING LAMBDA ROLE
+  #################################################
+
+  OrderProcessingLambdaRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+
+      RoleName:
+        !Sub cloudmart-order-processing-role-${EnvironmentName}
+
+      AssumeRolePolicyDocument:
+
+        Version: '2012-10-17'
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
+
+        - PolicyName: OrderProcessingPolicy
+
+          PolicyDocument:
+
+            Version: '2012-10-17'
+
+            Statement:
+
+
+              #################################################
+              # SQS - CONSUME ONLY
+              #################################################
+
+              - Sid: ConsumeOrders
+
+                Effect: Allow
+
+                Action:
+
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:cloudmart-orders-${EnvironmentName}
+
+
+              #################################################
+              # DYNAMODB - READ ORDERS
+              #################################################
+
+              - Sid: ReadOrders
+
+                Effect: Allow
+
+                Action:
+                  - dynamodb:GetItem
+
+                Resource:
+                  Fn::ImportValue: cloudmart-orders-table-arn
+
+
+              #################################################
+              # EVENTBRIDGE
+              #################################################
+
+              - Sid: PublishOrderEvents
+
+                Effect: Allow
+
+                Action:
+                  - events:PutEvents
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
+
+
+              #################################################
+              # CLOUDWATCH CUSTOM METRICS
+              #################################################
+
+              - Sid: PublishOrderProcessingMetrics
+
+                Effect: Allow
+
+                Action:
+                  - cloudwatch:PutMetricData
+
+                Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    cloudwatch:namespace:
+                      - CloudMart/Application
+
+
+              #################################################
+              # VPC NETWORK INTERFACES
+              #################################################
+
+              - Sid: ManageLambdaNetworkInterfaces
+
+                Effect: Allow
+
+                Action:
+
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+
+                Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    aws:RequestedRegion:
+                      - !Ref AWS::Region
 
 
   #################################################
@@ -211,70 +489,132 @@ Resources:
 
   ReportLambdaRole:
     Type: AWS::IAM::Role
+
     Properties:
-      RoleName: cloudmart-report-role
+
+      RoleName:
+        !Sub cloudmart-report-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - lambda.amazonaws.com
+
             Action:
               - sts:AssumeRole
 
       ManagedPolicyArns:
+
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
+
         - PolicyName: ReportingPolicy
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
 
+
               #################################################
-              # S3
+              # S3 - REPORTS BUCKET
               #################################################
 
-              - Effect: Allow
+              - Sid: ListReportsBucket
+
+                Effect: Allow
+
                 Action:
+                  - s3:ListBucket
+
+                Resource:
+
+                  Fn::ImportValue:
+                    cloudmart-reports-bucket-arn
+
+
+              - Sid: ReadWriteReports
+
+                Effect: Allow
+
+                Action:
+
                   - s3:GetObject
                   - s3:PutObject
-                  - s3:ListBucket
-                Resource: "*"
+
+                Resource:
+
+                  Fn::Sub:
+                    - ${ReportsBucketArn}/*
+                    - ReportsBucketArn:
+                        Fn::ImportValue:
+                          cloudmart-reports-bucket-arn
+
 
               #################################################
-              # RDS
+              # DYNAMODB - ORDERS
               #################################################
 
-              - Effect: Allow
+              - Sid: ReadOrdersForReports
+
+                Effect: Allow
+
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+
+                Resource:
+                  Fn::ImportValue: cloudmart-orders-table-arn
+
+
+              #################################################
+              # RDS DESCRIBE
+              #################################################
+
+              - Sid: DescribeCloudMartDatabase
+
+                Effect: Allow
+
                 Action:
                   - rds:DescribeDBInstances
-                Resource: "*"
 
-              #################################################
-              # SSM
-              #################################################
+                Resource:
+                  !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cloudmart
 
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:GetParameters
-                Resource: "*"
 
               #################################################
               # VPC NETWORK INTERFACES
               #################################################
 
-              - Effect: Allow
+              - Sid: ManageLambdaNetworkInterfaces
+
+                Effect: Allow
+
                 Action:
+
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
+
                 Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    aws:RequestedRegion:
+                      - !Ref AWS::Region
 
 
   #################################################
@@ -283,87 +623,158 @@ Resources:
 
   EventBridgeRole:
     Type: AWS::IAM::Role
+
     Properties:
-      RoleName: cloudmart-eventbridge-role
+
+      RoleName:
+        !Sub cloudmart-eventbridge-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
+
         Version: '2012-10-17'
+
         Statement:
+
           - Effect: Allow
+
             Principal:
               Service:
                 - events.amazonaws.com
+
             Action:
               - sts:AssumeRole
 
       Policies:
+
         - PolicyName: EventBridgeSNSPolicy
+
           PolicyDocument:
+
             Version: '2012-10-17'
+
             Statement:
 
-              - Effect: Allow
+
+              #################################################
+              # LOW STOCK SNS
+              #################################################
+
+              - Sid: PublishLowStockNotifications
+
+                Effect: Allow
+
                 Action:
                   - sns:Publish
-                Resource: "*"
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-low-stock-alerts-${EnvironmentName}
 
 
-  #################################################
-  # SSM PARAMETERS
-  #################################################
+              #################################################
+              # ORDER CONFIRMATION SNS
+              #################################################
 
-  DBUsernameParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /cloudmart/db/username
-      Type: String
-      Value: !Ref DBUsername
+              - Sid: PublishOrderConfirmations
 
+                Effect: Allow
 
-  DBPasswordParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /cloudmart/db/password
-      Type: String
-      Value: !Ref DBPassword
+                Action:
+                  - sns:Publish
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-order-confirmations-${EnvironmentName}
 
 
-  AuthTokenParameter:
-    Type: AWS::SSM::Parameter
-    Properties:
-      Name: /cloudmart/auth/token
-      Type: String
-      Value: !Ref AuthToken
+              #################################################
+              # ORDER FAILURE SNS
+              #################################################
 
+              - Sid: PublishOrderFailures
+
+                Effect: Allow
+
+                Action:
+                  - sns:Publish
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-order-processing-failures-${EnvironmentName}
+
+
+#################################################
+# OUTPUTS
+#################################################
 
 Outputs:
 
+
   #################################################
-  # LAMBDA ROLE ARNs
+  # AUTHORIZER ROLE ARN
   #################################################
 
   AuthorizerRoleArn:
-    Value: !GetAtt AuthorizerLambdaRole.Arn
-    Export:
-      Name: cloudmart-authorizer-role-arn
 
+    Value:
+      !GetAtt AuthorizerLambdaRole.Arn
+
+    Export:
+      Name:
+        cloudmart-authorizer-role-arn
+
+
+  #################################################
+  # PRODUCT ROLE ARN
+  #################################################
 
   ProductRoleArn:
-    Value: !GetAtt ProductLambdaRole.Arn
-    Export:
-      Name: cloudmart-product-role-arn
 
+    Value:
+      !GetAtt ProductLambdaRole.Arn
+
+    Export:
+      Name:
+        cloudmart-product-role-arn
+
+
+  #################################################
+  # ORDER ROLE ARN
+  #################################################
 
   OrderRoleArn:
-    Value: !GetAtt OrderLambdaRole.Arn
-    Export:
-      Name: cloudmart-order-role-arn
 
+    Value:
+      !GetAtt OrderLambdaRole.Arn
+
+    Export:
+      Name:
+        cloudmart-order-role-arn
+
+
+  #################################################
+  # ORDER PROCESSING ROLE ARN
+  #################################################
+
+  OrderProcessingRoleArn:
+
+    Value:
+      !GetAtt OrderProcessingLambdaRole.Arn
+
+    Export:
+      Name:
+        cloudmart-order-processing-role-arn
+
+
+  #################################################
+  # REPORT ROLE ARN
+  #################################################
 
   ReportRoleArn:
-    Value: !GetAtt ReportLambdaRole.Arn
+
+    Value:
+      !GetAtt ReportLambdaRole.Arn
+
     Export:
-      Name: cloudmart-report-role-arn
+      Name:
+        cloudmart-report-role-arn
 
 
   #################################################
@@ -371,22 +782,10 @@ Outputs:
   #################################################
 
   EventBridgeRoleArn:
-    Value: !GetAtt EventBridgeRole.Arn
+
+    Value:
+      !GetAtt EventBridgeRole.Arn
+
     Export:
-      Name: cloudmart-eventbridge-role-arn
-
-
-  #################################################
-  # SSM PARAMETER NAMES
-  #################################################
-
-  DBUsernameParameterName:
-    Value: !Ref DBUsernameParameter
-
-
-  DBPasswordParameterName:
-    Value: !Ref DBPasswordParameter
-
-
-  AuthTokenParameterName:
-    Value: !Ref AuthTokenParameter
+      Name:
+        cloudmart-eventbridge-role-arn

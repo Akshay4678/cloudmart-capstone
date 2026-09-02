@@ -122,27 +122,40 @@ def initialize_database():
                     ('Keyboard', 'Mechanical Keyboard', 3500.00, 15)
                 """)
 
-                cursor.execute("SELECT product_id, stock_count FROM products ORDER BY product_id")
+                cursor.execute(
+                    "SELECT product_id, stock_count FROM products ORDER BY product_id"
+                )
+
                 products = cursor.fetchall()
 
                 for product in products:
+
                     cursor.execute("""
                         INSERT INTO inventory (product_id, quantity)
                         VALUES (%s, %s)
-                    """, (product["product_id"], product["stock_count"]))
+                    """, (
+                        product["product_id"],
+                        product["stock_count"]
+                    ))
 
         connection.commit()
+
         print("DATABASE INITIALIZATION SUCCESSFUL")
 
     except Exception as e:
+
         connection.rollback()
+
         print("DATABASE INITIALIZATION FAILED")
         print("DATABASE ERROR TYPE:", type(e).__name__)
         print("DATABASE ERROR MESSAGE:", str(e))
+
         raise
 
     finally:
+
         connection.close()
+
         print("DATABASE INITIALIZATION CONNECTION CLOSED")
 
 
@@ -186,12 +199,15 @@ def publish_inventory_event(product_id, stock_count):
 
         else:
 
-            print("AFTER EVENTBRIDGE - Event published successfully")
+            print(
+                "AFTER EVENTBRIDGE - Event published successfully"
+            )
 
     except Exception as e:
 
         # Do not fail the product operation if EventBridge
         # is temporarily unreachable.
+
         print("WARNING: EventBridge publish failed")
         print("EVENTBRIDGE ERROR TYPE:", type(e).__name__)
         print("EVENTBRIDGE ERROR MESSAGE:", str(e))
@@ -369,6 +385,34 @@ def lambda_handler(event, context):
 
 
             # =================================================
+            # STOCK VALIDATION
+            # =================================================
+
+            try:
+
+                stock_count = int(stock_count)
+
+            except (TypeError, ValueError):
+
+                return response(
+                    400,
+                    {
+                        "message": "stock_count must be an integer"
+                    }
+                )
+
+
+            if stock_count < 0:
+
+                return response(
+                    400,
+                    {
+                        "message": "stock_count cannot be negative"
+                    }
+                )
+
+
+            # =================================================
             # DATABASE INSERT
             # =================================================
 
@@ -482,6 +526,34 @@ def lambda_handler(event, context):
                     400,
                     {
                         "message": "name, price and stock_count are required"
+                    }
+                )
+
+
+            # =================================================
+            # STOCK VALIDATION
+            # =================================================
+
+            try:
+
+                stock_count = int(stock_count)
+
+            except (TypeError, ValueError):
+
+                return response(
+                    400,
+                    {
+                        "message": "stock_count must be an integer"
+                    }
+                )
+
+
+            if stock_count < 0:
+
+                return response(
+                    400,
+                    {
+                        "message": "stock_count cannot be negative"
                     }
                 )
 

@@ -21,9 +21,11 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: dev
+
     AllowedValues:
       - dev
       - prod
+
     Description: CloudMart environment
 
 
@@ -46,23 +48,32 @@ Resources:
       FunctionName:
         !Sub cloudmart-product-${EnvironmentName}
 
-      Runtime: python3.13
+      Runtime:
+        python3.13
 
-      Handler: index.lambda_handler
+      Handler:
+        index.lambda_handler
 
       Role:
         Fn::ImportValue: cloudmart-product-role-arn
 
-      Timeout: 15
+      Timeout:
+        15
 
       VpcConfig:
 
         SubnetIds:
-          - Fn::ImportValue: cloudmart-private-subnet-id
-          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
-          - Fn::ImportValue: cloudmart-lambda-sg
+
+          - Fn::ImportValue:
+              cloudmart-lambda-sg
 
       Environment:
 
@@ -96,7 +107,7 @@ Resources:
 
 
   ############################################################
-  # ORDER DLQ
+  # ORDER DEAD LETTER QUEUE
   ############################################################
 
   OrderDeadLetterQueue:
@@ -124,7 +135,7 @@ Resources:
         !Sub cloudmart-orders-${EnvironmentName}
 
       VisibilityTimeout:
-        120
+        180
 
       MessageRetentionPeriod:
         345600
@@ -153,23 +164,32 @@ Resources:
       FunctionName:
         !Sub cloudmart-order-${EnvironmentName}
 
-      Runtime: python3.13
+      Runtime:
+        python3.13
 
-      Handler: index.lambda_handler
+      Handler:
+        index.lambda_handler
 
       Role:
         Fn::ImportValue: cloudmart-order-role-arn
 
-      Timeout: 15
+      Timeout:
+        15
 
       VpcConfig:
 
         SubnetIds:
-          - Fn::ImportValue: cloudmart-private-subnet-id
-          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
-          - Fn::ImportValue: cloudmart-lambda-sg
+
+          - Fn::ImportValue:
+              cloudmart-lambda-sg
 
       Environment:
 
@@ -205,23 +225,32 @@ Resources:
       FunctionName:
         !Sub cloudmart-order-processor-${EnvironmentName}
 
-      Runtime: python3.13
+      Runtime:
+        python3.13
 
-      Handler: index.lambda_handler
+      Handler:
+        index.lambda_handler
 
       Role:
         Fn::ImportValue: cloudmart-order-processing-role-arn
 
-      Timeout: 30
+      Timeout:
+        30
 
       VpcConfig:
 
         SubnetIds:
-          - Fn::ImportValue: cloudmart-private-subnet-id
-          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
-          - Fn::ImportValue: cloudmart-lambda-sg
+
+          - Fn::ImportValue:
+              cloudmart-lambda-sg
 
       Environment:
 
@@ -280,7 +309,7 @@ Resources:
 
 
   ############################################################
-  # LOW STOCK SNS
+  # LOW STOCK SNS TOPIC
   ############################################################
 
   LowStockTopic:
@@ -399,7 +428,7 @@ Resources:
 
 
   ############################################################
-  # ORDER CONFIRMATION SNS
+  # ORDER CONFIRMATION SNS TOPIC
   ############################################################
 
   OrderConfirmationTopic:
@@ -510,7 +539,7 @@ Resources:
 
 
   ############################################################
-  # ORDER FAILURE SNS
+  # ORDER FAILURE SNS TOPIC
   ############################################################
 
   OrderFailureTopic:
@@ -647,11 +676,17 @@ Resources:
       VpcConfig:
 
         SubnetIds:
-          - Fn::ImportValue: cloudmart-private-subnet-id
-          - Fn::ImportValue: cloudmart-private-subnet-2-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-id
+
+          - Fn::ImportValue:
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
-          - Fn::ImportValue: cloudmart-lambda-sg
+
+          - Fn::ImportValue:
+              cloudmart-lambda-sg
 
       Environment:
 
@@ -662,21 +697,6 @@ Resources:
 
           ORDERS_TABLE:
             Fn::ImportValue: cloudmart-orders-table-name
-
-          DB_HOST:
-            Fn::ImportValue: cloudmart-database-endpoint
-
-          DB_NAME:
-            Fn::ImportValue: cloudmart-database-name
-
-          DB_USER:
-            Fn::ImportValue: cloudmart-database-username
-
-          DB_PASSWORD:
-            !Ref DBPassword
-
-          DB_PORT:
-            "3306"
 
           ENVIRONMENT:
             !Ref EnvironmentName
@@ -1614,8 +1634,10 @@ Resources:
 
       - OrdersPostMethod
       - OrdersGetMethod
+
       - OrderIdGetMethod
       - OrderIdPutMethod
+
       - OrderCancelPostMethod
 
     Properties:

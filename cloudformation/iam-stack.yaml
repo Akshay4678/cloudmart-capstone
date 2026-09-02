@@ -12,21 +12,10 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: dev
+
     AllowedValues:
       - dev
       - prod
-
-  DBUsername:
-    Type: String
-    Default: cloudmartadmin
-
-  DBPassword:
-    Type: String
-    NoEcho: true
-
-  AuthToken:
-    Type: String
-    NoEcho: true
 
 
 #################################################
@@ -131,25 +120,10 @@ Resources:
 
 
               #################################################
-              # RDS DESCRIBE
-              #################################################
-
-              - Sid: DescribeCloudMartDatabase
-
-                Effect: Allow
-
-                Action:
-                  - rds:DescribeDBInstances
-
-                Resource:
-                  !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cloudmart
-
-
-              #################################################
               # EVENTBRIDGE
               #
-              # Required when Product Lambda publishes
-              # InventoryChanged events.
+              # Product Lambda publishes InventoryChanged
+              # events after inventory changes.
               #################################################
 
               - Sid: PublishInventoryEvents
@@ -165,9 +139,6 @@ Resources:
 
               #################################################
               # VPC NETWORK INTERFACES
-              #
-              # These EC2 actions do not support normal
-              # resource-level restrictions.
               #################################################
 
               - Sid: ManageLambdaNetworkInterfaces
@@ -194,10 +165,6 @@ Resources:
 
               #################################################
               # CLOUDWATCH CUSTOM METRICS
-              #
-              # PutMetricData requires Resource "*"
-              # because CloudWatch does not support resource
-              # ARNs for this action.
               #################################################
 
               - Sid: PublishProductMetrics
@@ -407,15 +374,17 @@ Resources:
 
 
               #################################################
-              # DYNAMODB - READ ORDERS
+              # DYNAMODB - READ AND UPDATE ORDERS
               #################################################
 
-              - Sid: ReadOrders
+              - Sid: ReadUpdateOrders
 
                 Effect: Allow
 
                 Action:
+
                   - dynamodb:GetItem
+                  - dynamodb:UpdateItem
 
                 Resource:
                   Fn::ImportValue: cloudmart-orders-table-arn
@@ -529,19 +498,6 @@ Resources:
               # S3 - REPORTS BUCKET
               #################################################
 
-              - Sid: ListReportsBucket
-
-                Effect: Allow
-
-                Action:
-                  - s3:ListBucket
-
-                Resource:
-
-                  Fn::ImportValue:
-                    cloudmart-reports-bucket-arn
-
-
               - Sid: ReadWriteReports
 
                 Effect: Allow
@@ -570,25 +526,9 @@ Resources:
 
                 Action:
                   - dynamodb:Scan
-                  - dynamodb:GetItem
 
                 Resource:
                   Fn::ImportValue: cloudmart-orders-table-arn
-
-
-              #################################################
-              # RDS DESCRIBE
-              #################################################
-
-              - Sid: DescribeCloudMartDatabase
-
-                Effect: Allow
-
-                Action:
-                  - rds:DescribeDBInstances
-
-                Resource:
-                  !Sub arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:cloudmart
 
 
               #################################################
@@ -615,89 +555,6 @@ Resources:
 
                     aws:RequestedRegion:
                       - !Ref AWS::Region
-
-
-  #################################################
-  # EVENTBRIDGE ROLE
-  #################################################
-
-  EventBridgeRole:
-    Type: AWS::IAM::Role
-
-    Properties:
-
-      RoleName:
-        !Sub cloudmart-eventbridge-role-${EnvironmentName}
-
-      AssumeRolePolicyDocument:
-
-        Version: '2012-10-17'
-
-        Statement:
-
-          - Effect: Allow
-
-            Principal:
-              Service:
-                - events.amazonaws.com
-
-            Action:
-              - sts:AssumeRole
-
-      Policies:
-
-        - PolicyName: EventBridgeSNSPolicy
-
-          PolicyDocument:
-
-            Version: '2012-10-17'
-
-            Statement:
-
-
-              #################################################
-              # LOW STOCK SNS
-              #################################################
-
-              - Sid: PublishLowStockNotifications
-
-                Effect: Allow
-
-                Action:
-                  - sns:Publish
-
-                Resource:
-                  !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-low-stock-alerts-${EnvironmentName}
-
-
-              #################################################
-              # ORDER CONFIRMATION SNS
-              #################################################
-
-              - Sid: PublishOrderConfirmations
-
-                Effect: Allow
-
-                Action:
-                  - sns:Publish
-
-                Resource:
-                  !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-order-confirmations-${EnvironmentName}
-
-
-              #################################################
-              # ORDER FAILURE SNS
-              #################################################
-
-              - Sid: PublishOrderFailures
-
-                Effect: Allow
-
-                Action:
-                  - sns:Publish
-
-                Resource:
-                  !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:cloudmart-order-processing-failures-${EnvironmentName}
 
 
 #################################################
@@ -775,17 +632,3 @@ Outputs:
     Export:
       Name:
         cloudmart-report-role-arn
-
-
-  #################################################
-  # EVENTBRIDGE ROLE ARN
-  #################################################
-
-  EventBridgeRoleArn:
-
-    Value:
-      !GetAtt EventBridgeRole.Arn
-
-    Export:
-      Name:
-        cloudmart-eventbridge-role-arn

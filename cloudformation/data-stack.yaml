@@ -63,6 +63,9 @@ Resources:
         - Key: Name
           Value: cloudmart-rds-subnet-group
 
+        - Key: Application
+          Value: CloudMart
+
 
   # ==============================================================
   # RDS MYSQL DATABASE
@@ -70,7 +73,8 @@ Resources:
   # Used for:
   #   Products
   #   Inventory
-  #   Product History
+  #
+  # RDS remains private inside the VPC.
   # ==============================================================
 
   CloudMartDatabase:
@@ -78,9 +82,21 @@ Resources:
 
     Properties:
 
+      # ------------------------------------------------------------
+      # DATABASE ENGINE
+      # ------------------------------------------------------------
+
       Engine: mysql
 
-      EngineVersion: '8.0'
+      # IMPORTANT:
+      # '8.0' is not accepted as an exact RDS engine version.
+      # Use a supported MySQL 8.0 minor version.
+      EngineVersion: '8.0.45'
+
+
+      # ------------------------------------------------------------
+      # INSTANCE
+      # ------------------------------------------------------------
 
       DBInstanceClass: db.t3.micro
 
@@ -90,9 +106,19 @@ Resources:
 
       StorageEncrypted: true
 
+
+      # ------------------------------------------------------------
+      # AVAILABILITY
+      # ------------------------------------------------------------
+
       MultiAZ: false
 
       PubliclyAccessible: false
+
+
+      # ------------------------------------------------------------
+      # DATABASE CONFIGURATION
+      # ------------------------------------------------------------
 
       DBName: !Ref DBName
 
@@ -102,11 +128,26 @@ Resources:
 
       Port: 3306
 
+
+      # ------------------------------------------------------------
+      # SECURITY GROUP
+      # ------------------------------------------------------------
+
       VPCSecurityGroups:
 
         - Fn::ImportValue: cloudmart-rds-sg
 
+
+      # ------------------------------------------------------------
+      # PRIVATE SUBNET GROUP
+      # ------------------------------------------------------------
+
       DBSubnetGroupName: !Ref RdsSubnetGroup
+
+
+      # ------------------------------------------------------------
+      # BACKUP
+      # ------------------------------------------------------------
 
       BackupRetentionPeriod: 0
 
@@ -116,10 +157,24 @@ Resources:
 
       AutoMinorVersionUpgrade: true
 
+
+      # ------------------------------------------------------------
+      # TAGS
+      # ------------------------------------------------------------
+
       Tags:
 
         - Key: Name
           Value: cloudmart-rds-mysql
+
+        - Key: Application
+          Value: CloudMart
+
+        - Key: Service
+          Value: RDS
+
+        - Key: Environment
+          Value: dev
 
 
   # ==============================================================
@@ -129,7 +184,7 @@ Resources:
   #   order_id
   #
   # GSI:
-  #   customer_id
+  #   customer_id-index
   #
   # Used for:
   #   POST /orders
@@ -144,7 +199,18 @@ Resources:
 
       TableName: !Ref OrdersTableName
 
+      # ------------------------------------------------------------
+      # ON-DEMAND BILLING
+      # ------------------------------------------------------------
+
       BillingMode: PAY_PER_REQUEST
+
+
+      # ------------------------------------------------------------
+      # ATTRIBUTES
+      #
+      # Only attributes used by keys need to be defined here.
+      # ------------------------------------------------------------
 
       AttributeDefinitions:
 
@@ -154,10 +220,20 @@ Resources:
         - AttributeName: customer_id
           AttributeType: S
 
+
+      # ------------------------------------------------------------
+      # PRIMARY KEY
+      # ------------------------------------------------------------
+
       KeySchema:
 
         - AttributeName: order_id
           KeyType: HASH
+
+
+      # ------------------------------------------------------------
+      # CUSTOMER ID GSI
+      # ------------------------------------------------------------
 
       GlobalSecondaryIndexes:
 
@@ -171,11 +247,28 @@ Resources:
           Projection:
             ProjectionType: ALL
 
+
+      # ------------------------------------------------------------
+      # POINT-IN-TIME RECOVERY
+      # ------------------------------------------------------------
+
       PointInTimeRecoverySpecification:
+
         PointInTimeRecoveryEnabled: true
 
+
+      # ------------------------------------------------------------
+      # SERVER-SIDE ENCRYPTION
+      # ------------------------------------------------------------
+
       SSESpecification:
+
         SSEEnabled: true
+
+
+      # ------------------------------------------------------------
+      # TAGS
+      # ------------------------------------------------------------
 
       Tags:
 
@@ -188,13 +281,22 @@ Resources:
         - Key: DataType
           Value: Orders
 
+        - Key: Environment
+          Value: dev
+
 
   # ==============================================================
   # S3 BUCKET - REPORTS
   #
   # Used by:
-  #   Report Lambda -> writes reports
-  #   EC2 Dashboard -> reads reports
+  #
+  # Report Lambda
+  #       |
+  #       v
+  #     S3
+  #       |
+  #       v
+  # EC2 Flask Dashboard
   # ==============================================================
 
   ReportsBucket:
@@ -202,24 +304,50 @@ Resources:
 
     Properties:
 
-      BucketName: !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
+      BucketName:
+        !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
+
+
+      # ------------------------------------------------------------
+      # ENCRYPTION
+      # ------------------------------------------------------------
 
       BucketEncryption:
 
         ServerSideEncryptionConfiguration:
 
           - ServerSideEncryptionByDefault:
+
               SSEAlgorithm: AES256
+
+
+      # ------------------------------------------------------------
+      # PUBLIC ACCESS BLOCK
+      # ------------------------------------------------------------
 
       PublicAccessBlockConfiguration:
 
         BlockPublicAcls: true
+
         BlockPublicPolicy: true
+
         IgnorePublicAcls: true
+
         RestrictPublicBuckets: true
 
+
+      # ------------------------------------------------------------
+      # VERSIONING
+      # ------------------------------------------------------------
+
       VersioningConfiguration:
+
         Status: Enabled
+
+
+      # ------------------------------------------------------------
+      # TAGS
+      # ------------------------------------------------------------
 
       Tags:
 
@@ -229,12 +357,24 @@ Resources:
         - Key: Service
           Value: CloudMart
 
+        - Key: DataType
+          Value: Reports
+
+        - Key: Environment
+          Value: dev
+
 
   # ==============================================================
   # S3 BUCKET - LAMBDA DEPLOYMENT ARTIFACTS
   #
-  # This is kept because your GitHub Actions workflow uses
-  # this bucket to upload Lambda ZIP files.
+  # GitHub Actions uploads:
+  #
+  # product/product-lambda-<commit>.zip
+  # order/order-lambda-<commit>.zip
+  # order-processor/order-processor-<commit>.zip
+  # report/report-lambda-<commit>.zip
+  #
+  # Application Stack then reads these objects.
   # ==============================================================
 
   LambdaArtifactsBucket:
@@ -242,24 +382,50 @@ Resources:
 
     Properties:
 
-      BucketName: !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
+      BucketName:
+        !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
+
+
+      # ------------------------------------------------------------
+      # ENCRYPTION
+      # ------------------------------------------------------------
 
       BucketEncryption:
 
         ServerSideEncryptionConfiguration:
 
           - ServerSideEncryptionByDefault:
+
               SSEAlgorithm: AES256
+
+
+      # ------------------------------------------------------------
+      # PUBLIC ACCESS BLOCK
+      # ------------------------------------------------------------
 
       PublicAccessBlockConfiguration:
 
         BlockPublicAcls: true
+
         BlockPublicPolicy: true
+
         IgnorePublicAcls: true
+
         RestrictPublicBuckets: true
 
+
+      # ------------------------------------------------------------
+      # VERSIONING
+      # ------------------------------------------------------------
+
       VersioningConfiguration:
+
         Status: Enabled
+
+
+      # ------------------------------------------------------------
+      # TAGS
+      # ------------------------------------------------------------
 
       Tags:
 
@@ -268,6 +434,12 @@ Resources:
 
         - Key: Service
           Value: CloudMart
+
+        - Key: DataType
+          Value: LambdaArtifacts
+
+        - Key: Environment
+          Value: dev
 
 
 # ================================================================
@@ -282,9 +454,11 @@ Outputs:
   # ==============================================================
 
   DatabaseIdentifier:
+
     Description: RDS MySQL Database Identifier
 
-    Value: !Ref CloudMartDatabase
+    Value:
+      !Ref CloudMartDatabase
 
     Export:
       Name: cloudmart-database-identifier
@@ -295,9 +469,11 @@ Outputs:
   # ==============================================================
 
   DatabaseEndpoint:
+
     Description: RDS MySQL Endpoint
 
-    Value: !GetAtt CloudMartDatabase.Endpoint.Address
+    Value:
+      !GetAtt CloudMartDatabase.Endpoint.Address
 
     Export:
       Name: cloudmart-database-endpoint
@@ -308,9 +484,11 @@ Outputs:
   # ==============================================================
 
   DatabasePort:
+
     Description: RDS MySQL Port
 
-    Value: !GetAtt CloudMartDatabase.Endpoint.Port
+    Value:
+      !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
       Name: cloudmart-database-port
@@ -321,9 +499,11 @@ Outputs:
   # ==============================================================
 
   DatabaseName:
+
     Description: CloudMart RDS Database Name
 
-    Value: !Ref DBName
+    Value:
+      !Ref DBName
 
     Export:
       Name: cloudmart-database-name
@@ -334,9 +514,11 @@ Outputs:
   # ==============================================================
 
   DatabaseUsername:
+
     Description: CloudMart RDS Username
 
-    Value: !Ref DBUsername
+    Value:
+      !Ref DBUsername
 
     Export:
       Name: cloudmart-database-username
@@ -347,9 +529,11 @@ Outputs:
   # ==============================================================
 
   DatabaseSubnetGroup:
+
     Description: CloudMart RDS Subnet Group
 
-    Value: !Ref RdsSubnetGroup
+    Value:
+      !Ref RdsSubnetGroup
 
     Export:
       Name: cloudmart-database-subnet-group
@@ -360,9 +544,11 @@ Outputs:
   # ==============================================================
 
   OrdersTableName:
+
     Description: DynamoDB Orders Table Name
 
-    Value: !Ref OrdersTable
+    Value:
+      !Ref OrdersTable
 
     Export:
       Name: cloudmart-orders-table-name
@@ -373,9 +559,11 @@ Outputs:
   # ==============================================================
 
   OrdersTableArn:
+
     Description: DynamoDB Orders Table ARN
 
-    Value: !GetAtt OrdersTable.Arn
+    Value:
+      !GetAtt OrdersTable.Arn
 
     Export:
       Name: cloudmart-orders-table-arn
@@ -386,9 +574,11 @@ Outputs:
   # ==============================================================
 
   ReportsBucket:
+
     Description: S3 bucket used for CloudMart daily reports
 
-    Value: !Ref ReportsBucket
+    Value:
+      !Ref ReportsBucket
 
     Export:
       Name: cloudmart-reports-bucket
@@ -399,9 +589,11 @@ Outputs:
   # ==============================================================
 
   ReportsBucketArn:
+
     Description: ARN of the CloudMart reports bucket
 
-    Value: !GetAtt ReportsBucket.Arn
+    Value:
+      !GetAtt ReportsBucket.Arn
 
     Export:
       Name: cloudmart-reports-bucket-arn
@@ -412,9 +604,11 @@ Outputs:
   # ==============================================================
 
   LambdaBucket:
+
     Description: S3 bucket used for Lambda deployment packages
 
-    Value: !Ref LambdaArtifactsBucket
+    Value:
+      !Ref LambdaArtifactsBucket
 
     Export:
       Name: cloudmart-lambda-bucket
@@ -425,9 +619,11 @@ Outputs:
   # ==============================================================
 
   LambdaBucketArn:
+
     Description: ARN of the Lambda deployment artifacts bucket
 
-    Value: !GetAtt LambdaArtifactsBucket.Arn
+    Value:
+      !GetAtt LambdaArtifactsBucket.Arn
 
     Export:
       Name: cloudmart-lambda-bucket-arn

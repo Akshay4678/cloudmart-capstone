@@ -12,9 +12,11 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: dev
+
     AllowedValues:
       - dev
       - prod
+
     Description: CloudMart deployment environment
 
 
@@ -30,11 +32,17 @@ Resources:
   #
   # Non-sensitive configuration.
   #
-  # Parameter:
+  # Example:
   # /cloudmart/dev/app/environment
+  #
+  # NOTE:
+  # The authentication token SecureString is created separately
+  # by GitHub Actions using aws ssm put-parameter because
+  # AWS::SSM::Parameter does not support SecureString.
   # ==============================================================
 
   EnvironmentParameter:
+
     Type: AWS::SSM::Parameter
 
     Properties:
@@ -47,8 +55,7 @@ Resources:
       Value:
         !Ref EnvironmentName
 
-      Description:
-        CloudMart application environment
+      Description: CloudMart application environment
 
       Tier: Standard
 
@@ -67,6 +74,7 @@ Resources:
   # ==============================================================
 
   AuthorizerLambda:
+
     Type: AWS::Lambda::Function
 
     Properties:
@@ -85,6 +93,11 @@ Resources:
 
       MemorySize: 128
 
+
+      # ==========================================================
+      # ENVIRONMENT VARIABLES
+      # ==========================================================
+
       Environment:
 
         Variables:
@@ -92,8 +105,13 @@ Resources:
           AUTH_TOKEN_PARAMETER:
             !Sub /cloudmart/${EnvironmentName}/auth/token
 
-          APP_ENVIRONMENT_PARAMETER:
-            !Sub /cloudmart/${EnvironmentName}/app/environment
+          APP_ENVIRONMENT:
+            !Ref EnvironmentName
+
+
+      # ==========================================================
+      # INLINE LAMBDA CODE
+      # ==========================================================
 
       Code:
 
@@ -119,8 +137,8 @@ Resources:
               "AUTH_TOKEN_PARAMETER"
           ]
 
-          APP_ENVIRONMENT_PARAMETER = os.environ[
-              "APP_ENVIRONMENT_PARAMETER"
+          APP_ENVIRONMENT = os.environ[
+              "APP_ENVIRONMENT"
           ]
 
 
@@ -134,13 +152,14 @@ Resources:
 
 
               # =====================================================
-              # GET AUTHORIZATION TOKEN
+              # GET AUTHORIZATION HEADER
               # =====================================================
 
               authorization = event.get(
                   "authorizationToken",
                   ""
               )
+
 
               method_arn = event.get(
                   "methodArn",
@@ -149,7 +168,7 @@ Resources:
 
 
               # =====================================================
-              # VALIDATE AUTHORIZATION HEADER
+              # CHECK AUTHORIZATION HEADER
               # =====================================================
 
               if not authorization:
@@ -160,18 +179,61 @@ Resources:
 
 
               # =====================================================
+              # CHECK BEARER FORMAT
+              #
+              # Expected:
+              #
+              # Authorization: Bearer <token>
+              # =====================================================
+
+              if not authorization.startswith("Bearer "):
+
+                  print("INVALID AUTHORIZATION FORMAT")
+
+                  raise Exception("Unauthorized")
+
+
+              # =====================================================
+              # EXTRACT TOKEN
+              #
+              # Example:
+              #
+              # authorization =
+              # "Bearer abc123"
+              #
+              # token =
+              # "abc123"
+              # =====================================================
+
+              token = authorization[
+                  len("Bearer "):
+              ].strip()
+
+
+              if not token:
+
+                  print("TOKEN MISSING")
+
+                  raise Exception("Unauthorized")
+
+
+              # =====================================================
               # GET TOKEN FROM SSM
               #
-              # The parameter is created as SecureString by the
-              # deployment workflow.
-              # ==============================================================
+              # The parameter is created as SecureString by
+              # GitHub Actions.
+              # =====================================================
 
               try:
 
                   parameter = ssm.get_parameter(
+
                       Name=AUTH_TOKEN_PARAMETER,
+
                       WithDecryption=True
+
                   )
+
 
                   secret = parameter[
                       "Parameter"
@@ -182,10 +244,18 @@ Resources:
 
                   # =================================================
                   # COMPARE TOKEN
+                  #
+                  # Compare ONLY the token.
+                  #
+                  # token:
+                  #     abc123
+                  #
+                  # secret:
+                  #     abc123
                   # =================================================
 
                   if not hmac.compare_digest(
-                      authorization,
+                      token,
                       secret
                   ):
 
@@ -200,6 +270,15 @@ Resources:
                   # =================================================
                   # VALIDATE METHOD ARN
                   # =================================================
+
+                  if not method_arn:
+
+                      print("METHOD ARN MISSING")
+
+                      raise Exception(
+                          "Invalid methodArn"
+                      )
+
 
                   arn_parts = method_arn.split("/")
 
@@ -216,12 +295,12 @@ Resources:
                   # =================================================
                   # CREATE API ARN BASE
                   #
-                  # Example:
+                  # Example methodArn:
                   #
                   # arn:aws:execute-api:ap-south-1:
                   # 123456789:abc123/prod/GET/products
                   #
-                  # Base:
+                  # API ARN base:
                   #
                   # arn:aws:execute-api:ap-south-1:
                   # 123456789:abc123/prod
@@ -233,7 +312,10 @@ Resources:
 
 
                   # =================================================
-                  # ALLOW AUTHENTICATED API ACCESS
+                  # ALLOW AUTHENTICATED ACCESS
+                  #
+                  # Allow all API methods/resources under the
+                  # current API stage.
                   # =================================================
 
                   resource = (
@@ -243,7 +325,7 @@ Resources:
 
 
                   # =================================================
-                  # RETURN IAM POLICY
+                  # RETURN AUTHORIZATION POLICY
                   # =================================================
 
                   return {
@@ -251,10 +333,12 @@ Resources:
                       "principalId":
                           "cloudmart-user",
 
+
                       "policyDocument": {
 
                           "Version":
                               "2012-10-17",
+
 
                           "Statement": [
 
@@ -263,8 +347,10 @@ Resources:
                                   "Action":
                                       "execute-api:Invoke",
 
+
                                   "Effect":
                                       "Allow",
+
 
                                   "Resource":
                                       resource
@@ -275,15 +361,14 @@ Resources:
 
                       },
 
+
                       "context": {
 
                           "user":
                               "cloudmart-user",
 
                           "environment":
-                              os.environ[
-                                  "APP_ENVIRONMENT_PARAMETER"
-                              ]
+                              APP_ENVIRONMENT
 
                       }
 
@@ -300,8 +385,6 @@ Resources:
                       "========== AUTHORIZER ERROR =========="
                   )
 
-                  # Do NOT print the token or SSM secret.
-
                   print(
                       "Authorization failed:",
                       type(e).__name__
@@ -317,6 +400,7 @@ Resources:
   # ==============================================================
 
   AuthorizerPermission:
+
     Type: AWS::Lambda::Permission
 
     Properties:
@@ -351,6 +435,7 @@ Outputs:
       !GetAtt AuthorizerLambda.Arn
 
     Export:
+
       Name:
         cloudmart-authorizer-lambda-arn
 
@@ -368,6 +453,7 @@ Outputs:
       !Ref AuthorizerLambda
 
     Export:
+
       Name:
         cloudmart-authorizer-lambda-name
 
@@ -375,8 +461,7 @@ Outputs:
   # ==============================================================
   # AUTH TOKEN PARAMETER NAME
   #
-  # The actual SecureString parameter is created by the
-  # deployment workflow using AWS SSM PutParameter.
+  # The actual SecureString is created by GitHub Actions.
   # ==============================================================
 
   AuthTokenParameterName:
@@ -388,6 +473,7 @@ Outputs:
       !Sub /cloudmart/${EnvironmentName}/auth/token
 
     Export:
+
       Name:
         cloudmart-auth-token-parameter
 
@@ -405,5 +491,6 @@ Outputs:
       !Ref EnvironmentParameter
 
     Export:
+
       Name:
         cloudmart-environment-parameter

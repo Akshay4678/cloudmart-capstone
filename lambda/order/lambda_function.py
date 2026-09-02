@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
 
 # =========================================================
@@ -20,15 +21,20 @@ cloudwatch = boto3.client("cloudwatch")
 # ENVIRONMENT VARIABLES
 # =========================================================
 
-ORDERS_TABLE_NAME = os.environ["ORDERS_TABLE"]
+ORDERS_TABLE = os.environ["ORDERS_TABLE"]
 ORDER_QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 
-orders_table = dynamodb.Table(ORDERS_TABLE_NAME)
+
+# =========================================================
+# DYNAMODB TABLE
+# =========================================================
+
+orders_table = dynamodb.Table(ORDERS_TABLE)
 
 
 # =========================================================
-# HTTP RESPONSE
+# HTTP RESPONSE HELPER
 # =========================================================
 
 def response(status_code, body):
@@ -43,10 +49,24 @@ def response(status_code, body):
 
 
 # =========================================================
-# CLOUDWATCH METRIC
+# CLOUDWATCH CUSTOM METRIC
 # =========================================================
 
-def put_metric(metric_name):
+def publish_metric(metric_name):
+    """
+    Publishes a CloudMart application metric.
+
+    Metric namespace:
+        CloudMart/Application
+
+    Metrics used by Order Lambda:
+        OrdersCreated
+        OrderRequests
+
+    A metric failure should not cause the order request
+    itself to fail.
+    """
+
     try:
         cloudwatch.put_metric_data(
             Namespace="CloudMart/Application",
@@ -68,212 +88,373 @@ def put_metric(metric_name):
                 }
             ]
         )
-    except Exception as e:
+
+    except Exception as error:
         print(
-            "CloudWatch metric failed:",
-            type(e).__name__
+            "CloudWatch metric error:",
+            type(error).__name__
         )
 
 
 # =========================================================
-# CREATE ORDER ID
-# =========================================================
-
-def generate_order_id():
-    return f"ORD{uuid.uuid4().hex[:10].upper()}"
-
-
-# =========================================================
+# CREATE ORDER
 # POST /orders
 # =========================================================
 
 def create_order(event):
 
-    body = event.get("body")
-
-    if not body:
-        return response(
-            400,
-            {
-                "message": "Request body is required"
-            }
-        )
-
     try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        return response(
-            400,
-            {
-                "message": "Invalid JSON body"
-            }
-        )
 
-    # -----------------------------------------------------
-    # CUSTOMER
-    # -----------------------------------------------------
+        # -------------------------------------------------
+        # READ REQUEST BODY
+        # -------------------------------------------------
 
-    customer_id = data.get("customer_id")
+        body = event.get("body")
 
-    if not customer_id:
-        # Also accept camelCase for convenience
-        customer_id = data.get("customerId")
-
-    if not customer_id:
-        return response(
-            400,
-            {
-                "message": "customer_id is required"
-            }
-        )
-
-    # -----------------------------------------------------
-    # ITEMS
-    # -----------------------------------------------------
-
-    items = data.get("items")
-
-    if not isinstance(items, list) or len(items) == 0:
-        return response(
-            400,
-            {
-                "message": "items must be a non-empty list"
-            }
-        )
-
-    validated_items = []
-
-    for item in items:
-
-        if not isinstance(item, dict):
+        if not body:
             return response(
                 400,
                 {
-                    "message": "Each item must be an object"
+                    "message": "Request body is required"
                 }
             )
 
-        product_id = item.get("product_id")
 
-        if product_id is None:
-            product_id = item.get("productId")
+        # API Gateway normally sends body as a string.
+        if isinstance(body, str):
 
-        quantity = item.get("quantity")
+            try:
+                data = json.loads(body)
 
-        if product_id is None:
+            except json.JSONDecodeError:
+                return response(
+                    400,
+                    {
+                        "message": "Invalid JSON body"
+                    }
+                )
+
+        else:
+            data = body
+
+
+        # -------------------------------------------------
+        # READ REQUEST FIELDS
+        # -------------------------------------------------
+
+        customer_id = data.get("customer_id")
+        items = data.get("items")
+
+
+        # -------------------------------------------------
+        # VALIDATE CUSTOMER ID
+        # -------------------------------------------------
+
+        if not customer_id:
+
             return response(
                 400,
                 {
-                    "message": "product_id is required for each item"
+                    "message": "customer_id is required"
                 }
             )
 
-        if quantity is None:
+
+        if not isinstance(customer_id, str):
+
             return response(
                 400,
                 {
-                    "message": "quantity is required for each item"
+                    "message": "customer_id must be a string"
                 }
             )
 
-        try:
-            product_id = int(product_id)
-            quantity = int(quantity)
-        except (TypeError, ValueError):
+
+        customer_id = customer_id.strip()
+
+        if not customer_id:
+
             return response(
                 400,
                 {
-                    "message": "product_id and quantity must be integers"
+                    "message": "customer_id is required"
                 }
             )
 
-        if product_id <= 0:
+
+        # -------------------------------------------------
+        # VALIDATE ITEMS
+        # -------------------------------------------------
+
+        if not isinstance(items, list) or len(items) == 0:
+
             return response(
                 400,
                 {
-                    "message": "product_id must be greater than 0"
+                    "message": "items must be a non-empty list"
                 }
             )
 
-        if quantity <= 0:
-            return response(
-                400,
-                {
-                    "message": "quantity must be greater than 0"
-                }
-            )
 
-        validated_items.append(
-            {
+        validated_items = []
+
+        total_amount = Decimal("0")
+
+
+        # -------------------------------------------------
+        # VALIDATE EACH ITEM
+        # -------------------------------------------------
+
+        for item in items:
+
+            if not isinstance(item, dict):
+
+                return response(
+                    400,
+                    {
+                        "message": "Each item must be an object"
+                    }
+                )
+
+
+            product_id = item.get("product_id")
+            quantity = item.get("quantity")
+
+
+            # -------------------------------------------------
+            # PRODUCT ID VALIDATION
+            # -------------------------------------------------
+
+            if product_id is None:
+
+                return response(
+                    400,
+                    {
+                        "message": "product_id is required for each item"
+                    }
+                )
+
+
+            try:
+                product_id = int(product_id)
+
+            except (TypeError, ValueError):
+
+                return response(
+                    400,
+                    {
+                        "message": "product_id must be an integer"
+                    }
+                )
+
+
+            if product_id <= 0:
+
+                return response(
+                    400,
+                    {
+                        "message": "product_id must be greater than 0"
+                    }
+                )
+
+
+            # -------------------------------------------------
+            # QUANTITY VALIDATION
+            # -------------------------------------------------
+
+            if quantity is None:
+
+                return response(
+                    400,
+                    {
+                        "message": "quantity is required for each item"
+                    }
+                )
+
+
+            try:
+                quantity = int(quantity)
+
+            except (TypeError, ValueError):
+
+                return response(
+                    400,
+                    {
+                        "message": "quantity must be an integer"
+                    }
+                )
+
+
+            if quantity <= 0:
+
+                return response(
+                    400,
+                    {
+                        "message": "quantity must be greater than 0"
+                    }
+                )
+
+
+            # -------------------------------------------------
+            # PRICE
+            #
+            # Price is optional because the documented
+            # POST /orders request contains only:
+            #
+            # product_id
+            # quantity
+            #
+            # If price is supplied, preserve it.
+            # -------------------------------------------------
+
+            price = item.get("price")
+
+            validated_item = {
                 "product_id": product_id,
                 "quantity": quantity
             }
+
+
+            if price is not None:
+
+                try:
+
+                    price_decimal = Decimal(str(price))
+
+                except Exception:
+
+                    return response(
+                        400,
+                        {
+                            "message": "price must be a valid number"
+                        }
+                    )
+
+
+                if price_decimal < 0:
+
+                    return response(
+                        400,
+                        {
+                            "message": "price cannot be negative"
+                        }
+                    )
+
+
+                validated_item["price"] = price_decimal
+
+                total_amount += (
+                    price_decimal * quantity
+                )
+
+
+            validated_items.append(validated_item)
+
+
+        # -------------------------------------------------
+        # GENERATE ORDER ID
+        # -------------------------------------------------
+
+        order_id = (
+            "ORD"
+            + uuid.uuid4().hex[:10].upper()
         )
 
-    # -----------------------------------------------------
-    # CREATE ORDER
-    # -----------------------------------------------------
 
-    order_id = generate_order_id()
+        # -------------------------------------------------
+        # CREATE TIMESTAMP
+        # -------------------------------------------------
 
-    created_at = datetime.now(
-        timezone.utc
-    ).isoformat()
+        created_at = datetime.now(
+            timezone.utc
+        ).isoformat()
 
-    order = {
-        "order_id": order_id,
-        "customer_id": str(customer_id),
-        "created_at": created_at,
-        "status": "PROCESSING",
-        "total_amount": Decimal("0"),
-        "items": validated_items
-    }
 
-    try:
+        # -------------------------------------------------
+        # CREATE ORDER OBJECT
+        # -------------------------------------------------
+
+        order = {
+            "order_id": order_id,
+            "customer_id": customer_id,
+            "created_at": created_at,
+            "status": "PROCESSING",
+            "total_amount": total_amount,
+            "items": validated_items
+        }
+
 
         # -------------------------------------------------
         # SAVE ORDER TO DYNAMODB
         # -------------------------------------------------
 
-        orders_table.put_item(
-            Item=order,
-            ConditionExpression="attribute_not_exists(order_id)"
+        print(
+            "Creating order:",
+            order_id
         )
 
-        print(
-            f"Order {order_id} saved to DynamoDB"
+
+        orders_table.put_item(
+            Item=order,
+            ConditionExpression=(
+                "attribute_not_exists(order_id)"
+            )
         )
+
+
+        # -------------------------------------------------
+        # CREATE SQS MESSAGE
+        # -------------------------------------------------
+
+        message = {
+            "order_id": order_id,
+            "customer_id": customer_id,
+            "items": validated_items,
+            "total_amount": total_amount
+        }
+
 
         # -------------------------------------------------
         # SEND ORDER TO SQS
         # -------------------------------------------------
 
-        message = {
-            "order_id": order_id,
-            "customer_id": str(customer_id),
-            "created_at": created_at,
-            "items": validated_items
-        }
+        print(
+            "Sending order to SQS:",
+            order_id
+        )
+
 
         sqs.send_message(
             QueueUrl=ORDER_QUEUE_URL,
-            MessageBody=json.dumps(message)
+            MessageBody=json.dumps(
+                message,
+                default=str
+            )
         )
+
+
+        # -------------------------------------------------
+        # CUSTOM CLOUDWATCH METRICS
+        # -------------------------------------------------
+
+        publish_metric("OrdersCreated")
+
+        publish_metric("OrderRequests")
+
+
+        # -------------------------------------------------
+        # SUCCESS
+        #
+        # IMPORTANT:
+        # Order processing is asynchronous.
+        # Therefore POST /orders returns 202.
+        # -------------------------------------------------
 
         print(
-            f"Order {order_id} sent to SQS"
+            "Order accepted:",
+            order_id
         )
 
-        # -------------------------------------------------
-        # CUSTOM METRICS
-        # -------------------------------------------------
-
-        put_metric("OrdersCreated")
-        put_metric("OrderRequests")
-
-        # -------------------------------------------------
-        # RESPONSE
-        # -------------------------------------------------
 
         return response(
             202,
@@ -284,47 +465,38 @@ def create_order(event):
             }
         )
 
-    except Exception as e:
+
+    # -----------------------------------------------------
+    # UNEXPECTED ERROR
+    # -----------------------------------------------------
+
+    except Exception as error:
 
         print(
-            "Order creation failed:",
-            type(e).__name__
+            "========== ORDER CREATION ERROR =========="
         )
 
         print(
-            "Order ID:",
-            order_id
+            "ERROR TYPE:",
+            type(error).__name__
         )
 
-        # -------------------------------------------------
-        # Try to mark the order as failed if it was saved
-        # -------------------------------------------------
+        print(
+            "ERROR MESSAGE:",
+            str(error)
+        )
 
-        try:
-            orders_table.update_item(
-                Key={
-                    "order_id": order_id
-                },
-                UpdateExpression="SET #status = :status",
-                ExpressionAttributeNames={
-                    "#status": "status"
-                },
-                ExpressionAttributeValues={
-                    ":status": "FAILED"
-                }
-            )
-        except Exception:
-            pass
 
         return response(
             500,
             {
-                "message": "Failed to create order"
+                "message": "Internal server error"
             }
         )
 
 
 # =========================================================
+# GET ORDER
 # GET /orders/{orderId}
 # =========================================================
 
@@ -332,15 +504,36 @@ def get_order(order_id):
 
     try:
 
+        if not order_id:
+
+            return response(
+                400,
+                {
+                    "message": "orderId is required"
+                }
+            )
+
+
+        # -------------------------------------------------
+        # GET FROM DYNAMODB
+        # -------------------------------------------------
+
         result = orders_table.get_item(
             Key={
                 "order_id": order_id
             }
         )
 
+
         order = result.get("Item")
 
+
+        # -------------------------------------------------
+        # ORDER NOT FOUND
+        # -------------------------------------------------
+
         if not order:
+
             return response(
                 404,
                 {
@@ -348,20 +541,31 @@ def get_order(order_id):
                 }
             )
 
+
+        # -------------------------------------------------
+        # SUCCESS
+        # -------------------------------------------------
+
         return response(
             200,
             {
-                "message": "Order found",
                 "order": order
             }
         )
 
-    except Exception as e:
+
+    except Exception as error:
 
         print(
-            "Get order failed:",
-            type(e).__name__
+            "GET ORDER ERROR:",
+            type(error).__name__
         )
+
+        print(
+            "ERROR MESSAGE:",
+            str(error)
+        )
+
 
         return response(
             500,
@@ -372,315 +576,60 @@ def get_order(order_id):
 
 
 # =========================================================
-# GET /orders?customerId=X
+# GET CUSTOMER ORDERS
+# GET /orders?customerId=...
 # =========================================================
 
 def get_customer_orders(customer_id):
 
     try:
 
+        if not customer_id:
+
+            return response(
+                400,
+                {
+                    "message": "customer_id is required"
+                }
+            )
+
+
+        # -------------------------------------------------
+        # QUERY CUSTOMER GSI
+        # -------------------------------------------------
+
         result = orders_table.query(
             IndexName="customer_id-index",
-            KeyConditionExpression="customer_id = :customer_id",
-            ExpressionAttributeValues={
-                ":customer_id": customer_id
-            },
-            ScanIndexForward=False
-        )
-
-        orders = result.get("Items", [])
-
-        return response(
-            200,
-            {
-                "message": "Orders retrieved successfully",
-                "count": len(orders),
-                "orders": orders
-            }
-        )
-
-    except Exception as e:
-
-        print(
-            "Get customer orders failed:",
-            type(e).__name__
-        )
-
-        return response(
-            500,
-            {
-                "message": "Internal server error"
-            }
-        )
-
-
-# =========================================================
-# PUT /orders/{orderId}
-# =========================================================
-
-def update_order(order_id, event):
-
-    body = event.get("body")
-
-    if not body:
-        return response(
-            400,
-            {
-                "message": "Request body is required"
-            }
-        )
-
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        return response(
-            400,
-            {
-                "message": "Invalid JSON body"
-            }
-        )
-
-    # -----------------------------------------------------
-    # CHECK ORDER
-    # -----------------------------------------------------
-
-    existing = orders_table.get_item(
-        Key={
-            "order_id": order_id
-        }
-    )
-
-    order = existing.get("Item")
-
-    if not order:
-        return response(
-            404,
-            {
-                "message": "Order not found"
-            }
-        )
-
-    # -----------------------------------------------------
-    # CUSTOMER ID
-    # -----------------------------------------------------
-
-    customer_id = data.get(
-        "customer_id",
-        data.get("customerId")
-    )
-
-    # -----------------------------------------------------
-    # ITEMS
-    # -----------------------------------------------------
-
-    items = data.get("items")
-
-    if items is None:
-        items = order.get("items")
-
-    if not isinstance(items, list) or len(items) == 0:
-        return response(
-            400,
-            {
-                "message": "items must be a non-empty list"
-            }
-        )
-
-    validated_items = []
-
-    for item in items:
-
-        product_id = item.get(
-            "product_id",
-            item.get("productId")
-        )
-
-        quantity = item.get("quantity")
-
-        if product_id is None or quantity is None:
-            return response(
-                400,
-                {
-                    "message": "Each item requires product_id and quantity"
-                }
+            KeyConditionExpression=(
+                Key("customer_id").eq(customer_id)
             )
-
-        try:
-            product_id = int(product_id)
-            quantity = int(quantity)
-        except (TypeError, ValueError):
-            return response(
-                400,
-                {
-                    "message": "product_id and quantity must be integers"
-                }
-            )
-
-        if product_id <= 0 or quantity <= 0:
-            return response(
-                400,
-                {
-                    "message": "product_id and quantity must be greater than 0"
-                }
-            )
-
-        validated_items.append(
-            {
-                "product_id": product_id,
-                "quantity": quantity
-            }
         )
 
-    # -----------------------------------------------------
-    # UPDATE DYNAMODB
-    # -----------------------------------------------------
-
-    try:
-
-        expression_values = {
-            ":items": validated_items,
-            ":status": "PROCESSING"
-        }
-
-        expression_names = {
-            "#items": "items",
-            "#status": "status"
-        }
-
-        update_expression = (
-            "SET #items = :items, "
-            "#status = :status"
-        )
-
-        if customer_id:
-
-            expression_values[":customer_id"] = str(
-                customer_id
-            )
-
-            expression_names["#customer_id"] = (
-                "customer_id"
-            )
-
-            update_expression += (
-                ", #customer_id = :customer_id"
-            )
-
-        orders_table.update_item(
-            Key={
-                "order_id": order_id
-            },
-            UpdateExpression=update_expression,
-            ExpressionAttributeNames=expression_names,
-            ExpressionAttributeValues=expression_values
-        )
 
         # -------------------------------------------------
-        # SEND UPDATED ORDER TO SQS
+        # SUCCESS
         # -------------------------------------------------
 
-        sqs.send_message(
-            QueueUrl=ORDER_QUEUE_URL,
-            MessageBody=json.dumps(
-                {
-                    "order_id": order_id,
-                    "items": validated_items,
-                    "operation": "UPDATE"
-                }
-            )
-        )
-
         return response(
             200,
             {
-                "message": "Order updated successfully",
-                "order_id": order_id,
-                "status": "PROCESSING"
+                "orders": result.get("Items", [])
             }
         )
 
-    except Exception as e:
+
+    except Exception as error:
 
         print(
-            "Update order failed:",
-            type(e).__name__
+            "GET CUSTOMER ORDERS ERROR:",
+            type(error).__name__
         )
-
-        return response(
-            500,
-            {
-                "message": "Internal server error"
-            }
-        )
-
-
-# =========================================================
-# POST /orders/{orderId}/cancel
-# =========================================================
-
-def cancel_order(order_id):
-
-    try:
-
-        result = orders_table.get_item(
-            Key={
-                "order_id": order_id
-            }
-        )
-
-        order = result.get("Item")
-
-        if not order:
-            return response(
-                404,
-                {
-                    "message": "Order not found"
-                }
-            )
-
-        current_status = order.get("status")
-
-        if current_status in (
-            "CONFIRMED",
-            "CANCELLED",
-            "FAILED"
-        ):
-            return response(
-                409,
-                {
-                    "message": "Order cannot be cancelled",
-                    "status": current_status
-                }
-            )
-
-        orders_table.update_item(
-            Key={
-                "order_id": order_id
-            },
-            UpdateExpression="SET #status = :status",
-            ExpressionAttributeNames={
-                "#status": "status"
-            },
-            ExpressionAttributeValues={
-                ":status": "CANCELLED"
-            }
-        )
-
-        return response(
-            200,
-            {
-                "order_id": order_id,
-                "status": "CANCELLED",
-                "message": "Order cancelled successfully"
-            }
-        )
-
-    except Exception as e:
 
         print(
-            "Cancel order failed:",
-            type(e).__name__
+            "ERROR MESSAGE:",
+            str(error)
         )
+
 
         return response(
             500,
@@ -700,92 +649,94 @@ def lambda_handler(event, context):
         "========== ORDER LAMBDA START =========="
     )
 
+
+    # -------------------------------------------------
+    # GET HTTP METHOD
+    # -------------------------------------------------
+
     http_method = (
         event.get("httpMethod", "")
         .upper()
     )
+
+
+    # -------------------------------------------------
+    # GET PATH PARAMETERS
+    # -------------------------------------------------
 
     path_parameters = (
         event.get("pathParameters")
         or {}
     )
 
+
+    # -------------------------------------------------
+    # GET QUERY PARAMETERS
+    # -------------------------------------------------
+
     query_parameters = (
         event.get("queryStringParameters")
         or {}
     )
 
-    # API Gateway template uses {orderId}
-    # but support {id} as well.
-    order_id = (
-        path_parameters.get("orderId")
-        or path_parameters.get("id")
-    )
 
-    customer_id = (
-        query_parameters.get("customerId")
-        or query_parameters.get("customer_id")
-    )
+    # -------------------------------------------------
+    # ORDER ID
+    # -------------------------------------------------
 
-    print(
-        "HTTP Method:",
-        http_method
-    )
+    order_id = path_parameters.get("orderId")
 
-    print(
-        "Order ID:",
-        order_id
-    )
 
-    # -----------------------------------------------------
-    # POST /orders/{orderId}/cancel
-    # -----------------------------------------------------
+    if not order_id:
+        order_id = path_parameters.get("id")
 
-    resource = event.get("resource", "")
+
+    # =================================================
+    # POST /orders
+    # =================================================
 
     if (
         http_method == "POST"
-        and order_id
-        and resource.endswith("/cancel")
+        and not order_id
     ):
-        return cancel_order(order_id)
 
-    # -----------------------------------------------------
-    # POST /orders
-    # -----------------------------------------------------
-
-    if http_method == "POST" and not order_id:
         return create_order(event)
 
-    # -----------------------------------------------------
-    # GET /orders/{orderId}
-    # -----------------------------------------------------
 
-    if http_method == "GET" and order_id:
+    # =================================================
+    # GET /orders/{orderId}
+    # =================================================
+
+    if (
+        http_method == "GET"
+        and order_id
+    ):
+
         return get_order(order_id)
 
-    # -----------------------------------------------------
-    # GET /orders?customerId=X
-    # -----------------------------------------------------
 
-    if http_method == "GET" and customer_id:
-        return get_customer_orders(
-            customer_id
+    # =================================================
+    # GET /orders?customerId=...
+    # =================================================
+
+    if http_method == "GET":
+
+        customer_id = (
+            query_parameters.get("customerId")
+            or query_parameters.get("customer_id")
         )
 
-    # -----------------------------------------------------
-    # PUT /orders/{orderId}
-    # -----------------------------------------------------
 
-    if http_method == "PUT" and order_id:
-        return update_order(
-            order_id,
-            event
-        )
+        if customer_id:
 
-    # -----------------------------------------------------
-    # INVALID REQUEST
-    # -----------------------------------------------------
+            return get_customer_orders(
+                customer_id
+            )
+
+
+    # =================================================
+    # UNSUPPORTED REQUEST
+    # =================================================
 
     return response(
         405,

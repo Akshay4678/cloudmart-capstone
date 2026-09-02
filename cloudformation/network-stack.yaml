@@ -604,7 +604,33 @@ Resources:
         - Key: Name
           Value: cloudmart-eventbridge-vpc-endpoint
 
+  # ================================================================
+  # VPC ENDPOINT - SQS
+  # INTERFACE ENDPOINT
+  # ================================================================
 
+  SQSVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+
+    Properties:
+      VpcId: !Ref CloudMartVPC
+      VpcEndpointType: Interface
+
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sqs
+
+      PrivateDnsEnabled: true
+
+      SubnetIds:
+        - !Ref PrivateSubnet
+        - !Ref PrivateSubnet2
+
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+      Tags:
+        - Key: Name
+          Value: cloudmart-sqs-vpc-endpoint
+          
   # ================================================================
   # VPC ENDPOINT - CLOUDWATCH LOGS
   # INTERFACE ENDPOINT

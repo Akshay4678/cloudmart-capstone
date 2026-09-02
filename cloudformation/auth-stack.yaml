@@ -9,15 +9,6 @@ Description: CloudMart Authentication Stack
 
 Parameters:
 
-  AuthToken:
-    Type: String
-    NoEcho: true
-    MinLength: 1
-    Description: >
-      Authentication token used by the CloudMart Lambda Authorizer.
-      Stored in SSM Parameter Store as SecureString.
-
-
   EnvironmentName:
     Type: String
     Default: dev
@@ -35,44 +26,11 @@ Resources:
 
 
   # ==============================================================
-  # SSM - AUTHENTICATION TOKEN
-  #
-  # Sensitive value:
-  # SecureString
-  #
-  # Document:
-  # /cloudmart/dev/auth/token
-  # ==============================================================
-
-  AuthTokenParameter:
-    Type: AWS::SSM::Parameter
-
-    Properties:
-
-      Name: !Sub /cloudmart/${EnvironmentName}/auth/token
-
-      Type: SecureString
-
-      Value: !Ref AuthToken
-
-      Description: CloudMart authentication token
-
-      Tier: Standard
-
-      Tags:
-
-        Application: CloudMart
-        Environment: !Ref EnvironmentName
-        Purpose: Authentication
-
-
-  # ==============================================================
   # SSM - APPLICATION ENVIRONMENT
   #
-  # Non-sensitive configuration:
-  # String
+  # Non-sensitive configuration.
   #
-  # Document:
+  # Parameter:
   # /cloudmart/dev/app/environment
   # ==============================================================
 
@@ -81,20 +39,26 @@ Resources:
 
     Properties:
 
-      Name: !Sub /cloudmart/${EnvironmentName}/app/environment
+      Name:
+        !Sub /cloudmart/${EnvironmentName}/app/environment
 
       Type: String
 
-      Value: !Ref EnvironmentName
+      Value:
+        !Ref EnvironmentName
 
-      Description: CloudMart application environment
+      Description:
+        CloudMart application environment
 
       Tier: Standard
 
       Tags:
 
         Application: CloudMart
-        Environment: !Ref EnvironmentName
+
+        Environment:
+          !Ref EnvironmentName
+
         Purpose: ApplicationConfiguration
 
 
@@ -107,7 +71,8 @@ Resources:
 
     Properties:
 
-      FunctionName: !Sub cloudmart-authorizer-${EnvironmentName}
+      FunctionName:
+        !Sub cloudmart-authorizer-${EnvironmentName}
 
       Runtime: python3.13
 
@@ -134,6 +99,7 @@ Resources:
 
         ZipFile: |
 
+          import os
           import boto3
           import hmac
 
@@ -149,11 +115,12 @@ Resources:
           # ENVIRONMENT VARIABLES
           # =========================================================
 
-          import os
-
-
           AUTH_TOKEN_PARAMETER = os.environ[
               "AUTH_TOKEN_PARAMETER"
+          ]
+
+          APP_ENVIRONMENT_PARAMETER = os.environ[
+              "APP_ENVIRONMENT_PARAMETER"
           ]
 
 
@@ -164,6 +131,11 @@ Resources:
           def lambda_handler(event, context):
 
               print("========== AUTHORIZER START ==========")
+
+
+              # =====================================================
+              # GET AUTHORIZATION TOKEN
+              # =====================================================
 
               authorization = event.get(
                   "authorizationToken",
@@ -189,7 +161,10 @@ Resources:
 
               # =====================================================
               # GET TOKEN FROM SSM
-              # =====================================================
+              #
+              # The parameter is created as SecureString by the
+              # deployment workflow.
+              # ==============================================================
 
               try:
 
@@ -216,9 +191,7 @@ Resources:
 
                       print("TOKEN INVALID")
 
-                      raise Exception(
-                          "Unauthorized"
-                      )
+                      raise Exception("Unauthorized")
 
 
                   print("TOKEN VALID")
@@ -270,7 +243,7 @@ Resources:
 
 
                   # =================================================
-                  # RETURN ALLOW POLICY
+                  # RETURN IAM POLICY
                   # =================================================
 
                   return {
@@ -327,9 +300,11 @@ Resources:
                       "========== AUTHORIZER ERROR =========="
                   )
 
+                  # Do NOT print the token or SSM secret.
+
                   print(
-                      "ERROR:",
-                      str(e)
+                      "Authorization failed:",
+                      type(e).__name__
                   )
 
                   raise Exception(
@@ -338,7 +313,7 @@ Resources:
 
 
   # ==============================================================
-  # API GATEWAY -> AUTHORIZE LAMBDA PERMISSION
+  # API GATEWAY -> AUTHORIZER LAMBDA PERMISSION
   # ==============================================================
 
   AuthorizerPermission:
@@ -369,7 +344,8 @@ Outputs:
 
   AuthorizerLambdaArn:
 
-    Description: CloudMart Authorizer Lambda ARN
+    Description:
+      CloudMart Authorizer Lambda ARN
 
     Value:
       !GetAtt AuthorizerLambda.Arn
@@ -385,7 +361,8 @@ Outputs:
 
   AuthorizerLambdaName:
 
-    Description: CloudMart Authorizer Lambda Name
+    Description:
+      CloudMart Authorizer Lambda Name
 
     Value:
       !Ref AuthorizerLambda
@@ -397,14 +374,18 @@ Outputs:
 
   # ==============================================================
   # AUTH TOKEN PARAMETER NAME
+  #
+  # The actual SecureString parameter is created by the
+  # deployment workflow using AWS SSM PutParameter.
   # ==============================================================
 
   AuthTokenParameterName:
 
-    Description: SSM parameter containing the CloudMart authentication token
+    Description:
+      CloudMart authentication token SSM parameter name
 
     Value:
-      !Ref AuthTokenParameter
+      !Sub /cloudmart/${EnvironmentName}/auth/token
 
     Export:
       Name:
@@ -417,7 +398,8 @@ Outputs:
 
   EnvironmentParameterName:
 
-    Description: SSM parameter containing the CloudMart environment
+    Description:
+      CloudMart environment SSM parameter name
 
     Value:
       !Ref EnvironmentParameter

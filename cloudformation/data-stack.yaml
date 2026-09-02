@@ -50,13 +50,16 @@ Resources:
 
     Properties:
 
-      DBSubnetGroupDescription: CloudMart private RDS subnet group
+      DBSubnetGroupDescription:
+        CloudMart private RDS subnet group
 
       SubnetIds:
 
-        - Fn::ImportValue: cloudmart-private-subnet-id
+        - Fn::ImportValue:
+            cloudmart-private-subnet-id
 
-        - Fn::ImportValue: cloudmart-private-subnet-2-id
+        - Fn::ImportValue:
+            cloudmart-private-subnet-2-id
 
       Tags:
 
@@ -88,10 +91,9 @@ Resources:
 
       Engine: mysql
 
-      # IMPORTANT:
-      # '8.0' is not accepted as an exact RDS engine version.
-      # Use a supported MySQL 8.0 minor version.
-      EngineVersion: '8.0.45'
+      # Use the currently supported MySQL 8.0 minor version
+      # matching the RDS instance encountered during deployment.
+      EngineVersion: '8.0.46'
 
 
       # ------------------------------------------------------------
@@ -120,11 +122,14 @@ Resources:
       # DATABASE CONFIGURATION
       # ------------------------------------------------------------
 
-      DBName: !Ref DBName
+      DBName:
+        !Ref DBName
 
-      MasterUsername: !Ref DBUsername
+      MasterUsername:
+        !Ref DBUsername
 
-      MasterUserPassword: !Ref DBPassword
+      MasterUserPassword:
+        !Ref DBPassword
 
       Port: 3306
 
@@ -135,14 +140,16 @@ Resources:
 
       VPCSecurityGroups:
 
-        - Fn::ImportValue: cloudmart-rds-sg
+        - Fn::ImportValue:
+            cloudmart-rds-sg
 
 
       # ------------------------------------------------------------
       # PRIVATE SUBNET GROUP
       # ------------------------------------------------------------
 
-      DBSubnetGroupName: !Ref RdsSubnetGroup
+      DBSubnetGroupName:
+        !Ref RdsSubnetGroup
 
 
       # ------------------------------------------------------------
@@ -197,7 +204,9 @@ Resources:
 
     Properties:
 
-      TableName: !Ref OrdersTableName
+      TableName:
+        !Ref OrdersTableName
+
 
       # ------------------------------------------------------------
       # ON-DEMAND BILLING
@@ -209,7 +218,7 @@ Resources:
       # ------------------------------------------------------------
       # ATTRIBUTES
       #
-      # Only attributes used by keys need to be defined here.
+      # Only attributes used by keys are defined here.
       # ------------------------------------------------------------
 
       AttributeDefinitions:
@@ -455,13 +464,15 @@ Outputs:
 
   DatabaseIdentifier:
 
-    Description: RDS MySQL Database Identifier
+    Description:
+      RDS MySQL Database Identifier
 
     Value:
       !Ref CloudMartDatabase
 
     Export:
-      Name: cloudmart-database-identifier
+      Name:
+        cloudmart-database-identifier
 
 
   # ==============================================================
@@ -470,13 +481,15 @@ Outputs:
 
   DatabaseEndpoint:
 
-    Description: RDS MySQL Endpoint
+    Description:
+      RDS MySQL Endpoint
 
     Value:
       !GetAtt CloudMartDatabase.Endpoint.Address
 
     Export:
-      Name: cloudmart-database-endpoint
+      Name:
+        cloudmart-database-endpoint
 
 
   # ==============================================================
@@ -485,13 +498,15 @@ Outputs:
 
   DatabasePort:
 
-    Description: RDS MySQL Port
+    Description:
+      RDS MySQL Port
 
     Value:
       !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name: cloudmart-database-port
+      Name:
+        cloudmart-database-port
 
 
   # ==============================================================
@@ -500,13 +515,15 @@ Outputs:
 
   DatabaseName:
 
-    Description: CloudMart RDS Database Name
+    Description:
+      CloudMart RDS Database Name
 
     Value:
       !Ref DBName
 
     Export:
-      Name: cloudmart-database-name
+      Name:
+        cloudmart-database-name
 
 
   # ==============================================================
@@ -515,13 +532,15 @@ Outputs:
 
   DatabaseUsername:
 
-    Description: CloudMart RDS Username
+    Description:
+      CloudMart RDS Username
 
     Value:
       !Ref DBUsername
 
     Export:
-      Name: cloudmart-database-username
+      Name:
+        cloudmart-database-username
 
 
   # ==============================================================
@@ -530,13 +549,15 @@ Outputs:
 
   DatabaseSubnetGroup:
 
-    Description: CloudMart RDS Subnet Group
+    Description:
+      CloudMart RDS Subnet Group
 
     Value:
       !Ref RdsSubnetGroup
 
     Export:
-      Name: cloudmart-database-subnet-group
+      Name:
+        cloudmart-database-subnet-group
 
 
   # ==============================================================
@@ -545,13 +566,15 @@ Outputs:
 
   OrdersTableName:
 
-    Description: DynamoDB Orders Table Name
+    Description:
+      DynamoDB Orders Table Name
 
     Value:
       !Ref OrdersTable
 
     Export:
-      Name: cloudmart-orders-table-name
+      Name:
+        cloudmart-orders-table-name
 
 
   # ==============================================================
@@ -560,13 +583,15 @@ Outputs:
 
   OrdersTableArn:
 
-    Description: DynamoDB Orders Table ARN
+    Description:
+      DynamoDB Orders Table ARN
 
     Value:
       !GetAtt OrdersTable.Arn
 
     Export:
-      Name: cloudmart-orders-table-arn
+      Name:
+        cloudmart-orders-table-arn
 
 
   # ==============================================================
@@ -575,13 +600,15 @@ Outputs:
 
   ReportsBucket:
 
-    Description: S3 bucket used for CloudMart daily reports
+    Description:
+      S3 bucket used for CloudMart daily reports
 
     Value:
       !Ref ReportsBucket
 
     Export:
-      Name: cloudmart-reports-bucket
+      Name:
+        cloudmart-reports-bucket
 
 
   # ==============================================================
@@ -590,13 +617,15 @@ Outputs:
 
   ReportsBucketArn:
 
-    Description: ARN of the CloudMart reports bucket
+    Description:
+      ARN of the CloudMart reports bucket
 
     Value:
       !GetAtt ReportsBucket.Arn
 
     Export:
-      Name: cloudmart-reports-bucket-arn
+      Name:
+        cloudmart-reports-bucket-arn
 
 
   # ==============================================================
@@ -605,13 +634,15 @@ Outputs:
 
   LambdaBucket:
 
-    Description: S3 bucket used for Lambda deployment packages
+    Description:
+      S3 bucket used for Lambda deployment packages
 
     Value:
       !Ref LambdaArtifactsBucket
 
     Export:
-      Name: cloudmart-lambda-bucket
+      Name:
+        cloudmart-lambda-bucket
 
 
   # ==============================================================
@@ -620,10 +651,12 @@ Outputs:
 
   LambdaBucketArn:
 
-    Description: ARN of the Lambda deployment artifacts bucket
+    Description:
+      ARN of the Lambda deployment artifacts bucket
 
     Value:
       !GetAtt LambdaArtifactsBucket.Arn
 
     Export:
-      Name: cloudmart-lambda-bucket-arn
+      Name:
+        cloudmart-lambda-bucket-arn

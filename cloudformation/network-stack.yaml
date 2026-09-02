@@ -208,23 +208,6 @@ Resources:
 
       VpcId: !Ref CloudMartVPC
 
-      SecurityGroupEgress:
-
-        # Lambda -> RDS
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          DestinationSecurityGroupId: !Ref RDSSecurityGroup
-
-        # Lambda -> AWS VPC endpoints / AWS services
-        #
-        # This HTTPS rule is required for gateway endpoints
-        # such as DynamoDB and S3, as well as interface endpoints.
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-
       Tags:
         - Key: Name
           Value: cloudmart-lambda-sg
@@ -242,19 +225,6 @@ Resources:
         Security group for CloudMart interface VPC endpoints.
 
       VpcId: !Ref CloudMartVPC
-
-      SecurityGroupIngress:
-
-        # Only Lambda functions can access the endpoints
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          SourceSecurityGroupId: !Ref LambdaSecurityGroup
-
-      SecurityGroupEgress:
-
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
 
       Tags:
         - Key: Name
@@ -275,20 +245,6 @@ Resources:
 
       VpcId: !Ref CloudMartVPC
 
-      SecurityGroupIngress:
-
-        # Lambda -> RDS
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref LambdaSecurityGroup
-
-        # EC2 Dashboard -> RDS
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref EC2SecurityGroup
-
       Tags:
         - Key: Name
           Value: cloudmart-rds-sg
@@ -307,49 +263,201 @@ Resources:
 
       VpcId: !Ref CloudMartVPC
 
-      SecurityGroupIngress:
-
-        # HTTPS dashboard
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: !Ref DashboardIngressCidr
-
-        # HTTP - useful during development
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: !Ref DashboardIngressCidr
-
-        # Current Flask dashboard port
-        - IpProtocol: tcp
-          FromPort: 5000
-          ToPort: 5000
-          CidrIp: !Ref DashboardIngressCidr
-
-        # SSH - restrict this CIDR before production
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: !Ref SSHIngressCidr
-
-      SecurityGroupEgress:
-
-        # EC2 -> RDS
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          DestinationSecurityGroupId: !Ref RDSSecurityGroup
-
-        # EC2 -> Internet for package updates / patching
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-
       Tags:
         - Key: Name
           Value: cloudmart-ec2-sg
+
+
+  # ============================================================
+  # LAMBDA -> RDS
+  #
+  # Kept as a separate rule to avoid circular dependency.
+  # ============================================================
+
+  LambdaToRDSEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      DestinationSecurityGroupId: !Ref RDSSecurityGroup
+
+
+  # ============================================================
+  # LAMBDA -> AWS SERVICES
+  #
+  # HTTPS access to VPC endpoints / AWS services.
+  # ============================================================
+
+  LambdaToAWSServiceEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+
+
+  # ============================================================
+  # RDS <- LAMBDA
+  #
+  # Only Lambda can access MySQL on port 3306.
+  # ============================================================
+
+  RDSFromLambdaIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+
+  # ============================================================
+  # RDS <- EC2
+  #
+  # Dashboard EC2 can access MySQL on port 3306.
+  # ============================================================
+
+  RDSFromEC2Ingress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref EC2SecurityGroup
+
+
+  # ============================================================
+  # EC2 -> RDS
+  #
+  # Kept separate to avoid circular dependency.
+  # ============================================================
+
+  EC2ToRDSEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      DestinationSecurityGroupId: !Ref RDSSecurityGroup
+
+
+  # ============================================================
+  # EC2 -> INTERNET / HTTPS
+  #
+  # Used for package updates / patching.
+  # ============================================================
+
+  EC2ToInternetHTTPS:
+    Type: AWS::EC2::SecurityGroupEgress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+
+
+  # ============================================================
+  # VPC ENDPOINTS <- LAMBDA
+  #
+  # Only Lambda functions can access the interface endpoints.
+  # ============================================================
+
+  VPCEndpointFromLambdaIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref VPCEndpointSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+
+  # ============================================================
+  # VPC ENDPOINTS -> OUTBOUND
+  # ============================================================
+
+  VPCEndpointOutbound:
+    Type: AWS::EC2::SecurityGroupEgress
+
+    Properties:
+      GroupId: !Ref VPCEndpointSecurityGroup
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+
+
+  # ============================================================
+  # EC2 DASHBOARD INBOUND - HTTPS
+  # ============================================================
+
+  EC2HTTPSIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Ref DashboardIngressCidr
+
+
+  # ============================================================
+  # EC2 DASHBOARD INBOUND - HTTP
+  # ============================================================
+
+  EC2HTTPIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: !Ref DashboardIngressCidr
+
+
+  # ============================================================
+  # EC2 DASHBOARD INBOUND - FLASK
+  # ============================================================
+
+  EC2FlaskIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 5000
+      ToPort: 5000
+      CidrIp: !Ref DashboardIngressCidr
+
+
+  # ============================================================
+  # EC2 DASHBOARD INBOUND - SSH
+  # ============================================================
+
+  EC2SSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SSHIngressCidr
 
 
   # ============================================================
@@ -516,7 +624,7 @@ Resources:
 
   # ============================================================
   # VPC ENDPOINT - CLOUDWATCH MONITORING
-  # Required if Lambda sends custom metrics using PutMetricData
+  # Required for custom metrics using PutMetricData
   # ============================================================
 
   CloudWatchMonitoringVPCEndpoint:

@@ -253,7 +253,7 @@ jobs:
 
 
       # ==========================================================
-      # 10. VALIDATE API
+      # 10. VALIDATE APPLICATION
       # ==========================================================
 
       - name: Validate Application Stack
@@ -534,8 +534,76 @@ jobs:
 
 
       # ==========================================================
-      # 16. DEPLOY DATA
+      # 16. DEPLOY IAM
+      #
+      # IMPORTANT:
+      #
+      # IAM MUST BE UPDATED BEFORE DATA STACK.
+      #
+      # The existing IAM stack may still have a dependency on the
+      # old DynamoDB export:
+      #
+      #   cloudmart-orders-table-arn
+      #
+      # This new IAM template contains no DynamoDB dependency.
+      # Updating IAM first removes that old dependency.
+      # ==============================================================
+
+      - name: Deploy IAM Stack
+
+        id: deploy_iam
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING IAM STACK"
+          echo "=================================================="
+
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-iam-stack \
+            --template-file cloudformation/iam-stack.yaml \
+            --parameter-overrides \
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+
+          echo "IAM stack deployment completed."
+
+
       # ==========================================================
+      # 17. IAM ERRORS
+      # ==========================================================
+
+      - name: Show IAM Stack Errors
+
+        if: failure() && steps.deploy_iam.outcome == 'failure'
+
+        run: |
+
+          echo "=================================================="
+          echo "IAM STACK EVENTS"
+          echo "=================================================="
+
+
+          aws cloudformation describe-stack-events \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-iam-stack \
+            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
+
+
+      # ==========================================================
+      # 18. DEPLOY DATA
+      #
+      # IAM is intentionally deployed before Data.
+      #
+      # This allows CloudFormation to remove the old
+      # cloudmart-orders-table-arn export from the Data Stack.
+      # ==============================================================
 
       - name: Deploy Data Stack
 
@@ -565,7 +633,7 @@ jobs:
 
 
       # ==========================================================
-      # 17. DATA ERRORS
+      # 19. DATA ERRORS
       # ==========================================================
 
       - name: Show Data Stack Errors
@@ -588,64 +656,8 @@ jobs:
 
 
       # ==========================================================
-      # 18. DEPLOY IAM
-      #
-      # IMPORTANT:
-      # IAM STACK ONLY RECEIVES EnvironmentName.
-      # No DBPassword.
-      # No AuthToken.
-      # ==========================================================
-
-      - name: Deploy IAM Stack
-
-        id: deploy_iam
-
-        run: |
-
-          echo "=================================================="
-          echo "DEPLOYING IAM STACK"
-          echo "=================================================="
-
-
-          aws cloudformation deploy \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-iam-stack \
-            --template-file cloudformation/iam-stack.yaml \
-            --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
-
-
-          echo "IAM stack deployment completed."
-
-
-      # ==========================================================
-      # 19. IAM ERRORS
-      # ==========================================================
-
-      - name: Show IAM Stack Errors
-
-        if: failure() && steps.deploy_iam.outcome == 'failure'
-
-        run: |
-
-          echo "=================================================="
-          echo "IAM STACK EVENTS"
-          echo "=================================================="
-
-
-          aws cloudformation describe-stack-events \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-iam-stack \
-            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-            --output table \
-            || true
-
-
-      # ==========================================================
       # 20. DEPLOY AUTH
-      # ==============================================================
+      # ==========================================================
 
       - name: Deploy Auth Stack
 
@@ -712,7 +724,7 @@ jobs:
 
       # ==========================================================
       # 22. VERIFY AUTH PARAMETER
-      # ==============================================================
+      # ==========================================================
 
       - name: Verify Authentication Parameter
 
@@ -876,7 +888,7 @@ jobs:
 
       # ==========================================================
       # 30. DEPLOY APPLICATION
-      # ==============================================================
+      # ==========================================================
 
       - name: Deploy Application Stack
 
@@ -1019,7 +1031,7 @@ jobs:
 
       # ==========================================================
       # 34. SMOKE TEST POST ORDER
-      # ==============================================================
+      # ==========================================================
 
       - name: Smoke Test - POST Order
 
@@ -1111,24 +1123,24 @@ jobs:
 
 
           echo ""
-          echo "===== DATA STACK ====="
-
-
-          aws cloudformation describe-stacks \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --query "Stacks[0].[StackName,StackStatus]" \
-            --output table \
-            || true
-
-
-          echo ""
           echo "===== IAM STACK ====="
 
 
           aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name cloudmart-iam-stack \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table \
+            || true
+
+
+          echo ""
+          echo "===== DATA STACK ====="
+
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].[StackName,StackStatus]" \
             --output table \
             || true

@@ -2,6 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart IAM Stack
 
+
 # ================================================================
 # PARAMETERS
 # ================================================================
@@ -246,7 +247,7 @@ Resources:
 
               # ==================================================
               # SQS
-              # ==================================================
+              # ==============================================================
 
               - Sid: SendOrdersToQueue
 
@@ -261,7 +262,7 @@ Resources:
 
               # ==================================================
               # CLOUDWATCH METRICS
-              # ==================================================
+              # ==============================================================
 
               - Sid: PublishOrderMetrics
 
@@ -282,7 +283,7 @@ Resources:
 
               # ==================================================
               # VPC NETWORK INTERFACES
-              # ==================================================
+              # ==============================================================
 
               - Sid: ManageLambdaNetworkInterfaces
 
@@ -416,7 +417,7 @@ Resources:
 
               # ==================================================
               # VPC NETWORK INTERFACES
-              # ==============================================================
+              # ==================================================
 
               - Sid: ManageLambdaNetworkInterfaces
 
@@ -536,7 +537,7 @@ Resources:
 
               # ==================================================
               # VPC NETWORK INTERFACES
-              # ==============================================================
+              # ==================================================
 
               - Sid: ManageLambdaNetworkInterfaces
 
@@ -566,7 +567,13 @@ Resources:
 
 Outputs:
 
+  # ==============================================================
+  # AUTHORIZER ROLE
+  # ==============================================================
+
   AuthorizerRoleArn:
+
+    Description: CloudMart Authorizer Lambda IAM Role ARN
 
     Value:
       !GetAtt AuthorizerLambdaRole.Arn
@@ -576,7 +583,13 @@ Outputs:
         cloudmart-authorizer-role-arn
 
 
+  # ==============================================================
+  # PRODUCT ROLE
+  # ==============================================================
+
   ProductRoleArn:
+
+    Description: CloudMart Product Lambda IAM Role ARN
 
     Value:
       !GetAtt ProductLambdaRole.Arn
@@ -586,7 +599,13 @@ Outputs:
         cloudmart-product-role-arn
 
 
+  # ==============================================================
+  # ORDER ROLE
+  # ==============================================================
+
   OrderRoleArn:
+
+    Description: CloudMart Order Lambda IAM Role ARN
 
     Value:
       !GetAtt OrderLambdaRole.Arn
@@ -596,7 +615,13 @@ Outputs:
         cloudmart-order-role-arn
 
 
+  # ==============================================================
+  # ORDER PROCESSING ROLE
+  # ==============================================================
+
   OrderProcessingRoleArn:
+
+    Description: CloudMart Order Processing Lambda IAM Role ARN
 
     Value:
       !GetAtt OrderProcessingLambdaRole.Arn
@@ -606,7 +631,13 @@ Outputs:
         cloudmart-order-processing-role-arn
 
 
+  # ==============================================================
+  # REPORT ROLE
+  # ==============================================================
+
   ReportRoleArn:
+
+    Description: CloudMart Report Lambda IAM Role ARN
 
     Value:
       !GetAtt ReportLambdaRole.Arn

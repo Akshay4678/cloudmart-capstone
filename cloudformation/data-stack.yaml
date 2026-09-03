@@ -58,6 +58,9 @@ Resources:
         - Key: Application
           Value: CloudMart
 
+        - Key: Environment
+          Value: dev
+
 
   # ==============================================================
   # RDS MYSQL DATABASE
@@ -79,7 +82,12 @@ Resources:
 
       Engine: mysql
 
-      EngineVersion: '8.0.46'
+      # MySQL 8.4 is the currently supported LTS line.
+      EngineVersion: '8.4.11'
+
+      # Allows CloudFormation to perform a major version upgrade
+      # if an existing CloudMart database is running MySQL 8.0.
+      AllowMajorVersionUpgrade: true
 
       DBInstanceClass: db.t3.micro
 

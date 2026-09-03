@@ -159,13 +159,16 @@ jobs:
           echo "VALIDATING NETWORK STACK"
           echo "=================================================="
 
+
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/network-stack.yaml
 
+
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/network-stack.yaml
+
 
           echo "Network stack validation passed."
 
@@ -182,13 +185,16 @@ jobs:
           echo "VALIDATING DATA STACK"
           echo "=================================================="
 
+
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/data-stack.yaml
 
+
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/data-stack.yaml
+
 
           echo "Data stack validation passed."
 
@@ -205,13 +211,16 @@ jobs:
           echo "VALIDATING IAM STACK"
           echo "=================================================="
 
+
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/iam-stack.yaml
 
+
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/iam-stack.yaml
+
 
           echo "IAM stack validation passed."
 
@@ -228,13 +237,16 @@ jobs:
           echo "VALIDATING AUTH STACK"
           echo "=================================================="
 
+
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/auth-stack.yaml
 
+
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/auth-stack.yaml
+
 
           echo "Auth stack validation passed."
 
@@ -251,19 +263,22 @@ jobs:
           echo "VALIDATING APPLICATION STACK"
           echo "=================================================="
 
+
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/api-stack.yaml
+
 
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/api-stack.yaml
 
+
           echo "Application stack validation passed."
 
 
       # ==========================================================
-      # 11. CHECK LAMBDA FILES
+      # 11. CHECK LAMBDA SOURCE FILES
       # ==========================================================
 
       - name: Check Lambda Source Files
@@ -275,30 +290,133 @@ jobs:
           echo "=================================================="
 
 
-          test -f lambda/product/lambda_function.py
-
-          test -f lambda/product/requirements.txt
-
-
-          test -f lambda/order/lambda_function.py
-
-          test -f lambda/order/requirements.txt
+          echo ""
+          echo "Current directory:"
+          pwd
 
 
-          test -f lambda/order_processor/lambda_function.py
-
-          test -f lambda/order_processor/requirements.txt
-
-
-          test -f lambda/report/lambda_function.py
-
-          test -f lambda/report/requirements.txt
+          echo ""
+          echo "Checking Product Lambda..."
 
 
-          test -f schema.sql
+          if [ ! -f "lambda/product/lambda_function.py" ]; then
+
+            echo "ERROR: Missing lambda/product/lambda_function.py"
+
+            exit 1
+
+          fi
 
 
-          echo "All Lambda source files and schema.sql are present."
+          if [ ! -f "lambda/product/requirements.txt" ]; then
+
+            echo "ERROR: Missing lambda/product/requirements.txt"
+
+            exit 1
+
+          fi
+
+
+          echo "Product Lambda files OK."
+
+
+          echo ""
+          echo "Checking Order Lambda..."
+
+
+          if [ ! -f "lambda/order/lambda_function.py" ]; then
+
+            echo "ERROR: Missing lambda/order/lambda_function.py"
+
+            exit 1
+
+          fi
+
+
+          if [ ! -f "lambda/order/requirements.txt" ]; then
+
+            echo "ERROR: Missing lambda/order/requirements.txt"
+
+            exit 1
+
+          fi
+
+
+          echo "Order Lambda files OK."
+
+
+          echo ""
+          echo "Checking Order Processor Lambda..."
+
+
+          if [ ! -f "lambda/order_processor/lambda_function.py" ]; then
+
+            echo "ERROR: Missing lambda/order_processor/lambda_function.py"
+
+            exit 1
+
+          fi
+
+
+          if [ ! -f "lambda/order_processor/requirements.txt" ]; then
+
+            echo "ERROR: Missing lambda/order_processor/requirements.txt"
+
+            exit 1
+
+          fi
+
+
+          echo "Order Processor Lambda files OK."
+
+
+          echo ""
+          echo "Checking Report Lambda..."
+
+
+          if [ ! -f "lambda/report/lambda_function.py" ]; then
+
+            echo "ERROR: Missing lambda/report/lambda_function.py"
+
+            exit 1
+
+          fi
+
+
+          if [ ! -f "lambda/report/requirements.txt" ]; then
+
+            echo "ERROR: Missing lambda/report/requirements.txt"
+
+            exit 1
+
+          fi
+
+
+          echo "Report Lambda files OK."
+
+
+          echo ""
+          echo "Checking root schema.sql..."
+
+
+          if [ ! -f "schema.sql" ]; then
+
+            echo "ERROR: Missing root schema.sql"
+
+            echo "Expected location: schema.sql"
+
+            exit 1
+
+          fi
+
+
+          echo "schema.sql OK."
+
+
+          echo ""
+          echo "=================================================="
+          echo "ALL REQUIRED SOURCE FILES ARE PRESENT"
+          echo "=================================================="
 
 
       # ==========================================================
@@ -315,24 +433,26 @@ jobs:
 
 
           echo ""
+          echo "Product Lambda requirements:"
+          cat lambda/product/requirements.txt
 
+
+          echo ""
           echo "Order Lambda requirements:"
-
           cat lambda/order/requirements.txt
 
 
           echo ""
-
           echo "Order Processor Lambda requirements:"
-
           cat lambda/order_processor/requirements.txt
 
 
           echo ""
-
           echo "Report Lambda requirements:"
-
           cat lambda/report/requirements.txt
+
+
+          echo ""
 
 
           grep -qi "^PyMySQL==" \
@@ -385,11 +505,8 @@ jobs:
 
 
           mkdir -p build/product
-
           mkdir -p build/order
-
           mkdir -p build/order_processor
-
           mkdir -p build/report
 
 
@@ -397,6 +514,7 @@ jobs:
           # PRODUCT
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Product Lambda..."
 
 
@@ -409,6 +527,15 @@ jobs:
             --no-cache-dir \
             -r lambda/product/requirements.txt \
             -t build/product
+
+
+          if [ ! -f "build/product/index.py" ]; then
+
+            echo "ERROR: Product index.py was not created."
+
+            exit 1
+
+          fi
 
 
           cd build/product
@@ -426,6 +553,7 @@ jobs:
           # ORDER
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Order Lambda..."
 
 
@@ -434,8 +562,9 @@ jobs:
             build/order/index.py
 
 
-          # IMPORTANT:
-          # schema.sql is packaged INSIDE Order Lambda.
+          # schema.sql is deliberately packaged inside
+          # the Order Lambda so that the VPC Lambda can
+          # execute it against private RDS.
 
           cp \
             schema.sql \
@@ -448,7 +577,22 @@ jobs:
             -t build/order
 
 
-          echo "Checking PyMySQL..."
+          if [ ! -f "build/order/index.py" ]; then
+
+            echo "ERROR: Order index.py was not created."
+
+            exit 1
+
+          fi
+
+
+          if [ ! -f "build/order/schema.sql" ]; then
+
+            echo "ERROR: schema.sql was not copied into Order Lambda."
+
+            exit 1
+
+          fi
 
 
           if [ ! -d "build/order/pymysql" ]; then
@@ -460,16 +604,8 @@ jobs:
           fi
 
 
-          echo "Checking schema.sql..."
-
-
-          if [ ! -f "build/order/schema.sql" ]; then
-
-            echo "ERROR: schema.sql missing from Order Lambda."
-
-            exit 1
-
-          fi
+          echo "Order Lambda package contents:"
+          ls -la build/order
 
 
           cd build/order
@@ -487,6 +623,7 @@ jobs:
           # ORDER PROCESSOR
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Order Processor Lambda..."
 
 
@@ -499,6 +636,15 @@ jobs:
             --no-cache-dir \
             -r lambda/order_processor/requirements.txt \
             -t build/order_processor
+
+
+          if [ ! -f "build/order_processor/index.py" ]; then
+
+            echo "ERROR: Order Processor index.py was not created."
+
+            exit 1
+
+          fi
 
 
           if [ ! -d "build/order_processor/pymysql" ]; then
@@ -525,6 +671,7 @@ jobs:
           # REPORT
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Report Lambda..."
 
 
@@ -537,6 +684,15 @@ jobs:
             --no-cache-dir \
             -r lambda/report/requirements.txt \
             -t build/report
+
+
+          if [ ! -f "build/report/index.py" ]; then
+
+            echo "ERROR: Report index.py was not created."
+
+            exit 1
+
+          fi
 
 
           if [ ! -d "build/report/pymysql" ]; then
@@ -559,6 +715,7 @@ jobs:
           cd ../..
 
 
+          echo ""
           echo "All Lambda packages created."
 
 
@@ -575,31 +732,86 @@ jobs:
           echo "=================================================="
 
 
-          test -s build/product-lambda-${{ github.sha }}.zip
+          if [ ! -s "build/product-lambda-${{ github.sha }}.zip" ]; then
 
-          test -s build/order-lambda-${{ github.sha }}.zip
+            echo "ERROR: Product Lambda ZIP is missing."
 
-          test -s build/order-processor-${{ github.sha }}.zip
+            exit 1
 
-          test -s build/report-lambda-${{ github.sha }}.zip
+          fi
 
 
+          if [ ! -s "build/order-lambda-${{ github.sha }}.zip" ]; then
+
+            echo "ERROR: Order Lambda ZIP is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ ! -s "build/order-processor-${{ github.sha }}.zip" ]; then
+
+            echo "ERROR: Order Processor ZIP is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ ! -s "build/report-lambda-${{ github.sha }}.zip" ]; then
+
+            echo "ERROR: Report Lambda ZIP is missing."
+
+            exit 1
+
+          fi
+
+
+          echo ""
           echo "Checking Order Lambda package..."
 
 
-          unzip -l \
-            build/order-lambda-${{ github.sha }}.zip \
-            | grep -qi "pymysql"
+          if ! unzip -l \
+            "build/order-lambda-${{ github.sha }}.zip" \
+            | grep -qi "pymysql"; then
+
+            echo "ERROR: PyMySQL not found inside Order Lambda ZIP."
+
+            exit 1
+
+          fi
 
 
-          unzip -l \
-            build/order-lambda-${{ github.sha }}.zip \
-            | grep -qi "schema.sql"
+          if ! unzip -l \
+            "build/order-lambda-${{ github.sha }}.zip" \
+            | grep -qi "schema.sql"; then
+
+            echo "ERROR: schema.sql not found inside Order Lambda ZIP."
+
+            exit 1
+
+          fi
 
 
-          echo "Order Lambda contains PyMySQL and schema.sql."
+          if ! unzip -l \
+            "build/order-lambda-${{ github.sha }}.zip" \
+            | grep -qi "index.py"; then
+
+            echo "ERROR: index.py not found inside Order Lambda ZIP."
+
+            exit 1
+
+          fi
 
 
+          echo "Order Lambda contains:"
+          echo "  - index.py"
+          echo "  - PyMySQL"
+          echo "  - schema.sql"
+
+
+          echo ""
           echo "All Lambda packages are valid."
 
 
@@ -638,6 +850,11 @@ jobs:
 
         run: |
 
+          echo "=================================================="
+          echo "NETWORK STACK EVENTS"
+          echo "=================================================="
+
+
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
@@ -647,61 +864,7 @@ jobs:
 
 
       # ==========================================================
-      # 17. DEPLOY DATA
-      # ==========================================================
-
-      - name: Deploy Data Stack
-
-        id: deploy_data
-
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
-        run: |
-
-          echo "=================================================="
-          echo "DEPLOYING DATA STACK"
-          echo "=================================================="
-
-
-          aws cloudformation deploy \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --template-file cloudformation/data-stack.yaml \
-            --parameter-overrides \
-              "DBPassword=$DB_PASSWORD" \
-            --no-fail-on-empty-changeset
-
-
-          echo "Data stack deployment completed."
-
-
-      # ==========================================================
-      # 18. DATA ERRORS
-      # ==========================================================
-
-      - name: Show Data Stack Errors
-
-        if: failure() && steps.deploy_data.outcome == 'failure'
-
-        run: |
-
-          echo "=================================================="
-          echo "DATA STACK EVENTS"
-          echo "=================================================="
-
-
-          aws cloudformation describe-stack-events \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-            --output table \
-            || true
-
-
-      # ==========================================================
-      # 19. DEPLOY IAM
+      # 17. DEPLOY IAM
       # ==========================================================
 
       - name: Deploy IAM Stack
@@ -729,7 +892,7 @@ jobs:
 
 
       # ==========================================================
-      # 20. IAM ERRORS
+      # 18. IAM ERRORS
       # ==========================================================
 
       - name: Show IAM Stack Errors
@@ -737,6 +900,11 @@ jobs:
         if: failure() && steps.deploy_iam.outcome == 'failure'
 
         run: |
+
+          echo "=================================================="
+          echo "IAM STACK EVENTS"
+          echo "=================================================="
+
 
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
@@ -747,7 +915,7 @@ jobs:
 
 
       # ==========================================================
-      # 21. DEPLOY AUTH
+      # 19. DEPLOY AUTH
       # ==========================================================
 
       - name: Deploy Auth Stack
@@ -775,7 +943,30 @@ jobs:
 
 
       # ==========================================================
-      # 22. CREATE AUTH SECURESTRING
+      # 20. AUTH ERRORS
+      # ==========================================================
+
+      - name: Show Auth Stack Errors
+
+        if: failure() && steps.deploy_auth.outcome == 'failure'
+
+        run: |
+
+          echo "=================================================="
+          echo "AUTH STACK EVENTS"
+          echo "=================================================="
+
+
+          aws cloudformation describe-stack-events \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-auth-stack \
+            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
+
+
+      # ==========================================================
+      # 21. CREATE AUTH SECURESTRING
       # ==========================================================
 
       - name: Create Authentication SecureString
@@ -785,6 +976,11 @@ jobs:
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
 
         run: |
+
+          echo "=================================================="
+          echo "CREATING AUTHENTICATION SECURESTRING"
+          echo "=================================================="
+
 
           aws ssm put-parameter \
             --region "$AWS_REGION" \
@@ -798,6 +994,60 @@ jobs:
 
 
       # ==========================================================
+      # 22. CHECK DATA STACK
+      #
+      # The Data stack already exists in the current environment.
+      #
+      # If it does not exist, create it before the API because
+      # the API stack needs its RDS/bucket outputs.
+      # ==========================================================
+
+      - name: Ensure Data Stack Exists
+
+        id: ensure_data
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "CHECKING DATA STACK"
+          echo "=================================================="
+
+
+          if aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            >/dev/null 2>&1; then
+
+            echo "Data stack already exists."
+
+            echo "deploy_data_first=false" >> "$GITHUB_OUTPUT"
+
+          else
+
+            echo "Data stack does not exist."
+
+            echo "Creating Data stack before Application stack..."
+
+            aws cloudformation deploy \
+              --region "$AWS_REGION" \
+              --stack-name cloudmart-data-stack \
+              --template-file cloudformation/data-stack.yaml \
+              --parameter-overrides \
+                "DBPassword=$DB_PASSWORD" \
+              --no-fail-on-empty-changeset
+
+            echo "Data stack created."
+
+            echo "deploy_data_first=true" >> "$GITHUB_OUTPUT"
+
+          fi
+
+
+      # ==========================================================
       # 23. GET LAMBDA ARTIFACT BUCKET
       # ==========================================================
 
@@ -806,6 +1056,11 @@ jobs:
         id: lambda_bucket
 
         run: |
+
+          echo "=================================================="
+          echo "GETTING LAMBDA ARTIFACT BUCKET"
+          echo "=================================================="
+
 
           BUCKET=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
@@ -837,9 +1092,15 @@ jobs:
 
         run: |
 
+          echo "Uploading Product Lambda..."
+
+
           aws s3 cp \
             "build/product-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/product-lambda-${{ github.sha }}.zip"
+
+
+          echo "Product Lambda uploaded."
 
 
       # ==========================================================
@@ -850,9 +1111,15 @@ jobs:
 
         run: |
 
+          echo "Uploading Order Lambda..."
+
+
           aws s3 cp \
             "build/order-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/order-lambda-${{ github.sha }}.zip"
+
+
+          echo "Order Lambda uploaded."
 
 
       # ==========================================================
@@ -863,9 +1130,15 @@ jobs:
 
         run: |
 
+          echo "Uploading Order Processor Lambda..."
+
+
           aws s3 cp \
             "build/order-processor-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/order-processor-${{ github.sha }}.zip"
+
+
+          echo "Order Processor Lambda uploaded."
 
 
       # ==========================================================
@@ -876,13 +1149,25 @@ jobs:
 
         run: |
 
+          echo "Uploading Report Lambda..."
+
+
           aws s3 cp \
             "build/report-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/report/report-lambda-${{ github.sha }}.zip"
 
 
+          echo "Report Lambda uploaded."
+
+
       # ==========================================================
       # 28. DEPLOY APPLICATION
+      #
+      # IMPORTANT:
+      # This happens before updating an existing Data stack.
+      #
+      # This allows the Application stack to remove old imports
+      # before the Data stack attempts to remove old exports.
       # ==========================================================
 
       - name: Deploy Application Stack
@@ -925,6 +1210,11 @@ jobs:
 
         run: |
 
+          echo "=================================================="
+          echo "APPLICATION STACK EVENTS"
+          echo "=================================================="
+
+
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-api-stack \
@@ -934,12 +1224,71 @@ jobs:
 
 
       # ==========================================================
-      # 30. INITIALIZE DATABASE SCHEMA
+      # 30. UPDATE DATA STACK
       #
-      # schema.sql is already inside the Order Lambda ZIP.
+      # For an existing environment this happens AFTER the API
+      # stack update, which removes old imports from the API stack.
+      #
+      # This is important for removing old DynamoDB exports.
+      # ==========================================================
+
+      - name: Deploy Data Stack
+
+        id: deploy_data
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "UPDATING DATA STACK"
+          echo "=================================================="
+
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --template-file cloudformation/data-stack.yaml \
+            --parameter-overrides \
+              "DBPassword=$DB_PASSWORD" \
+            --no-fail-on-empty-changeset
+
+
+          echo "Data stack deployment completed."
+
+
+      # ==========================================================
+      # 31. DATA ERRORS
+      # ==========================================================
+
+      - name: Show Data Stack Errors
+
+        if: failure() && steps.deploy_data.outcome == 'failure'
+
+        run: |
+
+          echo "=================================================="
+          echo "DATA STACK EVENTS"
+          echo "=================================================="
+
+
+          aws cloudformation describe-stack-events \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
+
+
+      # ==========================================================
+      # 32. INITIALIZE RDS DATABASE SCHEMA
+      #
+      # schema.sql is packaged inside Order Lambda.
       #
       # The Order Lambda is inside the VPC and can connect to
-      # the private RDS instance.
+      # the private RDS MySQL database.
       # ==========================================================
 
       - name: Initialize RDS Database Schema
@@ -967,7 +1316,10 @@ jobs:
 
 
           echo ""
-          echo "Invoking Order Lambda to initialize schema..."
+          echo "Invoking Order Lambda..."
+
+
+          rm -f /tmp/schema-init-response.json
 
 
           aws lambda invoke \
@@ -979,7 +1331,9 @@ jobs:
 
 
           echo ""
-          echo "Schema initialization response:"
+          echo "=================================================="
+          echo "SCHEMA INITIALIZATION RESPONSE"
+          echo "=================================================="
 
 
           cat /tmp/schema-init-response.json
@@ -988,20 +1342,66 @@ jobs:
           echo ""
 
 
+          # ------------------------------------------------------
+          # Check whether Lambda returned a function error.
+          # ------------------------------------------------------
+
           if grep -qi '"FunctionError"' /tmp/schema-init-response.json; then
 
-            echo "ERROR: Database schema initialization failed."
+            echo "ERROR: Lambda reported a FunctionError."
 
             exit 1
 
           fi
 
 
-          echo "Database schema initialization completed."
+          # ------------------------------------------------------
+          # Check the Lambda response body/status.
+          #
+          # Our Lambda returns:
+          #
+          # {
+          #   "statusCode": 200,
+          #   ...
+          # }
+          # ------------------------------------------------------
+
+          if grep -q '"statusCode"[[:space:]]*:[[:space:]]*500' \
+            /tmp/schema-init-response.json; then
+
+            echo "ERROR: Database schema initialization returned HTTP 500."
+
+            exit 1
+
+          fi
+
+
+          if grep -q '"statusCode"[[:space:]]*:[[:space:]]*400' \
+            /tmp/schema-init-response.json; then
+
+            echo "ERROR: Database schema initialization returned HTTP 400."
+
+            exit 1
+
+          fi
+
+
+          if ! grep -q '"statusCode"[[:space:]]*:[[:space:]]*200' \
+            /tmp/schema-init-response.json; then
+
+            echo "ERROR: Did not receive successful schema initialization response."
+
+            exit 1
+
+          fi
+
+
+          echo ""
+          echo "Database schema initialized successfully."
 
 
       # ==========================================================
-      # 31. GET API URL
+      # 33. GET API URL
       # ==========================================================
 
       - name: Get API URL
@@ -1038,7 +1438,7 @@ jobs:
 
 
       # ==========================================================
-      # 32. SMOKE TEST GET PRODUCTS
+      # 34. SMOKE TEST GET PRODUCTS
       # ==========================================================
 
       - name: Smoke Test - GET Products
@@ -1068,7 +1468,6 @@ jobs:
 
 
           echo "RESPONSE:"
-
           cat /tmp/products-response.json
 
 
@@ -1088,7 +1487,7 @@ jobs:
 
 
       # ==========================================================
-      # 33. SMOKE TEST POST ORDER
+      # 35. SMOKE TEST POST ORDER
       # ==========================================================
 
       - name: Smoke Test - POST Order
@@ -1117,6 +1516,14 @@ jobs:
           EOF
 
 
+          echo ""
+          echo "Order request:"
+          cat /tmp/order.json
+
+
+          echo ""
+
+
           HTTP_STATUS=$(curl \
             --silent \
             --show-error \
@@ -1132,8 +1539,8 @@ jobs:
           echo "HTTP STATUS: $HTTP_STATUS"
 
 
+          echo ""
           echo "RESPONSE:"
-
           cat /tmp/order-response.json
 
 
@@ -1155,7 +1562,7 @@ jobs:
 
 
       # ==========================================================
-      # 34. FINAL STACK STATUS
+      # 36. FINAL STACK STATUS
       # ==========================================================
 
       - name: Final CloudFormation Status
@@ -1170,7 +1577,6 @@ jobs:
 
 
           echo ""
-
           echo "===== NETWORK STACK ====="
 
 
@@ -1183,7 +1589,6 @@ jobs:
 
 
           echo ""
-
           echo "===== DATA STACK ====="
 
 
@@ -1196,7 +1601,6 @@ jobs:
 
 
           echo ""
-
           echo "===== IAM STACK ====="
 
 
@@ -1209,7 +1613,6 @@ jobs:
 
 
           echo ""
-
           echo "===== AUTH STACK ====="
 
 
@@ -1222,7 +1625,6 @@ jobs:
 
 
           echo ""
-
           echo "===== APPLICATION STACK ====="
 
 
@@ -1232,3 +1634,9 @@ jobs:
             --query "Stacks[0].[StackName,StackStatus]" \
             --output table \
             || true
+
+
+          echo ""
+          echo "=================================================="
+          echo "DEPLOYMENT WORKFLOW FINISHED"
+          echo "=================================================="

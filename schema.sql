@@ -207,24 +207,32 @@ CREATE TABLE IF NOT EXISTS order_items (
 -- =====================================================
 -- INDEXES
 -- =====================================================
+--
+-- IMPORTANT:
+-- MySQL does not support:
+--
+-- CREATE INDEX IF NOT EXISTS
+--
+-- Therefore IF NOT EXISTS has been removed.
+--
+-- The Order Lambda initialization code handles
+-- MySQL error 1061 when these indexes already exist.
+--
+-- =====================================================
 
--- These indexes are useful for searching/filtering.
--- The deployment code should tolerate these already
--- existing if schema.sql is executed more than once.
-
-CREATE INDEX IF NOT EXISTS idx_product_name
+CREATE INDEX idx_product_name
 ON products(name);
 
-CREATE INDEX IF NOT EXISTS idx_orders_customer
+CREATE INDEX idx_orders_customer
 ON orders(customer_id);
 
-CREATE INDEX IF NOT EXISTS idx_orders_status
+CREATE INDEX idx_orders_status
 ON orders(status);
 
-CREATE INDEX IF NOT EXISTS idx_orders_created_at
+CREATE INDEX idx_orders_created_at
 ON orders(created_at);
 
-CREATE INDEX IF NOT EXISTS idx_order_items_product
+CREATE INDEX idx_order_items_product
 ON order_items(product_id);
 
 
@@ -272,15 +280,19 @@ ON DUPLICATE KEY UPDATE
 -- IMPORTANT:
 -- Explicit product IDs are used.
 --
--- This prevents:
---
 -- First run:
 -- Laptop   = 1
 -- Mouse    = 2
 -- Keyboard = 3
 --
--- Second run:
--- Laptop   = 4  <-- OLD PROBLEM
+-- Re-running the schema will NOT create:
+-- Laptop   = 4
+-- Mouse    = 5
+-- Keyboard = 6
+--
+-- Existing stock_count is NOT overwritten.
+-- This is important because the Order Processor
+-- will modify product stock.
 --
 -- =====================================================
 
@@ -330,10 +342,10 @@ ON DUPLICATE KEY UPDATE
 -- IMPORTANT:
 -- product_id is UNIQUE.
 --
--- ON DUPLICATE KEY UPDATE does NOT reset quantity.
+-- Existing inventory quantity is NOT reset.
 --
--- This is important because the Order Processor will
--- change inventory quantity.
+-- This is important because the Order Processor
+-- will modify inventory quantity.
 --
 -- =====================================================
 
@@ -362,6 +374,13 @@ ON DUPLICATE KEY UPDATE
 
 -- =====================================================
 -- SAMPLE ORDER
+-- =====================================================
+--
+-- This sample order is inserted only if it does not
+-- already exist.
+--
+-- Existing order status is NOT reset.
+--
 -- =====================================================
 
 INSERT INTO orders

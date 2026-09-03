@@ -10,6 +10,7 @@
 -- inventory
 -- orders
 -- order_items
+-- audit_logs
 --
 -- Relationships:
 --
@@ -68,6 +69,26 @@ CREATE TABLE IF NOT EXISTS customers (
 -- =====================================================
 -- PRODUCTS TABLE
 -- =====================================================
+--
+-- status:
+--
+-- ACTIVE
+--     Product is available and can be displayed.
+--
+-- INACTIVE
+--     Product is hidden from normal product listings.
+--
+-- A product is NOT physically deleted.
+-- DELETE operations will be handled as soft deletes
+-- by the Product Lambda.
+--
+-- When stock reaches 0:
+--     status = INACTIVE
+--
+-- When stock becomes greater than 0:
+--     status = ACTIVE
+--
+-- =====================================================
 
 CREATE TABLE IF NOT EXISTS products (
 
@@ -81,6 +102,8 @@ CREATE TABLE IF NOT EXISTS products (
 
     stock_count INT NOT NULL DEFAULT 0,
 
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+
     created_at TIMESTAMP NOT NULL
         DEFAULT CURRENT_TIMESTAMP,
 
@@ -88,7 +111,10 @@ CREATE TABLE IF NOT EXISTS products (
         DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
 
-    PRIMARY KEY (product_id)
+    PRIMARY KEY (product_id),
+
+    CONSTRAINT chk_products_status
+        CHECK (status IN ('ACTIVE', 'INACTIVE'))
 
 ) ENGINE=InnoDB;
 
@@ -205,6 +231,63 @@ CREATE TABLE IF NOT EXISTS order_items (
 
 
 -- =====================================================
+-- AUDIT LOGS TABLE
+-- =====================================================
+--
+-- This table maintains the history of important
+-- product and order operations.
+--
+-- Examples:
+--
+-- Product:
+--     CREATE_PRODUCT
+--     UPDATE_PRODUCT
+--     SOFT_DELETE_PRODUCT
+--     STOCK_INCREASED
+--     STOCK_DECREASED
+--
+-- Order:
+--     ORDER_CREATED
+--     ORDER_CONFIRMED
+--     ORDER_FAILED
+--     ORDER_CANCELLED
+--
+-- old_value:
+--     State before the operation.
+--
+-- new_value:
+--     State after the operation.
+--
+-- performed_by:
+--     User/system responsible for the operation.
+--
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+
+    log_id BIGINT NOT NULL AUTO_INCREMENT,
+
+    entity_type VARCHAR(30) NOT NULL,
+
+    entity_id VARCHAR(100) NOT NULL,
+
+    action VARCHAR(50) NOT NULL,
+
+    old_value JSON NULL,
+
+    new_value JSON NULL,
+
+    performed_by VARCHAR(100) NULL,
+
+    created_at DATETIME NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (log_id)
+
+) ENGINE=InnoDB;
+
+
+-- =====================================================
 -- INDEXES
 -- =====================================================
 --
@@ -223,6 +306,9 @@ CREATE TABLE IF NOT EXISTS order_items (
 CREATE INDEX idx_product_name
 ON products(name);
 
+CREATE INDEX idx_products_status
+ON products(status);
+
 CREATE INDEX idx_orders_customer
 ON orders(customer_id);
 
@@ -234,6 +320,15 @@ ON orders(created_at);
 
 CREATE INDEX idx_order_items_product
 ON order_items(product_id);
+
+CREATE INDEX idx_audit_entity
+ON audit_logs(entity_type, entity_id);
+
+CREATE INDEX idx_audit_action
+ON audit_logs(action);
+
+CREATE INDEX idx_audit_created_at
+ON audit_logs(created_at);
 
 
 -- =====================================================
@@ -291,8 +386,7 @@ ON DUPLICATE KEY UPDATE
 -- Keyboard = 6
 --
 -- Existing stock_count is NOT overwritten.
--- This is important because the Order Processor
--- will modify product stock.
+-- Existing status is NOT overwritten.
 --
 -- =====================================================
 
@@ -302,7 +396,8 @@ INSERT INTO products
     name,
     description,
     price,
-    stock_count
+    stock_count,
+    status
 )
 VALUES
 (
@@ -310,21 +405,24 @@ VALUES
     'Laptop',
     'Gaming Laptop',
     75000.00,
-    10
+    10,
+    'ACTIVE'
 ),
 (
     2,
     'Mouse',
     'Wireless Mouse',
     1500.00,
-    25
+    25,
+    'ACTIVE'
 ),
 (
     3,
     'Keyboard',
     'Mechanical Keyboard',
     3500.00,
-    15
+    15,
+    'ACTIVE'
 )
 ON DUPLICATE KEY UPDATE
 

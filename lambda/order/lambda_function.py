@@ -92,6 +92,24 @@ def put_metric(metric_name, value=1):
 
 
 # ================================================================
+# JSON SERIALIZATION
+# ================================================================
+
+def json_default(value):
+    """
+    Convert MySQL/Python values into JSON-safe values.
+    """
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+
+    return str(value)
+
+
+# ================================================================
 # HTTP RESPONSE
 # ================================================================
 
@@ -101,8 +119,181 @@ def response(status_code, body):
         "headers": {
             "Content-Type": "application/json",
         },
-        "body": json.dumps(body, default=str),
+        "body": json.dumps(
+            body,
+            default=json_default,
+        ),
     }
+
+
+# ================================================================
+# ACTOR / PERFORMED BY
+# ================================================================
+
+def get_performed_by(event=None, body=None):
+    """
+    Determine who performed the operation.
+
+    Priority:
+
+    1. Cognito/JWT subject
+    2. Legacy API Gateway authorizer subject
+    3. performed_by supplied in request body
+    4. customer_id from request body
+    5. fallback service identity
+    """
+
+    event = event or {}
+    body = body or {}
+
+    # ------------------------------------------------------------
+    # HTTP API JWT AUTHORIZE
+    # ------------------------------------------------------------
+
+    request_context = (
+        event.get("requestContext")
+        or {}
+    )
+
+    authorizer = (
+        request_context.get("authorizer")
+        or {}
+    )
+
+    jwt = (
+        authorizer.get("jwt")
+        or {}
+    )
+
+    claims = (
+        jwt.get("claims")
+        or {}
+    )
+
+    if claims.get("sub"):
+        return str(claims["sub"])
+
+    # ------------------------------------------------------------
+    # REST API / LEGACY COGNITO AUTHORIZE
+    # ------------------------------------------------------------
+
+    legacy_claims = (
+        authorizer.get("claims")
+        or {}
+    )
+
+    if legacy_claims.get("sub"):
+        return str(legacy_claims["sub"])
+
+    # ------------------------------------------------------------
+    # OPTIONAL REQUEST ACTOR
+    # ------------------------------------------------------------
+
+    if body.get("performed_by"):
+        return str(
+            body["performed_by"]
+        ).strip()
+
+    # ------------------------------------------------------------
+    # CUSTOMER FALLBACK
+    # ------------------------------------------------------------
+
+    if body.get("customer_id"):
+        return str(
+            body["customer_id"]
+        ).strip()
+
+    # ------------------------------------------------------------
+    # SERVICE FALLBACK
+    # ------------------------------------------------------------
+
+    return "order-api"
+
+
+# ================================================================
+# AUDIT LOG
+# ================================================================
+
+def write_audit_log(
+    connection,
+    entity_type,
+    entity_id,
+    action,
+    old_value=None,
+    new_value=None,
+    performed_by=None,
+):
+    """
+    Write an audit/history record.
+
+    This function intentionally does NOT commit.
+    The caller controls the transaction so that
+    the business operation and audit entry commit
+    together.
+    """
+
+    old_json = (
+        json.dumps(
+            old_value,
+            default=json_default,
+        )
+        if old_value is not None
+        else None
+    )
+
+    new_json = (
+        json.dumps(
+            new_value,
+            default=json_default,
+        )
+        if new_value is not None
+        else None
+    )
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            INSERT INTO audit_logs
+            (
+                entity_type,
+                entity_id,
+                action,
+                old_value,
+                new_value,
+                performed_by,
+                created_at
+            )
+            VALUES
+            (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s
+            )
+            """,
+            (
+                entity_type,
+                str(entity_id),
+                action,
+                old_json,
+                new_json,
+                performed_by,
+                datetime.now(timezone.utc)
+                .replace(tzinfo=None),
+            ),
+        )
+
+    print(
+        "Audit log written: "
+        f"{entity_type} "
+        f"{entity_id} "
+        f"{action} "
+        f"by {performed_by}"
+    )
 
 
 # ================================================================
@@ -119,11 +310,15 @@ def parse_request_body(event):
         return body
 
     if not isinstance(body, str):
-        raise ValueError("Request body must be JSON")
+        raise ValueError(
+            "Request body must be JSON"
+        )
 
     if event.get("isBase64Encoded"):
         try:
-            body = base64.b64decode(body).decode("utf-8")
+            body = base64.b64decode(
+                body
+            ).decode("utf-8")
         except Exception as exc:
             raise ValueError(
                 "Invalid base64 request body"
@@ -132,11 +327,13 @@ def parse_request_body(event):
     try:
         return json.loads(body)
     except json.JSONDecodeError as exc:
-        raise ValueError("Invalid JSON body") from exc
+        raise ValueError(
+            "Invalid JSON body"
+        ) from exc
 
 
 # ================================================================
-# SCHEMA INITIALIZATION
+# SQL STATEMENT SPLITTER
 # ================================================================
 
 def split_sql_statements(sql):
@@ -161,7 +358,10 @@ def split_sql_statements(sql):
 
         stripped = line.strip()
 
-        # Skip full-line SQL comments
+        # --------------------------------------------------------
+        # SKIP FULL-LINE COMMENTS
+        # --------------------------------------------------------
+
         if stripped.startswith("--"):
             continue
 
@@ -183,20 +383,38 @@ def split_sql_statements(sql):
                 i += 1
                 continue
 
-            if char == "'" and not in_double_quote and not in_backtick:
-                in_single_quote = not in_single_quote
+            if (
+                char == "'"
+                and not in_double_quote
+                and not in_backtick
+            ):
+                in_single_quote = (
+                    not in_single_quote
+                )
                 current.append(char)
                 i += 1
                 continue
 
-            if char == '"' and not in_single_quote and not in_backtick:
-                in_double_quote = not in_double_quote
+            if (
+                char == '"'
+                and not in_single_quote
+                and not in_backtick
+            ):
+                in_double_quote = (
+                    not in_double_quote
+                )
                 current.append(char)
                 i += 1
                 continue
 
-            if char == "`" and not in_single_quote and not in_double_quote:
-                in_backtick = not in_backtick
+            if (
+                char == "`"
+                and not in_single_quote
+                and not in_double_quote
+            ):
+                in_backtick = (
+                    not in_backtick
+                )
                 current.append(char)
                 i += 1
                 continue
@@ -207,10 +425,15 @@ def split_sql_statements(sql):
                 and not in_double_quote
                 and not in_backtick
             ):
-                statement = "".join(current).strip()
+                statement = (
+                    "".join(current)
+                    .strip()
+                )
 
                 if statement:
-                    statements.append(statement)
+                    statements.append(
+                        statement
+                    )
 
                 current = []
                 i += 1
@@ -221,18 +444,157 @@ def split_sql_statements(sql):
 
         current.append("\n")
 
-    final_statement = "".join(current).strip()
+    final_statement = (
+        "".join(current)
+        .strip()
+    )
 
     if final_statement:
-        statements.append(final_statement)
+        statements.append(
+            final_statement
+        )
 
     return statements
 
+
+# ================================================================
+# PRODUCTS STATUS MIGRATION
+# ================================================================
+
+def migrate_products_status(connection):
+    """
+    Safely migrate an existing products table to support
+    the new soft-delete/status requirement.
+
+    Existing databases may already have the products table
+    without a status column.
+
+    This function:
+
+    1. Checks whether products.status exists.
+    2. Adds it when missing.
+    3. Sets existing products to ACTIVE when stock > 0.
+    4. Sets existing products to INACTIVE when stock = 0.
+
+    This operation is safe to run multiple times.
+    """
+
+    print(
+        "Checking products.status migration..."
+    )
+
+    with connection.cursor() as cursor:
+
+        # --------------------------------------------------------
+        # CHECK WHETHER status COLUMN EXISTS
+        # --------------------------------------------------------
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS column_count
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = 'products'
+              AND COLUMN_NAME = 'status'
+            """,
+            (DB_NAME,),
+        )
+
+        result = cursor.fetchone()
+
+        column_exists = (
+            result
+            and int(
+                result["column_count"]
+            ) > 0
+        )
+
+        # --------------------------------------------------------
+        # ADD status COLUMN IF REQUIRED
+        # --------------------------------------------------------
+
+        if not column_exists:
+
+            print(
+                "products.status does not exist. "
+                "Adding status column..."
+            )
+
+            cursor.execute(
+                """
+                ALTER TABLE products
+                ADD COLUMN status VARCHAR(20)
+                NOT NULL DEFAULT 'ACTIVE'
+                AFTER stock_count
+                """
+            )
+
+            print(
+                "products.status column added successfully."
+            )
+
+        else:
+
+            print(
+                "products.status already exists. "
+                "No column migration required."
+            )
+
+        # --------------------------------------------------------
+        # SYNCHRONIZE STATUS WITH EXISTING STOCK
+        # --------------------------------------------------------
+
+        cursor.execute(
+            """
+            UPDATE products
+            SET status =
+                CASE
+                    WHEN stock_count > 0
+                        THEN 'ACTIVE'
+                    ELSE 'INACTIVE'
+                END
+            WHERE status IS NULL
+               OR status NOT IN (
+                    'ACTIVE',
+                    'INACTIVE'
+               )
+               OR (
+                    stock_count = 0
+                    AND status <> 'INACTIVE'
+               )
+               OR (
+                    stock_count > 0
+                    AND status <> 'ACTIVE'
+               )
+            """
+        )
+
+        updated_rows = cursor.rowcount
+
+        print(
+            "Product status synchronization completed. "
+            f"Rows updated: {updated_rows}"
+        )
+
+    connection.commit()
+
+    print(
+        "Products status migration completed successfully."
+    )
+
+
+# ================================================================
+# SCHEMA INITIALIZATION
+# ================================================================
 
 def initialize_schema():
     """
     Initialize the CloudMart MySQL schema using schema.sql
     packaged inside the Order Lambda deployment ZIP.
+
+    Also performs safe migration of the existing products table
+    so the new status column can be introduced without requiring
+    manual database changes.
     """
 
     connection = None
@@ -240,23 +602,31 @@ def initialize_schema():
     try:
 
         # --------------------------------------------------------
-        # Verify schema.sql exists inside Lambda package
+        # VERIFY schema.sql EXISTS
         # --------------------------------------------------------
 
-        if not os.path.exists(SCHEMA_FILE):
+        if not os.path.exists(
+            SCHEMA_FILE
+        ):
+
             print(
-                f"Schema file not found: {SCHEMA_FILE}"
+                f"Schema file not found: "
+                f"{SCHEMA_FILE}"
             )
 
             return response(
                 500,
                 {
-                    "message": "schema.sql not found in Lambda package",
+                    "message": (
+                        "schema.sql not found "
+                        "in Lambda package"
+                    ),
                 },
             )
 
         print(
-            f"Reading schema file: {SCHEMA_FILE}"
+            f"Reading schema file: "
+            f"{SCHEMA_FILE}"
         )
 
         with open(
@@ -267,7 +637,9 @@ def initialize_schema():
 
             sql = schema_file.read()
 
-        statements = split_sql_statements(sql)
+        statements = (
+            split_sql_statements(sql)
+        )
 
         print(
             f"Found {len(statements)} SQL statements "
@@ -275,17 +647,25 @@ def initialize_schema():
         )
 
         # --------------------------------------------------------
-        # Connect to RDS
+        # CONNECT TO RDS
         # --------------------------------------------------------
 
         connection = get_connection()
 
-        executed = 0
-        skipped = 0
+        # --------------------------------------------------------
+        # PERFORM PRODUCTS STATUS MIGRATION
+        # --------------------------------------------------------
+
+        migrate_products_status(
+            connection
+        )
 
         # --------------------------------------------------------
-        # Execute schema statements
+        # EXECUTE schema.sql
         # --------------------------------------------------------
+
+        executed = 0
+        skipped = 0
 
         with connection.cursor() as cursor:
 
@@ -301,7 +681,9 @@ def initialize_schema():
                         f"{index}/{len(statements)}"
                     )
 
-                    cursor.execute(statement)
+                    cursor.execute(
+                        statement
+                    )
 
                     executed += 1
 
@@ -313,19 +695,22 @@ def initialize_schema():
                         else None
                     )
 
-                    error_message = str(exc)
+                    error_message = str(
+                        exc
+                    )
 
                     # ------------------------------------------------
-                    # Ignore safe "already exists" conditions.
-                    #
-                    # 1050 = table already exists
-                    # 1061 = duplicate key/index name
+                    # EXISTING TABLE / INDEX
                     # ------------------------------------------------
 
-                    if error_code in (1050, 1061):
+                    if error_code in (
+                        1050,
+                        1061,
+                    ):
 
                         print(
-                            f"Skipping existing database object "
+                            "Skipping existing "
+                            "database object "
                             f"for statement {index}: "
                             f"{error_message}"
                         )
@@ -334,16 +719,13 @@ def initialize_schema():
                         continue
 
                     # ------------------------------------------------
-                    # Duplicate seed data can occur if schema.sql
-                    # is executed more than once.
-                    #
-                    # 1062 = duplicate entry
+                    # DUPLICATE DATA
                     # ------------------------------------------------
 
                     if error_code == 1062:
 
                         print(
-                            f"Skipping duplicate data "
+                            "Skipping duplicate data "
                             f"for statement {index}: "
                             f"{error_message}"
                         )
@@ -352,11 +734,12 @@ def initialize_schema():
                         continue
 
                     # ------------------------------------------------
-                    # Any other SQL error is a real failure.
+                    # REAL SQL FAILURE
                     # ------------------------------------------------
 
                     print(
-                        f"Schema statement {index} failed."
+                        f"Schema statement "
+                        f"{index} failed."
                     )
 
                     print(
@@ -367,7 +750,7 @@ def initialize_schema():
                     raise
 
         # --------------------------------------------------------
-        # Commit schema changes
+        # COMMIT
         # --------------------------------------------------------
 
         connection.commit()
@@ -388,7 +771,9 @@ def initialize_schema():
                     "Database schema initialized "
                     "successfully"
                 ),
-                "statements_found": len(statements),
+                "statements_found": len(
+                    statements
+                ),
                 "statements_executed": executed,
                 "statements_skipped": skipped,
             },
@@ -428,14 +813,17 @@ def initialize_schema():
 # CREATE ORDER
 # ================================================================
 
-def create_order(body):
+def create_order(body, performed_by=None):
 
     if not isinstance(body, dict):
         raise ValueError(
             "Request body must be a JSON object"
         )
 
-    customer_id = body.get("customer_id")
+    customer_id = body.get(
+        "customer_id"
+    )
+
     items = body.get("items")
 
     # ------------------------------------------------------------
@@ -447,7 +835,9 @@ def create_order(body):
             "customer_id is required"
         )
 
-    customer_id = str(customer_id).strip()
+    customer_id = str(
+        customer_id
+    ).strip()
 
     if not customer_id:
         raise ValueError(
@@ -475,9 +865,6 @@ def create_order(body):
 
     # ------------------------------------------------------------
     # NORMALIZE ITEMS
-    #
-    # If the same product is supplied multiple times,
-    # combine the quantities.
     # ------------------------------------------------------------
 
     item_map = {}
@@ -527,7 +914,10 @@ def create_order(body):
             )
 
         item_map[product_id] = (
-            item_map.get(product_id, 0)
+            item_map.get(
+                product_id,
+                0,
+            )
             + quantity
         )
 
@@ -537,7 +927,9 @@ def create_order(body):
             "quantity": quantity,
         }
         for product_id, quantity
-        in sorted(item_map.items())
+        in sorted(
+            item_map.items()
+        )
     ]
 
     order_id = (
@@ -590,24 +982,25 @@ def create_order(body):
 
         # --------------------------------------------------------
         # READ PRODUCTS AND CHECK STOCK
-        #
-        # IMPORTANT:
-        # This Lambda validates stock.
-        #
-        # The actual stock deduction is performed by the
-        # Order Processor Lambda after the message is received
-        # from SQS.
         # --------------------------------------------------------
 
-        total_amount = Decimal("0.00")
+        total_amount = Decimal(
+            "0.00"
+        )
+
         priced_items = []
 
         with connection.cursor() as cursor:
 
             for item in normalized_items:
 
-                product_id = item["product_id"]
-                quantity = item["quantity"]
+                product_id = item[
+                    "product_id"
+                ]
+
+                quantity = item[
+                    "quantity"
+                ]
 
                 cursor.execute(
                     """
@@ -616,7 +1009,8 @@ def create_order(body):
                         name,
                         description,
                         price,
-                        stock_count
+                        stock_count,
+                        status
                     FROM products
                     WHERE product_id = %s
                     FOR UPDATE
@@ -634,12 +1028,42 @@ def create_order(body):
                     )
 
                 price = Decimal(
-                    str(product["price"])
+                    str(
+                        product["price"]
+                    )
                 )
 
                 stock_count = int(
-                    product["stock_count"]
+                    product[
+                        "stock_count"
+                    ]
                 )
+
+                product_status = (
+                    product["status"]
+                )
+
+                # ------------------------------------------------
+                # INACTIVE PRODUCT
+                # ------------------------------------------------
+
+                if product_status != "ACTIVE":
+
+                    connection.rollback()
+
+                    return response(
+                        409,
+                        {
+                            "message": (
+                                "Product is inactive"
+                            ),
+                            "product_id": product_id,
+                            "product_name": product[
+                                "name"
+                            ],
+                            "status": product_status,
+                        },
+                    )
 
                 # ------------------------------------------------
                 # OUT OF STOCK
@@ -764,15 +1188,56 @@ def create_order(body):
                     """,
                     (
                         order_id,
-                        item["product_id"],
-                        item["quantity"],
+                        item[
+                            "product_id"
+                        ],
+                        item[
+                            "quantity"
+                        ],
                         item["price"],
                         now,
                     ),
                 )
 
         # --------------------------------------------------------
-        # COMMIT ORDER
+        # AUDIT: ORDER CREATED
+        # --------------------------------------------------------
+
+        new_order_snapshot = {
+            "order_id": order_id,
+            "customer_id": customer_id,
+            "status": "PROCESSING",
+            "total_amount": total_amount,
+            "items": [
+                {
+                    "product_id": item[
+                        "product_id"
+                    ],
+                    "quantity": item[
+                        "quantity"
+                    ],
+                    "price": item[
+                        "price"
+                    ],
+                }
+                for item in priced_items
+            ],
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        write_audit_log(
+            connection=connection,
+            entity_type="ORDER",
+            entity_id=order_id,
+            action="ORDER_CREATED",
+            old_value=None,
+            new_value=new_order_snapshot,
+            performed_by=performed_by,
+        )
+
+        # --------------------------------------------------------
+        # COMMIT ORDER + AUDIT TOGETHER
         # --------------------------------------------------------
 
         connection.commit()
@@ -810,7 +1275,9 @@ def create_order(body):
 
         sqs.send_message(
             QueueUrl=QUEUE_URL,
-            MessageBody=json.dumps(message),
+            MessageBody=json.dumps(
+                message
+            ),
         )
 
         print(
@@ -824,10 +1291,6 @@ def create_order(body):
         put_metric(
             "OrderRequests"
         )
-
-        # --------------------------------------------------------
-        # RESPONSE
-        # --------------------------------------------------------
 
         return response(
             202,
@@ -961,7 +1424,9 @@ def get_order(order_id):
                 (order_id,),
             )
 
-            order["items"] = cursor.fetchall()
+            order["items"] = (
+                cursor.fetchall()
+            )
 
         return response(
             200,
@@ -1083,7 +1548,9 @@ def get_customer_orders(customer_id):
 
         for row in rows:
 
-            order_id = row["order_id"]
+            order_id = row[
+                "order_id"
+            ]
 
             if order_id not in orders:
 
@@ -1092,7 +1559,9 @@ def get_customer_orders(customer_id):
                     "customer_id": row[
                         "customer_id"
                     ],
-                    "status": row["status"],
+                    "status": row[
+                        "status"
+                    ],
                     "total_amount": row[
                         "total_amount"
                     ],
@@ -1105,7 +1574,9 @@ def get_customer_orders(customer_id):
                     "items": [],
                 }
 
-            orders[order_id]["items"].append(
+            orders[order_id][
+                "items"
+            ].append(
                 {
                     "product_id": row[
                         "product_id"
@@ -1162,7 +1633,11 @@ def get_customer_orders(customer_id):
 # UPDATE ORDER
 # ================================================================
 
-def update_order(order_id, body):
+def update_order(
+    order_id,
+    body,
+    performed_by=None,
+):
 
     if not isinstance(body, dict):
 
@@ -1176,7 +1651,9 @@ def update_order(order_id, body):
             },
         )
 
-    status = body.get("status")
+    status = body.get(
+        "status"
+    )
 
     allowed_statuses = [
         "PROCESSING",
@@ -1210,6 +1687,49 @@ def update_order(order_id, body):
             .replace(tzinfo=None)
         )
 
+        # --------------------------------------------------------
+        # GET OLD ORDER
+        # --------------------------------------------------------
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    order_id,
+                    customer_id,
+                    status,
+                    total_amount,
+                    created_at,
+                    updated_at
+                FROM orders
+                WHERE order_id = %s
+                FOR UPDATE
+                """,
+                (order_id,),
+            )
+
+            old_order = (
+                cursor.fetchone()
+            )
+
+            if not old_order:
+
+                connection.rollback()
+
+                return response(
+                    404,
+                    {
+                        "message": (
+                            "Order not found"
+                        ),
+                    },
+                )
+
+        # --------------------------------------------------------
+        # UPDATE ORDER
+        # --------------------------------------------------------
+
         with connection.cursor() as cursor:
 
             cursor.execute(
@@ -1227,26 +1747,77 @@ def update_order(order_id, body):
                 ),
             )
 
-            if cursor.rowcount == 0:
+        # --------------------------------------------------------
+        # AUDIT: ORDER UPDATED
+        # --------------------------------------------------------
 
-                connection.rollback()
+        old_order_snapshot = {
+            "order_id": old_order[
+                "order_id"
+            ],
+            "customer_id": old_order[
+                "customer_id"
+            ],
+            "status": old_order[
+                "status"
+            ],
+            "total_amount": old_order[
+                "total_amount"
+            ],
+            "created_at": old_order[
+                "created_at"
+            ],
+            "updated_at": old_order[
+                "updated_at"
+            ],
+        }
 
-                return response(
-                    404,
-                    {
-                        "message": (
-                            "Order not found"
-                        ),
-                    },
-                )
+        new_order_snapshot = {
+            "order_id": old_order[
+                "order_id"
+            ],
+            "customer_id": old_order[
+                "customer_id"
+            ],
+            "status": status,
+            "total_amount": old_order[
+                "total_amount"
+            ],
+            "created_at": old_order[
+                "created_at"
+            ],
+            "updated_at": now,
+        }
+
+        write_audit_log(
+            connection=connection,
+            entity_type="ORDER",
+            entity_id=order_id,
+            action="ORDER_UPDATED",
+            old_value=old_order_snapshot,
+            new_value=new_order_snapshot,
+            performed_by=performed_by,
+        )
+
+        # --------------------------------------------------------
+        # COMMIT
+        # --------------------------------------------------------
 
         connection.commit()
+
+        print(
+            f"Order {order_id} updated: "
+            f"{old_order['status']} -> {status}"
+        )
 
         return response(
             200,
             {
                 "message": "Order updated",
                 "order_id": order_id,
+                "old_status": old_order[
+                    "status"
+                ],
                 "status": status,
             },
         )
@@ -1279,7 +1850,10 @@ def update_order(order_id, body):
 # CANCEL ORDER
 # ================================================================
 
-def cancel_order(order_id):
+def cancel_order(
+    order_id,
+    performed_by=None,
+):
 
     connection = None
 
@@ -1289,10 +1863,19 @@ def cancel_order(order_id):
 
         with connection.cursor() as cursor:
 
+            # ----------------------------------------------------
+            # LOCK ORDER
+            # ----------------------------------------------------
+
             cursor.execute(
                 """
                 SELECT
-                    status
+                    order_id,
+                    customer_id,
+                    status,
+                    total_amount,
+                    created_at,
+                    updated_at
                 FROM orders
                 WHERE order_id = %s
                 FOR UPDATE
@@ -1315,7 +1898,14 @@ def cancel_order(order_id):
                     },
                 )
 
-            if order["status"] != "PROCESSING":
+            # ----------------------------------------------------
+            # ONLY PROCESSING ORDERS CAN BE CANCELLED
+            # ----------------------------------------------------
+
+            if (
+                order["status"]
+                != "PROCESSING"
+            ):
 
                 connection.rollback()
 
@@ -1335,9 +1925,15 @@ def cancel_order(order_id):
                 )
 
             now = (
-                datetime.now(timezone.utc)
+                datetime.now(
+                    timezone.utc
+                )
                 .replace(tzinfo=None)
             )
+
+            # ----------------------------------------------------
+            # UPDATE ORDER
+            # ----------------------------------------------------
 
             cursor.execute(
                 """
@@ -1353,7 +1949,71 @@ def cancel_order(order_id):
                 ),
             )
 
+        # --------------------------------------------------------
+        # AUDIT: ORDER CANCELLED
+        # --------------------------------------------------------
+
+        old_order_snapshot = {
+            "order_id": order[
+                "order_id"
+            ],
+            "customer_id": order[
+                "customer_id"
+            ],
+            "status": order[
+                "status"
+            ],
+            "total_amount": order[
+                "total_amount"
+            ],
+            "created_at": order[
+                "created_at"
+            ],
+            "updated_at": order[
+                "updated_at"
+            ],
+        }
+
+        new_order_snapshot = {
+            "order_id": order[
+                "order_id"
+            ],
+            "customer_id": order[
+                "customer_id"
+            ],
+            "status": "CANCELLED",
+            "total_amount": order[
+                "total_amount"
+            ],
+            "created_at": order[
+                "created_at"
+            ],
+            "updated_at": now,
+        }
+
+        write_audit_log(
+            connection=connection,
+            entity_type="ORDER",
+            entity_id=order_id,
+            action="ORDER_CANCELLED",
+            old_value=old_order_snapshot,
+            new_value=new_order_snapshot,
+            performed_by=performed_by,
+        )
+
+        # --------------------------------------------------------
+        # COMMIT
+        # --------------------------------------------------------
+
         connection.commit()
+
+        print(
+            f"Order {order_id} cancelled successfully"
+        )
+
+        put_metric(
+            "OrdersCancelled"
+        )
 
         return response(
             200,
@@ -1392,7 +2052,10 @@ def cancel_order(order_id):
 # LAMBDA HANDLER
 # ================================================================
 
-def lambda_handler(event, context):
+def lambda_handler(
+    event,
+    context,
+):
 
     if not isinstance(event, dict):
         event = {}
@@ -1405,17 +2068,12 @@ def lambda_handler(event, context):
 
     # ============================================================
     # INTERNAL SCHEMA INITIALIZATION
-    #
-    # GitHub Actions invokes the Lambda directly with:
-    #
-    # {
-    #     "action": "initialize_schema"
-    # }
-    #
-    # This must be checked BEFORE API route handling.
     # ============================================================
 
-    if event.get("action") == "initialize_schema":
+    if (
+        event.get("action")
+        == "initialize_schema"
+    ):
 
         print(
             "Received initialize_schema action"
@@ -1428,7 +2086,10 @@ def lambda_handler(event, context):
     # ============================================================
 
     method = (
-        event.get("httpMethod", "")
+        event.get(
+            "httpMethod",
+            "",
+        )
         .upper()
     )
 
@@ -1443,7 +2104,9 @@ def lambda_handler(event, context):
     )
 
     query_parameters = (
-        event.get("queryStringParameters")
+        event.get(
+            "queryStringParameters"
+        )
         or {}
     )
 
@@ -1466,8 +2129,16 @@ def lambda_handler(event, context):
                 event
             )
 
+            performed_by = (
+                get_performed_by(
+                    event,
+                    body,
+                )
+            )
+
             return create_order(
-                body
+                body,
+                performed_by,
             )
 
         except ValueError as exc:
@@ -1486,11 +2157,21 @@ def lambda_handler(event, context):
     if (
         method == "POST"
         and order_id
-        and path.endswith("/cancel")
+        and path.endswith(
+            "/cancel"
+        )
     ):
 
+        performed_by = (
+            get_performed_by(
+                event,
+                {},
+            )
+        )
+
         return cancel_order(
-            order_id
+            order_id,
+            performed_by,
         )
 
     # ============================================================
@@ -1565,9 +2246,17 @@ def lambda_handler(event, context):
                 event
             )
 
+            performed_by = (
+                get_performed_by(
+                    event,
+                    body,
+                )
+            )
+
             return update_order(
                 order_id,
                 body,
+                performed_by,
             )
 
         except ValueError as exc:

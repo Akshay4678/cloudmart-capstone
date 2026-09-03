@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import boto3
 import pymysql
@@ -95,6 +96,100 @@ def current_time():
 
 
 # ================================================================
+# JSON SERIALIZATION
+# ================================================================
+
+def json_default(value):
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    return str(value)
+
+
+# ================================================================
+# AUDIT LOG
+# ================================================================
+
+def write_audit_log(
+    cursor,
+    entity_type,
+    entity_id,
+    action,
+    old_value=None,
+    new_value=None,
+    performed_by=None,
+):
+
+    cursor.execute(
+        """
+        INSERT INTO audit_logs (
+            entity_type,
+            entity_id,
+            action,
+            old_value,
+            new_value,
+            performed_by,
+            created_at
+        )
+        VALUES (
+            %s,
+            %s,
+            %s,
+            %s,
+            %s,
+            %s,
+            %s
+        )
+        """,
+        (
+            entity_type,
+            str(entity_id),
+            action,
+            (
+                json.dumps(
+                    old_value,
+                    default=json_default
+                )
+                if old_value is not None
+                else None
+            ),
+            (
+                json.dumps(
+                    new_value,
+                    default=json_default
+                )
+                if new_value is not None
+                else None
+            ),
+            performed_by,
+            current_time(),
+        ),
+    )
+
+    print(
+        f"Audit log created: "
+        f"{entity_type} {entity_id} {action}"
+    )
+
+
+# ================================================================
+# ACTOR
+# ================================================================
+
+def get_performed_by(message):
+
+    return (
+        message.get("performed_by")
+        or message.get("customer_id")
+        or "order-processor"
+    )
+
+
+# ================================================================
 # PUBLISH EVENTBRIDGE EVENT
 # ================================================================
 
@@ -113,11 +208,13 @@ def publish_order_event(
     }
 
     if total_amount is not None:
+
         detail["total_amount"] = str(
             total_amount
         )
 
     if reason is not None:
+
         detail["reason"] = reason
 
     detail_type = (
@@ -148,7 +245,7 @@ def publish_order_event(
             "EventBridge response:",
             json.dumps(
                 result,
-                default=str
+                default=json_default
             ),
         )
 
@@ -169,8 +266,6 @@ def publish_order_event(
             f"{type(exc).__name__}: {exc}"
         )
 
-        # EventBridge failure is treated as a real
-        # processing failure so SQS can retry.
         raise
 
 
@@ -205,9 +300,7 @@ def extract_order_message(record):
             ) from exc
 
     # ------------------------------------------------------------
-    # Support an SNS-style envelope too.
-    # This makes the processor more tolerant if the message
-    # passes through another AWS service.
+    # Support SNS-style envelope
     # ------------------------------------------------------------
 
     if isinstance(message, dict):
@@ -219,8 +312,13 @@ def extract_order_message(record):
             if isinstance(nested, str):
 
                 try:
-                    message = json.loads(nested)
+
+                    message = json.loads(
+                        nested
+                    )
+
                 except json.JSONDecodeError:
+
                     pass
 
             elif isinstance(nested, dict):
@@ -245,6 +343,7 @@ def mark_order_failed(
     reason,
     customer_id=None,
     total_amount=None,
+    performed_by=None,
 ):
 
     connection = None
@@ -256,24 +355,96 @@ def mark_order_failed(
         with connection.cursor() as cursor:
 
             # ----------------------------------------------------
-            # Only change PROCESSING orders.
-            # Do not overwrite CONFIRMED or CANCELLED.
+            # Read current order
             # ----------------------------------------------------
 
             cursor.execute(
                 """
-                UPDATE orders
-                SET
-                    status = 'FAILED',
-                    updated_at = %s
-                WHERE order_id = %s
-                  AND status = 'PROCESSING'
-                """,
-                (
-                    current_time(),
+                SELECT
                     order_id,
-                ),
+                    customer_id,
+                    status,
+                    total_amount
+                FROM orders
+                WHERE order_id = %s
+                FOR UPDATE
+                """,
+                (order_id,),
             )
+
+            order = cursor.fetchone()
+
+            if not order:
+
+                raise ValueError(
+                    f"Order {order_id} does not exist"
+                )
+
+            current_status = order[
+                "status"
+            ]
+
+            # ----------------------------------------------------
+            # Only PROCESSING orders become FAILED.
+            # ----------------------------------------------------
+
+            if current_status == "PROCESSING":
+
+                cursor.execute(
+                    """
+                    UPDATE orders
+                    SET
+                        status = 'FAILED',
+                        updated_at = %s
+                    WHERE order_id = %s
+                      AND status = 'PROCESSING'
+                    """,
+                    (
+                        current_time(),
+                        order_id,
+                    ),
+                )
+
+                if cursor.rowcount != 1:
+
+                    raise RuntimeError(
+                        f"Could not mark order "
+                        f"{order_id} as FAILED"
+                    )
+
+                # ------------------------------------------------
+                # ORDER FAILED AUDIT
+                # ------------------------------------------------
+
+                write_audit_log(
+                    cursor=cursor,
+                    entity_type="ORDER",
+                    entity_id=order_id,
+                    action="ORDER_FAILED",
+                    old_value={
+                        "status": "PROCESSING",
+                        "total_amount": order[
+                            "total_amount"
+                        ],
+                    },
+                    new_value={
+                        "status": "FAILED",
+                        "reason": reason,
+                    },
+                    performed_by=(
+                        performed_by
+                        or customer_id
+                        or "order-processor"
+                    ),
+                )
+
+            else:
+
+                print(
+                    f"Order {order_id} is already "
+                    f"{current_status}; "
+                    f"not changing to FAILED"
+                )
 
         connection.commit()
 
@@ -284,6 +455,7 @@ def mark_order_failed(
     except Exception as exc:
 
         if connection:
+
             connection.rollback()
 
         print(
@@ -296,6 +468,7 @@ def mark_order_failed(
     finally:
 
         if connection:
+
             connection.close()
 
     put_metric(
@@ -323,11 +496,8 @@ def mark_order_failed(
             f"could not be published: {exc}"
         )
 
-        # We have already recorded FAILED in RDS.
-        # Do not keep retrying an order merely because
-        # notification failed.
-        #
-        # The business operation itself is already complete.
+        # Database already records FAILED.
+        # Do not retry only because EventBridge failed.
 
 
 # ================================================================
@@ -346,8 +516,12 @@ def process_order(message):
 
     order_id = str(order_id)
 
+    performed_by = get_performed_by(
+        message
+    )
+
     print(
-        f"=================================================="
+        "=================================================="
     )
 
     print(
@@ -410,9 +584,7 @@ def process_order(message):
             )
 
             # ----------------------------------------------------
-            # Already CONFIRMED
-            #
-            # This protects against duplicate SQS delivery.
+            # ALREADY CONFIRMED
             # ----------------------------------------------------
 
             if current_status == "CONFIRMED":
@@ -431,8 +603,6 @@ def process_order(message):
 
             # ----------------------------------------------------
             # CANCELLED
-            #
-            # Do not deduct stock for cancelled orders.
             # ----------------------------------------------------
 
             if current_status == "CANCELLED":
@@ -451,8 +621,6 @@ def process_order(message):
 
             # ----------------------------------------------------
             # FAILED
-            #
-            # Do not process the same failed order again.
             # ----------------------------------------------------
 
             if current_status == "FAILED":
@@ -470,7 +638,7 @@ def process_order(message):
                 }
 
             # ----------------------------------------------------
-            # Only PROCESSING orders should continue.
+            # ONLY PROCESSING ORDERS CONTINUE
             # ----------------------------------------------------
 
             if current_status != "PROCESSING":
@@ -481,11 +649,7 @@ def process_order(message):
                 )
 
             # ----------------------------------------------------
-            # READ ORDER ITEMS FROM order_items
-            #
-            # IMPORTANT:
-            # product_id and quantity are NOT columns in orders.
-            # They are in order_items.
+            # READ ORDER ITEMS
             # ----------------------------------------------------
 
             cursor.execute(
@@ -496,13 +660,13 @@ def process_order(message):
                     oi.quantity,
                     oi.price,
                     p.name AS product_name,
-                    p.stock_count
+                    p.stock_count,
+                    p.status AS product_status
                 FROM order_items oi
                 INNER JOIN products p
                     ON oi.product_id = p.product_id
                 WHERE oi.order_id = %s
                 ORDER BY oi.product_id
-                FOR UPDATE
                 """,
                 (order_id,),
             )
@@ -522,14 +686,13 @@ def process_order(message):
 
             # ====================================================
             # LOCK PRODUCTS IN CONSISTENT ORDER
-            #
-            # This protects against race conditions when two
-            # orders try to purchase the same product.
             # ====================================================
 
             product_ids = sorted(
-                int(item["product_id"])
-                for item in items
+                set(
+                    int(item["product_id"])
+                    for item in items
+                )
             )
 
             locked_products = {}
@@ -541,7 +704,8 @@ def process_order(message):
                     SELECT
                         product_id,
                         name,
-                        stock_count
+                        stock_count,
+                        status
                     FROM products
                     WHERE product_id = %s
                     FOR UPDATE
@@ -562,7 +726,7 @@ def process_order(message):
                 ] = product
 
             # ====================================================
-            # CHECK ALL STOCK BEFORE CHANGING ANY STOCK
+            # CHECK ALL STOCK BEFORE CHANGING ANYTHING
             # ====================================================
 
             for item in items:
@@ -590,10 +754,6 @@ def process_order(message):
                     f"requested={quantity}"
                 )
 
-                # ------------------------------------------------
-                # ZERO STOCK
-                # ------------------------------------------------
-
                 if stock_count <= 0:
 
                     raise InventoryError(
@@ -602,10 +762,6 @@ def process_order(message):
                         requested=quantity,
                         available=0,
                     )
-
-                # ------------------------------------------------
-                # INSUFFICIENT STOCK
-                # ------------------------------------------------
 
                 if quantity > stock_count:
 
@@ -638,23 +794,42 @@ def process_order(message):
                     product["stock_count"]
                 )
 
+                old_status = product[
+                    "status"
+                ]
+
                 new_stock = (
                     old_stock - quantity
                 )
 
                 # ------------------------------------------------
-                # PRODUCT STOCK
+                # PRODUCT STATUS
+                #
+                # Stock 0 -> INACTIVE
+                # Stock > 0 -> ACTIVE
+                # ------------------------------------------------
+
+                new_status = (
+                    "ACTIVE"
+                    if new_stock > 0
+                    else "INACTIVE"
+                )
+
+                # ------------------------------------------------
+                # UPDATE PRODUCT
                 # ------------------------------------------------
 
                 cursor.execute(
                     """
                     UPDATE products
                     SET
-                        stock_count = %s
+                        stock_count = %s,
+                        status = %s
                     WHERE product_id = %s
                     """,
                     (
                         new_stock,
+                        new_status,
                         product_id,
                     ),
                 )
@@ -667,10 +842,7 @@ def process_order(message):
                     )
 
                 # ------------------------------------------------
-                # INVENTORY TABLE
-                #
-                # Keep inventory.quantity synchronized with
-                # products.stock_count.
+                # UPDATE INVENTORY
                 # ------------------------------------------------
 
                 cursor.execute(
@@ -699,6 +871,50 @@ def process_order(message):
                     f"{old_stock} -> {new_stock}"
                 )
 
+                # =================================================
+                # STOCK DECREASE AUDIT
+                # =================================================
+
+                write_audit_log(
+                    cursor=cursor,
+                    entity_type="PRODUCT",
+                    entity_id=product_id,
+                    action="STOCK_DECREASED",
+                    old_value={
+                        "stock_count": old_stock,
+                        "status": old_status,
+                    },
+                    new_value={
+                        "stock_count": new_stock,
+                        "status": new_status,
+                        "quantity_decreased": quantity,
+                        "order_id": order_id,
+                    },
+                    performed_by=performed_by,
+                )
+
+                # =================================================
+                # STATUS CHANGE AUDIT
+                # =================================================
+
+                if old_status != new_status:
+
+                    write_audit_log(
+                        cursor=cursor,
+                        entity_type="PRODUCT",
+                        entity_id=product_id,
+                        action="STATUS_CHANGED",
+                        old_value={
+                            "status": old_status,
+                            "stock_count": old_stock,
+                        },
+                        new_value={
+                            "status": new_status,
+                            "stock_count": new_stock,
+                        },
+                        performed_by=performed_by,
+                    )
+
             # ====================================================
             # CONFIRM ORDER
             # ====================================================
@@ -724,11 +940,38 @@ def process_order(message):
                     f"Could not confirm order {order_id}"
                 )
 
+            # ====================================================
+            # ORDER CONFIRMED AUDIT
+            # ====================================================
+
+            write_audit_log(
+                cursor=cursor,
+                entity_type="ORDER",
+                entity_id=order_id,
+                action="ORDER_CONFIRMED",
+                old_value={
+                    "status": "PROCESSING",
+                    "total_amount": total_amount,
+                },
+                new_value={
+                    "status": "CONFIRMED",
+                    "total_amount": total_amount,
+                },
+                performed_by=performed_by,
+            )
+
         # ========================================================
         # COMMIT EVERYTHING
         #
-        # Stock deduction + inventory update + order confirmation
-        # happen together.
+        # Product stock
+        # Inventory
+        # Product status
+        # Stock audit
+        # Status audit
+        # Order status
+        # Order audit
+        #
+        # All commit together.
         # ========================================================
 
         connection.commit()
@@ -756,14 +999,6 @@ def process_order(message):
 
         except Exception:
 
-            # ----------------------------------------------------
-            # IMPORTANT:
-            #
-            # The database transaction is already committed.
-            # We must NOT return the SQS message to the queue,
-            # otherwise the same order could be processed again.
-            # ----------------------------------------------------
-
             print(
                 "WARNING: Order confirmed but "
                 "EventBridge notification failed"
@@ -774,9 +1009,14 @@ def process_order(message):
             "status": "CONFIRMED",
         }
 
+    # ============================================================
+    # BUSINESS FAILURE: INVENTORY
+    # ============================================================
+
     except InventoryError as exc:
 
         if connection:
+
             connection.rollback()
 
         print(
@@ -800,15 +1040,8 @@ def process_order(message):
             total_amount=(
                 message.get("total_amount")
             ),
+            performed_by=performed_by,
         )
-
-        # --------------------------------------------------------
-        # Return successfully so SQS removes the message.
-        #
-        # This is a BUSINESS failure, not a transient Lambda
-        # failure. Retrying the same out-of-stock order would
-        # just fail again.
-        # --------------------------------------------------------
 
         return {
             "order_id": order_id,
@@ -816,9 +1049,14 @@ def process_order(message):
             "reason": reason,
         }
 
+    # ============================================================
+    # BUSINESS FAILURE: VALIDATION
+    # ============================================================
+
     except ValueError as exc:
 
         if connection:
+
             connection.rollback()
 
         print(
@@ -835,6 +1073,7 @@ def process_order(message):
             total_amount=(
                 message.get("total_amount")
             ),
+            performed_by=performed_by,
         )
 
         return {
@@ -843,9 +1082,14 @@ def process_order(message):
             "reason": str(exc),
         }
 
+    # ============================================================
+    # TRANSIENT / SYSTEM FAILURE
+    # ============================================================
+
     except Exception as exc:
 
         if connection:
+
             connection.rollback()
 
         print(
@@ -854,19 +1098,18 @@ def process_order(message):
             f"{type(exc).__name__}: {exc}"
         )
 
-        # --------------------------------------------------------
-        # IMPORTANT:
-        #
-        # Do NOT mark transient errors as permanently failed here.
-        #
-        # Raising the exception causes Lambda/SQS to retry.
-        # After the configured retry count, SQS moves the message
-        # to the DLQ.
-        # --------------------------------------------------------
-
         put_metric(
             "OrderProcessingFailures"
         )
+
+        # --------------------------------------------------------
+        # IMPORTANT:
+        #
+        # Do not permanently mark the order FAILED for transient
+        # infrastructure/database errors.
+        #
+        # Raising causes Lambda/SQS to retry.
+        # --------------------------------------------------------
 
         raise
 
@@ -925,7 +1168,7 @@ def lambda_handler(event, context):
         "SQS event received:",
         json.dumps(
             event,
-            default=str
+            default=json_default
         ),
     )
 
@@ -982,7 +1225,7 @@ def lambda_handler(event, context):
                 "Order processing result:",
                 json.dumps(
                     result,
-                    default=str
+                    default=json_default
                 ),
             )
 
@@ -1007,11 +1250,8 @@ def lambda_handler(event, context):
             )
 
             # ----------------------------------------------------
-            # CRITICAL:
-            #
-            # Raise the exception so Lambda reports failure to
-            # SQS. The message will then be retried and eventually
-            # moved to the DLQ if it continues failing.
+            # Raise so Lambda reports failure to SQS.
+            # SQS will retry and eventually move to DLQ.
             # ----------------------------------------------------
 
             raise

@@ -1,7 +1,8 @@
 import json
 import os
-import pymysql
+
 import boto3
+import pymysql
 from botocore.config import Config
 
 
@@ -47,7 +48,10 @@ def get_connection():
         database=DB_NAME,
         port=DB_PORT,
         connect_timeout=10,
-        cursorclass=pymysql.cursors.DictCursor
+        read_timeout=10,
+        write_timeout=10,
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=False
     )
 
     print("AFTER DB CONNECTION")
@@ -67,103 +71,175 @@ def response(status_code, body):
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*"
         },
-        "body": json.dumps(body, default=str)
+        "body": json.dumps(
+            body,
+            default=str
+        )
     }
 
 
 # =========================================================
-# DATABASE INITIALIZATION
+# AUDIT ACTOR
 # =========================================================
 
-def initialize_database():
+def get_performed_by(event):
 
-    connection = get_connection()
+    """
+    Try to identify the user who performed the operation.
+
+    If API Gateway authorizer information is available,
+    use the user/customer identifier.
+
+    Otherwise use 'api'.
+    """
 
     try:
-        with connection.cursor() as cursor:
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS products (
-                    product_id INT AUTO_INCREMENT PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    description TEXT,
-                    price DECIMAL(10,2) NOT NULL,
-                    stock_count INT NOT NULL DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    ON UPDATE CURRENT_TIMESTAMP
+        request_context = (
+            event.get("requestContext")
+            or {}
+        )
+
+        authorizer = (
+            request_context.get("authorizer")
+            or {}
+        )
+
+        # JWT authorizer
+        jwt_claims = (
+            authorizer.get("jwt", {})
+            .get("claims", {})
+        )
+
+        if jwt_claims:
+
+            for key in [
+                "sub",
+                "username",
+                "email"
+            ]:
+
+                if jwt_claims.get(key):
+
+                    return str(
+                        jwt_claims[key]
+                    )
+
+        # Lambda authorizer
+        for key in [
+            "user",
+            "username",
+            "email",
+            "customer_id"
+        ]:
+
+            if authorizer.get(key):
+
+                return str(
+                    authorizer[key]
                 )
-            """)
 
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS inventory (
-                    inventory_id INT AUTO_INCREMENT PRIMARY KEY,
-                    product_id INT NOT NULL,
-                    quantity INT NOT NULL DEFAULT 0,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    ON UPDATE CURRENT_TIMESTAMP,
-                    CONSTRAINT fk_inventory_product
-                    FOREIGN KEY (product_id)
-                    REFERENCES products(product_id)
-                    ON DELETE CASCADE
-                )
-            """)
+    except Exception as exc:
 
-            cursor.execute("SELECT COUNT(*) AS count FROM products")
-            product_count = cursor.fetchone()["count"]
+        print(
+            "Could not determine audit actor:",
+            str(exc)
+        )
 
-            if product_count == 0:
-                cursor.execute("""
-                    INSERT INTO products
-                    (name, description, price, stock_count)
-                    VALUES
-                    ('Laptop', 'Gaming Laptop', 75000.00, 10),
-                    ('Mouse', 'Wireless Mouse', 1500.00, 25),
-                    ('Keyboard', 'Mechanical Keyboard', 3500.00, 15)
-                """)
+    return "api"
 
-                cursor.execute(
-                    "SELECT product_id, stock_count FROM products ORDER BY product_id"
-                )
 
-                products = cursor.fetchall()
+# =========================================================
+# AUDIT LOG
+# =========================================================
 
-                for product in products:
+def write_audit_log(
+    connection,
+    entity_type,
+    entity_id,
+    action,
+    old_value=None,
+    new_value=None,
+    performed_by="api"
+):
 
-                    cursor.execute("""
-                        INSERT INTO inventory (product_id, quantity)
-                        VALUES (%s, %s)
-                    """, (
-                        product["product_id"],
-                        product["stock_count"]
-                    ))
+    """
+    Write an entry into audit_logs.
 
-        connection.commit()
+    old_value:
+        State before the operation.
 
-        print("DATABASE INITIALIZATION SUCCESSFUL")
+    new_value:
+        State after the operation.
+    """
 
-    except Exception as e:
+    print(
+        "Writing audit log:",
+        action,
+        entity_type,
+        entity_id
+    )
 
-        connection.rollback()
+    old_json = None
 
-        print("DATABASE INITIALIZATION FAILED")
-        print("DATABASE ERROR TYPE:", type(e).__name__)
-        print("DATABASE ERROR MESSAGE:", str(e))
+    if old_value is not None:
 
-        raise
+        old_json = json.dumps(
+            old_value,
+            default=str
+        )
 
-    finally:
+    new_json = None
 
-        connection.close()
+    if new_value is not None:
 
-        print("DATABASE INITIALIZATION CONNECTION CLOSED")
+        new_json = json.dumps(
+            new_value,
+            default=str
+        )
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            INSERT INTO audit_logs
+            (
+                entity_type,
+                entity_id,
+                action,
+                old_value,
+                new_value,
+                performed_by
+            )
+            VALUES
+            (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s
+            )
+            """,
+            (
+                entity_type,
+                str(entity_id),
+                action,
+                old_json,
+                new_json,
+                performed_by
+            )
+        )
 
 
 # =========================================================
 # PUBLISH INVENTORY CHANGE EVENT
 # =========================================================
 
-def publish_inventory_event(product_id, stock_count):
+def publish_inventory_event(
+    product_id,
+    stock_count
+):
 
     print("BEFORE EVENTBRIDGE")
 
@@ -179,54 +255,940 @@ def publish_inventory_event(product_id, stock_count):
                 {
                     "Source": "cloudmart.inventory",
                     "DetailType": "InventoryChanged",
-                    "Detail": json.dumps(event_detail)
+                    "Detail": json.dumps(
+                        event_detail
+                    )
                 }
             ]
         )
 
         print(
             "EventBridge result:",
-            json.dumps(result, default=str)
+            json.dumps(
+                result,
+                default=str
+            )
         )
 
-        # Check if EventBridge rejected the event
-        if result.get("FailedEntryCount", 0) > 0:
+        if result.get(
+            "FailedEntryCount",
+            0
+        ) > 0:
 
             print(
-                "WARNING: EventBridge failed to publish event:",
-                json.dumps(result, default=str)
+                "WARNING: EventBridge failed "
+                "to publish event:",
+                json.dumps(
+                    result,
+                    default=str
+                )
             )
 
         else:
 
             print(
-                "AFTER EVENTBRIDGE - Event published successfully"
+                "AFTER EVENTBRIDGE - "
+                "Event published successfully"
             )
 
-    except Exception as e:
+    except Exception as exc:
 
-        # Do not fail the product operation if EventBridge
-        # is temporarily unreachable.
+        # EventBridge failure should not undo
+        # the already committed database operation.
 
-        print("WARNING: EventBridge publish failed")
-        print("EVENTBRIDGE ERROR TYPE:", type(e).__name__)
-        print("EVENTBRIDGE ERROR MESSAGE:", str(e))
+        print(
+            "WARNING: EventBridge publish failed"
+        )
+
+        print(
+            "EVENTBRIDGE ERROR TYPE:",
+            type(exc).__name__
+        )
+
+        print(
+            "EVENTBRIDGE ERROR MESSAGE:",
+            str(exc)
+        )
+
+
+# =========================================================
+# CREATE PRODUCT
+# =========================================================
+
+def create_product(
+    event,
+    connection
+):
+
+    body = event.get("body")
+
+    print(
+        "Request body:",
+        body
+    )
+
+    if not body:
+
+        return response(
+            400,
+            {
+                "message": (
+                    "Request body is required"
+                )
+            }
+        )
+
+    # ---------------------------------------------------------
+    # PARSE JSON
+    # ---------------------------------------------------------
+
+    try:
+
+        data = json.loads(body)
+
+    except json.JSONDecodeError:
+
+        return response(
+            400,
+            {
+                "message": "Invalid JSON body"
+            }
+        )
+
+    # ---------------------------------------------------------
+    # READ DATA
+    # ---------------------------------------------------------
+
+    name = data.get("name")
+    description = data.get("description")
+    price = data.get("price")
+    stock_count = data.get("stock_count")
+
+    # ---------------------------------------------------------
+    # VALIDATION
+    # ---------------------------------------------------------
+
+    if (
+        not name
+        or price is None
+        or stock_count is None
+    ):
+
+        return response(
+            400,
+            {
+                "message": (
+                    "name, price and "
+                    "stock_count are required"
+                )
+            }
+        )
+
+    try:
+
+        stock_count = int(
+            stock_count
+        )
+
+    except (TypeError, ValueError):
+
+        return response(
+            400,
+            {
+                "message": (
+                    "stock_count must be an integer"
+                )
+            }
+        )
+
+    if stock_count < 0:
+
+        return response(
+            400,
+            {
+                "message": (
+                    "stock_count cannot be negative"
+                )
+            }
+        )
+
+    # ---------------------------------------------------------
+    # DETERMINE INITIAL STATUS
+    # ---------------------------------------------------------
+
+    status = (
+        "ACTIVE"
+        if stock_count > 0
+        else "INACTIVE"
+    )
+
+    performed_by = get_performed_by(
+        event
+    )
+
+    # ---------------------------------------------------------
+    # INSERT PRODUCT
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        print("BEFORE INSERT")
+
+        cursor.execute(
+            """
+            INSERT INTO products
+            (
+                name,
+                description,
+                price,
+                stock_count,
+                status
+            )
+            VALUES
+            (
+                %s,
+                %s,
+                %s,
+                %s,
+                %s
+            )
+            """,
+            (
+                name,
+                description,
+                price,
+                stock_count,
+                status
+            )
+        )
+
+        new_product_id = cursor.lastrowid
+
+        print(
+            "AFTER INSERT - Product ID:",
+            new_product_id
+        )
+
+    # ---------------------------------------------------------
+    # CREATE INVENTORY ROW
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            INSERT INTO inventory
+            (
+                product_id,
+                quantity
+            )
+            VALUES
+            (
+                %s,
+                %s
+            )
+            """,
+            (
+                new_product_id,
+                stock_count
+            )
+        )
+
+    # ---------------------------------------------------------
+    # AUDIT CREATE
+    # ---------------------------------------------------------
+
+    new_product = {
+        "product_id": new_product_id,
+        "name": name,
+        "description": description,
+        "price": price,
+        "stock_count": stock_count,
+        "status": status
+    }
+
+    write_audit_log(
+        connection=connection,
+        entity_type="PRODUCT",
+        entity_id=new_product_id,
+        action="CREATE_PRODUCT",
+        old_value=None,
+        new_value=new_product,
+        performed_by=performed_by
+    )
+
+    # ---------------------------------------------------------
+    # COMMIT
+    # ---------------------------------------------------------
+
+    connection.commit()
+
+    print("AFTER COMMIT")
+
+    # ---------------------------------------------------------
+    # PUBLISH EVENT
+    # ---------------------------------------------------------
+
+    publish_inventory_event(
+        new_product_id,
+        stock_count
+    )
+
+    # ---------------------------------------------------------
+    # RESPONSE
+    # ---------------------------------------------------------
+
+    return response(
+        201,
+        {
+            "message": (
+                "Product created successfully"
+            ),
+            "product_id": new_product_id,
+            "status": status
+        }
+    )
+
+
+# =========================================================
+# GET SINGLE ACTIVE PRODUCT
+# =========================================================
+
+def get_product(
+    product_id,
+    connection
+):
+
+    with connection.cursor() as cursor:
+
+        print(
+            "BEFORE SELECT PRODUCT"
+        )
+
+        cursor.execute(
+            """
+            SELECT
+                product_id,
+                name,
+                description,
+                price,
+                stock_count,
+                status,
+                created_at,
+                updated_at
+            FROM products
+            WHERE product_id = %s
+              AND status = 'ACTIVE'
+            """,
+            (product_id,)
+        )
+
+        product = cursor.fetchone()
+
+        print(
+            "AFTER SELECT PRODUCT"
+        )
+
+    if not product:
+
+        return response(
+            404,
+            {
+                "message": (
+                    "Product not found"
+                )
+            }
+        )
+
+    return response(
+        200,
+        {
+            "message": (
+                "Product retrieved successfully"
+            ),
+            "product": product
+        }
+    )
+
+
+# =========================================================
+# GET ACTIVE PRODUCTS
+# =========================================================
+
+def get_products(
+    connection
+):
+
+    with connection.cursor() as cursor:
+
+        print(
+            "BEFORE SELECT ACTIVE PRODUCTS"
+        )
+
+        cursor.execute(
+            """
+            SELECT
+                product_id,
+                name,
+                description,
+                price,
+                stock_count,
+                status,
+                created_at,
+                updated_at
+            FROM products
+            WHERE status = 'ACTIVE'
+            ORDER BY product_id
+            """
+        )
+
+        products = cursor.fetchall()
+
+        print(
+            "AFTER SELECT ACTIVE PRODUCTS"
+        )
+
+    return response(
+        200,
+        {
+            "message": (
+                "Products retrieved successfully"
+            ),
+            "count": len(products),
+            "products": products
+        }
+    )
+
+
+# =========================================================
+# UPDATE PRODUCT
+# =========================================================
+
+def update_product(
+    event,
+    product_id,
+    connection
+):
+
+    body = event.get("body")
+
+    if not body:
+
+        return response(
+            400,
+            {
+                "message": (
+                    "Request body is required"
+                )
+            }
+        )
+
+    # ---------------------------------------------------------
+    # PARSE JSON
+    # ---------------------------------------------------------
+
+    try:
+
+        data = json.loads(body)
+
+    except json.JSONDecodeError:
+
+        return response(
+            400,
+            {
+                "message": "Invalid JSON body"
+            }
+        )
+
+    name = data.get("name")
+    description = data.get("description")
+    price = data.get("price")
+    stock_count = data.get("stock_count")
+
+    # ---------------------------------------------------------
+    # VALIDATION
+    # ---------------------------------------------------------
+
+    if (
+        not name
+        or price is None
+        or stock_count is None
+    ):
+
+        return response(
+            400,
+            {
+                "message": (
+                    "name, price and "
+                    "stock_count are required"
+                )
+            }
+        )
+
+    try:
+
+        stock_count = int(
+            stock_count
+        )
+
+    except (TypeError, ValueError):
+
+        return response(
+            400,
+            {
+                "message": (
+                    "stock_count must be an integer"
+                )
+            }
+        )
+
+    if stock_count < 0:
+
+        return response(
+            400,
+            {
+                "message": (
+                    "stock_count cannot be negative"
+                )
+            }
+        )
+
+    performed_by = get_performed_by(
+        event
+    )
+
+    # ---------------------------------------------------------
+    # GET EXISTING PRODUCT
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            SELECT
+                product_id,
+                name,
+                description,
+                price,
+                stock_count,
+                status,
+                created_at,
+                updated_at
+            FROM products
+            WHERE product_id = %s
+            FOR UPDATE
+            """,
+            (product_id,)
+        )
+
+        old_product = cursor.fetchone()
+
+    if not old_product:
+
+        connection.rollback()
+
+        return response(
+            404,
+            {
+                "message": (
+                    "Product not found"
+                )
+            }
+        )
+
+    # ---------------------------------------------------------
+    # OLD STOCK
+    # ---------------------------------------------------------
+
+    old_stock = int(
+        old_product["stock_count"]
+    )
+
+    # ---------------------------------------------------------
+    # DETERMINE NEW STATUS
+    # ---------------------------------------------------------
+    #
+    # stock > 0 -> ACTIVE
+    # stock = 0 -> INACTIVE
+    #
+    # This also means:
+    #
+    # INACTIVE + stock increased above 0
+    #     -> ACTIVE
+    #
+    # ---------------------------------------------------------
+
+    new_status = (
+        "ACTIVE"
+        if stock_count > 0
+        else "INACTIVE"
+    )
+
+    # ---------------------------------------------------------
+    # UPDATE PRODUCT
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        print("BEFORE UPDATE")
+
+        cursor.execute(
+            """
+            UPDATE products
+            SET
+                name = %s,
+                description = %s,
+                price = %s,
+                stock_count = %s,
+                status = %s
+            WHERE product_id = %s
+            """,
+            (
+                name,
+                description,
+                price,
+                stock_count,
+                new_status,
+                product_id
+            )
+        )
+
+        print(
+            "AFTER UPDATE - Rows:",
+            cursor.rowcount
+        )
+
+    # ---------------------------------------------------------
+    # SYNCHRONIZE INVENTORY
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            UPDATE inventory
+            SET
+                quantity = %s
+            WHERE product_id = %s
+            """,
+            (
+                stock_count,
+                product_id
+            )
+        )
+
+        inventory_rows = cursor.rowcount
+
+        # If an inventory row does not exist,
+        # create one.
+
+        if inventory_rows == 0:
+
+            cursor.execute(
+                """
+                INSERT INTO inventory
+                (
+                    product_id,
+                    quantity
+                )
+                VALUES
+                (
+                    %s,
+                    %s
+                )
+                """,
+                (
+                    product_id,
+                    stock_count
+                )
+            )
+
+    # ---------------------------------------------------------
+    # NEW PRODUCT SNAPSHOT
+    # ---------------------------------------------------------
+
+    new_product = {
+        "product_id": int(product_id),
+        "name": name,
+        "description": description,
+        "price": price,
+        "stock_count": stock_count,
+        "status": new_status
+    }
+
+    # ---------------------------------------------------------
+    # AUDIT PRODUCT UPDATE
+    # ---------------------------------------------------------
+
+    write_audit_log(
+        connection=connection,
+        entity_type="PRODUCT",
+        entity_id=product_id,
+        action="UPDATE_PRODUCT",
+        old_value=old_product,
+        new_value=new_product,
+        performed_by=performed_by
+    )
+
+    # ---------------------------------------------------------
+    # STOCK AUDIT
+    # ---------------------------------------------------------
+
+    if stock_count > old_stock:
+
+        write_audit_log(
+            connection=connection,
+            entity_type="PRODUCT",
+            entity_id=product_id,
+            action="STOCK_INCREASED",
+            old_value={
+                "stock_count": old_stock
+            },
+            new_value={
+                "stock_count": stock_count
+            },
+            performed_by=performed_by
+        )
+
+    elif stock_count < old_stock:
+
+        write_audit_log(
+            connection=connection,
+            entity_type="PRODUCT",
+            entity_id=product_id,
+            action="STOCK_DECREASED",
+            old_value={
+                "stock_count": old_stock
+            },
+            new_value={
+                "stock_count": stock_count
+            },
+            performed_by=performed_by
+        )
+
+    # ---------------------------------------------------------
+    # STATUS CHANGE AUDIT
+    # ---------------------------------------------------------
+
+    if old_product["status"] != new_status:
+
+        write_audit_log(
+            connection=connection,
+            entity_type="PRODUCT",
+            entity_id=product_id,
+            action="STATUS_CHANGED",
+            old_value={
+                "status": old_product["status"]
+            },
+            new_value={
+                "status": new_status
+            },
+            performed_by=performed_by
+        )
+
+    # ---------------------------------------------------------
+    # COMMIT
+    # ---------------------------------------------------------
+
+    connection.commit()
+
+    print(
+        "PRODUCT UPDATE COMMITTED"
+    )
+
+    # ---------------------------------------------------------
+    # PUBLISH EVENT
+    # ---------------------------------------------------------
+
+    publish_inventory_event(
+        product_id,
+        stock_count
+    )
+
+    return response(
+        200,
+        {
+            "message": (
+                "Product updated successfully"
+            ),
+            "product_id": int(product_id),
+            "stock_count": stock_count,
+            "status": new_status
+        }
+    )
+
+
+# =========================================================
+# SOFT DELETE PRODUCT
+# =========================================================
+
+def delete_product(
+    event,
+    product_id,
+    connection
+):
+
+    performed_by = get_performed_by(
+        event
+    )
+
+    # ---------------------------------------------------------
+    # GET CURRENT PRODUCT
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            SELECT
+                product_id,
+                name,
+                description,
+                price,
+                stock_count,
+                status,
+                created_at,
+                updated_at
+            FROM products
+            WHERE product_id = %s
+            FOR UPDATE
+            """,
+            (product_id,)
+        )
+
+        old_product = cursor.fetchone()
+
+    if not old_product:
+
+        connection.rollback()
+
+        return response(
+            404,
+            {
+                "message": (
+                    "Product not found"
+                )
+            }
+        )
+
+    # ---------------------------------------------------------
+    # ALREADY INACTIVE
+    # ---------------------------------------------------------
+
+    if old_product["status"] == "INACTIVE":
+
+        connection.rollback()
+
+        return response(
+            409,
+            {
+                "message": (
+                    "Product is already inactive"
+                ),
+                "product_id": int(product_id),
+                "status": "INACTIVE"
+            }
+        )
+
+    # ---------------------------------------------------------
+    # SOFT DELETE
+    # ---------------------------------------------------------
+    #
+    # DO NOT:
+    #
+    # DELETE FROM products
+    #
+    # We keep the row so:
+    #
+    # - order history remains valid
+    # - product history remains available
+    # - audit records remain meaningful
+    #
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        print(
+            "BEFORE SOFT DELETE"
+        )
+
+        cursor.execute(
+            """
+            UPDATE products
+            SET
+                status = 'INACTIVE'
+            WHERE product_id = %s
+            """,
+            (product_id,)
+        )
+
+        print(
+            "AFTER SOFT DELETE - Rows:",
+            cursor.rowcount
+        )
+
+    # ---------------------------------------------------------
+    # AUDIT SOFT DELETE
+    # ---------------------------------------------------------
+
+    new_product = dict(
+        old_product
+    )
+
+    new_product["status"] = "INACTIVE"
+
+    write_audit_log(
+        connection=connection,
+        entity_type="PRODUCT",
+        entity_id=product_id,
+        action="SOFT_DELETE_PRODUCT",
+        old_value=old_product,
+        new_value=new_product,
+        performed_by=performed_by
+    )
+
+    # ---------------------------------------------------------
+    # COMMIT
+    # ---------------------------------------------------------
+
+    connection.commit()
+
+    print(
+        "SOFT DELETE COMMITTED"
+    )
+
+    return response(
+        200,
+        {
+            "message": (
+                "Product deleted successfully"
+            ),
+            "product_id": int(product_id),
+            "status": "INACTIVE"
+        }
+    )
 
 
 # =========================================================
 # LAMBDA HANDLER
 # =========================================================
 
-def lambda_handler(event, context):
+def lambda_handler(
+    event,
+    context
+):
 
-    print("========== LAMBDA START ==========")
+    print(
+        "========== LAMBDA START =========="
+    )
 
     print(
         "Event:",
-        json.dumps(event, default=str)
+        json.dumps(
+            event,
+            default=str
+        )
     )
-
-    initialize_database()
 
     connection = None
 
@@ -236,60 +1198,54 @@ def lambda_handler(event, context):
         # GET REQUEST INFORMATION
         # =====================================================
 
-        http_method = event.get("httpMethod", "GET")
+        http_method = (
+            event.get(
+                "httpMethod",
+                "GET"
+            )
+            .upper()
+        )
 
-        path_parameters = event.get("pathParameters") or {}
+        path_parameters = (
+            event.get("pathParameters")
+            or {}
+        )
 
-        product_id = path_parameters.get("productId")
+        product_id = (
+            path_parameters.get(
+                "productId"
+            )
+        )
 
-        print("HTTP Method:", http_method)
-        print("Product ID:", product_id)
+        print(
+            "HTTP Method:",
+            http_method
+        )
 
+        print(
+            "Product ID:",
+            product_id
+        )
+
+        # =====================================================
+        # DATABASE CONNECTION
+        # =====================================================
+
+        connection = get_connection()
 
         # =====================================================
         # GET /products/{id}
         # =====================================================
 
-        if http_method == "GET" and product_id:
+        if (
+            http_method == "GET"
+            and product_id
+        ):
 
-            connection = get_connection()
-
-            with connection.cursor() as cursor:
-
-                print("BEFORE SELECT PRODUCT")
-
-                cursor.execute(
-                    """
-                    SELECT *
-                    FROM products
-                    WHERE product_id = %s
-                    """,
-                    (product_id,)
-                )
-
-                product = cursor.fetchone()
-
-                print("AFTER SELECT PRODUCT")
-
-
-            if not product:
-
-                return response(
-                    404,
-                    {
-                        "message": "Product not found"
-                    }
-                )
-
-
-            return response(
-                200,
-                {
-                    "message": "Product retrieved successfully",
-                    "product": product
-                }
+            return get_product(
+                product_id,
+                connection
             )
-
 
         # =====================================================
         # GET /products
@@ -297,33 +1253,9 @@ def lambda_handler(event, context):
 
         if http_method == "GET":
 
-            connection = get_connection()
-
-            with connection.cursor() as cursor:
-
-                print("BEFORE SELECT ALL PRODUCTS")
-
-                cursor.execute(
-                    """
-                    SELECT *
-                    FROM products
-                    """
-                )
-
-                products = cursor.fetchall()
-
-                print("AFTER SELECT ALL PRODUCTS")
-
-
-            return response(
-                200,
-                {
-                    "message": "Products retrieved successfully",
-                    "count": len(products),
-                    "products": products
-                }
+            return get_products(
+                connection
             )
-
 
         # =====================================================
         # POST /products
@@ -331,355 +1263,40 @@ def lambda_handler(event, context):
 
         if http_method == "POST":
 
-            body = event.get("body")
-
-            print("Request body:", body)
-
-
-            if not body:
-
-                return response(
-                    400,
-                    {
-                        "message": "Request body is required"
-                    }
-                )
-
-
-            # =================================================
-            # PARSE JSON
-            # =================================================
-
-            try:
-
-                data = json.loads(body)
-
-            except json.JSONDecodeError:
-
-                return response(
-                    400,
-                    {
-                        "message": "Invalid JSON body"
-                    }
-                )
-
-
-            name = data.get("name")
-            description = data.get("description")
-            price = data.get("price")
-            stock_count = data.get("stock_count")
-
-
-            # =================================================
-            # VALIDATION
-            # =================================================
-
-            if not name or price is None or stock_count is None:
-
-                return response(
-                    400,
-                    {
-                        "message": "name, price and stock_count are required"
-                    }
-                )
-
-
-            # =================================================
-            # STOCK VALIDATION
-            # =================================================
-
-            try:
-
-                stock_count = int(stock_count)
-
-            except (TypeError, ValueError):
-
-                return response(
-                    400,
-                    {
-                        "message": "stock_count must be an integer"
-                    }
-                )
-
-
-            if stock_count < 0:
-
-                return response(
-                    400,
-                    {
-                        "message": "stock_count cannot be negative"
-                    }
-                )
-
-
-            # =================================================
-            # DATABASE INSERT
-            # =================================================
-
-            connection = get_connection()
-
-            with connection.cursor() as cursor:
-
-                print("BEFORE INSERT")
-
-                cursor.execute(
-                    """
-                    INSERT INTO products
-                    (
-                        name,
-                        description,
-                        price,
-                        stock_count
-                    )
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (
-                        name,
-                        description,
-                        price,
-                        stock_count
-                    )
-                )
-
-                new_product_id = cursor.lastrowid
-
-                print(
-                    "AFTER INSERT - Product ID:",
-                    new_product_id
-                )
-
-
-            # =================================================
-            # COMMIT
-            # =================================================
-
-            connection.commit()
-
-            print("AFTER COMMIT")
-
-
-            # =================================================
-            # PUBLISH EVENT
-            # =================================================
-
-            publish_inventory_event(
-                new_product_id,
-                stock_count
+            return create_product(
+                event,
+                connection
             )
-
-
-            # =================================================
-            # RESPONSE
-            # =================================================
-
-            return response(
-                201,
-                {
-                    "message": "Product created successfully",
-                    "product_id": new_product_id
-                }
-            )
-
 
         # =====================================================
         # PUT /products/{id}
         # =====================================================
 
-        if http_method == "PUT" and product_id:
+        if (
+            http_method == "PUT"
+            and product_id
+        ):
 
-            body = event.get("body")
-
-
-            if not body:
-
-                return response(
-                    400,
-                    {
-                        "message": "Request body is required"
-                    }
-                )
-
-
-            try:
-
-                data = json.loads(body)
-
-            except json.JSONDecodeError:
-
-                return response(
-                    400,
-                    {
-                        "message": "Invalid JSON body"
-                    }
-                )
-
-
-            name = data.get("name")
-            description = data.get("description")
-            price = data.get("price")
-            stock_count = data.get("stock_count")
-
-
-            if not name or price is None or stock_count is None:
-
-                return response(
-                    400,
-                    {
-                        "message": "name, price and stock_count are required"
-                    }
-                )
-
-
-            # =================================================
-            # STOCK VALIDATION
-            # =================================================
-
-            try:
-
-                stock_count = int(stock_count)
-
-            except (TypeError, ValueError):
-
-                return response(
-                    400,
-                    {
-                        "message": "stock_count must be an integer"
-                    }
-                )
-
-
-            if stock_count < 0:
-
-                return response(
-                    400,
-                    {
-                        "message": "stock_count cannot be negative"
-                    }
-                )
-
-
-            # =================================================
-            # DATABASE UPDATE
-            # =================================================
-
-            connection = get_connection()
-
-            with connection.cursor() as cursor:
-
-                print("BEFORE UPDATE")
-
-                cursor.execute(
-                    """
-                    UPDATE products
-                    SET
-                        name = %s,
-                        description = %s,
-                        price = %s,
-                        stock_count = %s
-                    WHERE product_id = %s
-                    """,
-                    (
-                        name,
-                        description,
-                        price,
-                        stock_count,
-                        product_id
-                    )
-                )
-
-                affected_rows = cursor.rowcount
-
-                print(
-                    "AFTER UPDATE - Rows:",
-                    affected_rows
-                )
-
-
-            connection.commit()
-
-            print("AFTER COMMIT")
-
-
-            if affected_rows == 0:
-
-                return response(
-                    404,
-                    {
-                        "message": "Product not found"
-                    }
-                )
-
-
-            # =================================================
-            # PUBLISH INVENTORY EVENT
-            # =================================================
-
-            publish_inventory_event(
+            return update_product(
+                event,
                 product_id,
-                stock_count
+                connection
             )
-
-
-            return response(
-                200,
-                {
-                    "message": "Product updated successfully",
-                    "product_id": int(product_id)
-                }
-            )
-
 
         # =====================================================
         # DELETE /products/{id}
         # =====================================================
 
-        if http_method == "DELETE" and product_id:
+        if (
+            http_method == "DELETE"
+            and product_id
+        ):
 
-            connection = get_connection()
-
-            with connection.cursor() as cursor:
-
-                print("BEFORE DELETE")
-
-                cursor.execute(
-                    """
-                    DELETE FROM products
-                    WHERE product_id = %s
-                    """,
-                    (product_id,)
-                )
-
-                affected_rows = cursor.rowcount
-
-                print(
-                    "AFTER DELETE - Rows:",
-                    affected_rows
-                )
-
-
-            connection.commit()
-
-            print("AFTER COMMIT")
-
-
-            if affected_rows == 0:
-
-                return response(
-                    404,
-                    {
-                        "message": "Product not found"
-                    }
-                )
-
-
-            return response(
-                200,
-                {
-                    "message": "Product deleted successfully",
-                    "product_id": int(product_id)
-                }
+            return delete_product(
+                event,
+                product_id,
+                connection
             )
-
 
         # =====================================================
         # INVALID REQUEST
@@ -688,29 +1305,31 @@ def lambda_handler(event, context):
         return response(
             405,
             {
-                "message": "Method not allowed"
+                "message": (
+                    "Method not allowed"
+                )
             }
         )
-
 
     # =========================================================
     # ERROR HANDLING
     # =========================================================
 
-    except Exception as e:
+    except Exception as exc:
 
-        print("========== ERROR ==========")
+        print(
+            "========== ERROR =========="
+        )
 
         print(
             "ERROR TYPE:",
-            type(e).__name__
+            type(exc).__name__
         )
 
         print(
             "ERROR MESSAGE:",
-            str(e)
+            str(exc)
         )
-
 
         if connection:
 
@@ -718,7 +1337,9 @@ def lambda_handler(event, context):
 
                 connection.rollback()
 
-                print("Database transaction rolled back")
+                print(
+                    "Database transaction rolled back"
+                )
 
             except Exception as rollback_error:
 
@@ -727,19 +1348,15 @@ def lambda_handler(event, context):
                     str(rollback_error)
                 )
 
-
         return response(
             500,
             {
-                "message": "Internal server error",
-                "error": str(e)
+                "message": (
+                    "Internal server error"
+                ),
+                "error": str(exc)
             }
         )
-
-
-    # =========================================================
-    # CLEANUP
-    # =========================================================
 
     finally:
 
@@ -749,7 +1366,9 @@ def lambda_handler(event, context):
 
                 connection.close()
 
-                print("RDS connection closed")
+                print(
+                    "RDS connection closed"
+                )
 
             except Exception as close_error:
 
@@ -758,4 +1377,6 @@ def lambda_handler(event, context):
                     str(close_error)
                 )
 
-        print("========== LAMBDA END ==========")
+        print(
+            "========== LAMBDA END =========="
+        )

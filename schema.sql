@@ -21,7 +21,7 @@
 --
 -- products
 --     |
---     | 1 : many
+--     | 1 : 1
 --     v
 -- inventory
 --
@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS customers (
 
     phone VARCHAR(20),
 
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
     updated_at DATETIME NOT NULL
         DEFAULT CURRENT_TIMESTAMP
@@ -70,7 +71,7 @@ CREATE TABLE IF NOT EXISTS customers (
 
 CREATE TABLE IF NOT EXISTS products (
 
-    product_id INT AUTO_INCREMENT PRIMARY KEY,
+    product_id INT NOT NULL AUTO_INCREMENT,
 
     name VARCHAR(255) NOT NULL,
 
@@ -80,10 +81,14 @@ CREATE TABLE IF NOT EXISTS products (
 
     stock_count INT NOT NULL DEFAULT 0,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ON UPDATE CURRENT_TIMESTAMP
+    updated_at TIMESTAMP NOT NULL
+        DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (product_id)
 
 ) ENGINE=InnoDB;
 
@@ -91,25 +96,35 @@ CREATE TABLE IF NOT EXISTS products (
 -- =====================================================
 -- INVENTORY TABLE
 -- =====================================================
+--
+-- IMPORTANT:
+-- One product can have only ONE inventory row.
+--
+-- product_id is therefore UNIQUE.
+--
+-- =====================================================
 
 CREATE TABLE IF NOT EXISTS inventory (
 
-    inventory_id INT AUTO_INCREMENT PRIMARY KEY,
+    inventory_id INT NOT NULL AUTO_INCREMENT,
 
     product_id INT NOT NULL,
 
     quantity INT NOT NULL DEFAULT 0,
 
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_updated TIMESTAMP NOT NULL
+        DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (inventory_id),
+
+    UNIQUE KEY uk_inventory_product (product_id),
 
     CONSTRAINT fk_inventory_product
         FOREIGN KEY (product_id)
         REFERENCES products(product_id)
         ON DELETE CASCADE
-        ON UPDATE CASCADE,
-
-    UNIQUE KEY uk_inventory_product (product_id)
+        ON UPDATE CASCADE
 
 ) ENGINE=InnoDB;
 
@@ -128,7 +143,8 @@ CREATE TABLE IF NOT EXISTS orders (
 
     total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
 
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
     updated_at DATETIME NOT NULL
         DEFAULT CURRENT_TIMESTAMP
@@ -148,6 +164,15 @@ CREATE TABLE IF NOT EXISTS orders (
 -- =====================================================
 -- ORDER ITEMS TABLE
 -- =====================================================
+--
+-- Composite primary key:
+--
+-- (order_id, product_id)
+--
+-- This means the same product cannot appear twice
+-- inside the same order.
+--
+-- =====================================================
 
 CREATE TABLE IF NOT EXISTS order_items (
 
@@ -159,7 +184,8 @@ CREATE TABLE IF NOT EXISTS order_items (
 
     price DECIMAL(10,2) NOT NULL,
 
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL
+        DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (order_id, product_id),
 
@@ -182,23 +208,23 @@ CREATE TABLE IF NOT EXISTS order_items (
 -- INDEXES
 -- =====================================================
 
-CREATE INDEX idx_product_name
+-- These indexes are useful for searching/filtering.
+-- The deployment code should tolerate these already
+-- existing if schema.sql is executed more than once.
+
+CREATE INDEX IF NOT EXISTS idx_product_name
 ON products(name);
 
-
-CREATE INDEX idx_orders_customer
+CREATE INDEX IF NOT EXISTS idx_orders_customer
 ON orders(customer_id);
 
-
-CREATE INDEX idx_orders_status
+CREATE INDEX IF NOT EXISTS idx_orders_status
 ON orders(status);
 
-
-CREATE INDEX idx_orders_created_at
+CREATE INDEX IF NOT EXISTS idx_orders_created_at
 ON orders(created_at);
 
-
-CREATE INDEX idx_order_items_product
+CREATE INDEX IF NOT EXISTS idx_order_items_product
 ON order_items(product_id);
 
 
@@ -207,7 +233,12 @@ ON order_items(product_id);
 -- =====================================================
 
 INSERT INTO customers
-(customer_id, name, email, phone)
+(
+    customer_id,
+    name,
+    email,
+    phone
+)
 VALUES
 (
     'CUST101',
@@ -228,61 +259,109 @@ VALUES
     '9876543212'
 )
 ON DUPLICATE KEY UPDATE
+
     name = VALUES(name),
+
     phone = VALUES(phone);
 
 
 -- =====================================================
 -- SAMPLE PRODUCTS
 -- =====================================================
+--
+-- IMPORTANT:
+-- Explicit product IDs are used.
+--
+-- This prevents:
+--
+-- First run:
+-- Laptop   = 1
+-- Mouse    = 2
+-- Keyboard = 3
+--
+-- Second run:
+-- Laptop   = 4  <-- OLD PROBLEM
+--
+-- =====================================================
 
 INSERT INTO products
-(name, description, price, stock_count)
+(
+    product_id,
+    name,
+    description,
+    price,
+    stock_count
+)
 VALUES
 (
+    1,
     'Laptop',
     'Gaming Laptop',
     75000.00,
     10
 ),
 (
+    2,
     'Mouse',
     'Wireless Mouse',
     1500.00,
     25
 ),
 (
+    3,
     'Keyboard',
     'Mechanical Keyboard',
     3500.00,
     15
-);
+)
+ON DUPLICATE KEY UPDATE
+
+    name = VALUES(name),
+
+    description = VALUES(description),
+
+    price = VALUES(price);
 
 
 -- =====================================================
 -- SAMPLE INVENTORY
 -- =====================================================
+--
+-- IMPORTANT:
+-- product_id is UNIQUE.
+--
+-- ON DUPLICATE KEY UPDATE does NOT reset quantity.
+--
+-- This is important because the Order Processor will
+-- change inventory quantity.
+--
+-- =====================================================
 
 INSERT INTO inventory
-(product_id, quantity)
-SELECT
+(
     product_id,
-    stock_count
-FROM products
-WHERE product_id IN (1, 2, 3)
+    quantity
+)
+VALUES
+(
+    1,
+    10
+),
+(
+    2,
+    25
+),
+(
+    3,
+    15
+)
 ON DUPLICATE KEY UPDATE
-    quantity = VALUES(quantity);
+
+    product_id = VALUES(product_id);
 
 
 -- =====================================================
 -- SAMPLE ORDER
--- =====================================================
--- This demonstrates the relationship:
---
--- customers -> orders
--- orders -> order_items
--- products -> order_items
---
 -- =====================================================
 
 INSERT INTO orders
@@ -300,8 +379,9 @@ VALUES
     75000.00
 )
 ON DUPLICATE KEY UPDATE
+
     customer_id = VALUES(customer_id),
-    status = VALUES(status),
+
     total_amount = VALUES(total_amount);
 
 
@@ -324,7 +404,9 @@ VALUES
     75000.00
 )
 ON DUPLICATE KEY UPDATE
+
     quantity = VALUES(quantity),
+
     price = VALUES(price);
 
 

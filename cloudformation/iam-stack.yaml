@@ -39,13 +39,11 @@ Resources:
 
       AssumeRolePolicyDocument:
 
-        Version:
-          '2012-10-17'
+        Version: '2012-10-17'
 
         Statement:
 
-          - Effect:
-              Allow
+          - Effect: Allow
 
             Principal:
 
@@ -53,7 +51,7 @@ Resources:
                 lambda.amazonaws.com
 
             Action:
-              sts:AssumeRole
+              - sts:AssumeRole
 
       ManagedPolicyArns:
 
@@ -61,24 +59,20 @@ Resources:
 
       Policies:
 
-        - PolicyName:
-            AuthorizerSSMPolicy
+        - PolicyName: AuthorizerSSMPolicy
 
           PolicyDocument:
 
-            Version:
-              '2012-10-17'
+            Version: '2012-10-17'
 
             Statement:
 
-              - Sid:
-                  ReadAuthToken
+              - Sid: ReadAuthToken
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  ssm:GetParameter
+                  - ssm:GetParameter
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/token
@@ -98,13 +92,11 @@ Resources:
 
       AssumeRolePolicyDocument:
 
-        Version:
-          '2012-10-17'
+        Version: '2012-10-17'
 
         Statement:
 
-          - Effect:
-              Allow
+          - Effect: Allow
 
             Principal:
 
@@ -112,7 +104,7 @@ Resources:
                 lambda.amazonaws.com
 
             Action:
-              sts:AssumeRole
+              - sts:AssumeRole
 
       ManagedPolicyArns:
 
@@ -120,46 +112,38 @@ Resources:
 
       Policies:
 
-        - PolicyName:
-            ProductPolicy
+        - PolicyName: ProductPolicy
 
           PolicyDocument:
 
-            Version:
-              '2012-10-17'
+            Version: '2012-10-17'
 
             Statement:
-
 
               # ==================================================
               # RDS MYSQL
               # ==================================================
 
-              - Sid:
-                  ConnectToRDS
+              - Sid: ConnectToRDS
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  rds-db:connect
+                  - rds-db:connect
 
-                Resource:
-                  "*"
+                Resource: "*"
 
 
               # ==================================================
               # EVENTBRIDGE
               # ==================================================
 
-              - Sid:
-                  PublishInventoryEvents
+              - Sid: PublishInventoryEvents
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  events:PutEvents
+                  - events:PutEvents
 
                 Resource:
                   !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
@@ -169,11 +153,9 @@ Resources:
               # VPC NETWORK INTERFACES
               # ==================================================
 
-              - Sid:
-                  ManageLambdaNetworkInterfaces
+              - Sid: ManageLambdaNetworkInterfaces
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
 
@@ -183,8 +165,7 @@ Resources:
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
 
-                Resource:
-                  "*"
+                Resource: "*"
 
                 Condition:
 
@@ -198,17 +179,14 @@ Resources:
               # CLOUDWATCH CUSTOM METRICS
               # ==================================================
 
-              - Sid:
-                  PublishProductMetrics
+              - Sid: PublishProductMetrics
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  cloudwatch:PutMetricData
+                  - cloudwatch:PutMetricData
 
-                Resource:
-                  "*"
+                Resource: "*"
 
                 Condition:
 
@@ -220,6 +198,9 @@ Resources:
 
   # ==============================================================
   # ORDER LAMBDA ROLE
+  #
+  # Orders are stored in RDS MySQL.
+  # Lambda only sends messages to SQS.
   # ==============================================================
 
   OrderLambdaRole:
@@ -232,13 +213,11 @@ Resources:
 
       AssumeRolePolicyDocument:
 
-        Version:
-          '2012-10-17'
+        Version: '2012-10-17'
 
         Statement:
 
-          - Effect:
-              Allow
+          - Effect: Allow
 
             Principal:
 
@@ -246,7 +225,7 @@ Resources:
                 lambda.amazonaws.com
 
             Action:
-              sts:AssumeRole
+              - sts:AssumeRole
 
       ManagedPolicyArns:
 
@@ -254,13 +233,11 @@ Resources:
 
       Policies:
 
-        - PolicyName:
-            OrderPolicy
+        - PolicyName: OrderPolicy
 
           PolicyDocument:
 
-            Version:
-              '2012-10-17'
+            Version: '2012-10-17'
 
             Statement:
 
@@ -269,31 +246,26 @@ Resources:
               # RDS MYSQL
               # ==================================================
 
-              - Sid:
-                  ConnectToRDS
+              - Sid: ConnectToRDS
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  rds-db:connect
+                  - rds-db:connect
 
-                Resource:
-                  "*"
+                Resource: "*"
 
 
               # ==================================================
               # SQS - SEND ONLY
               # ==================================================
 
-              - Sid:
-                  SendOrdersToQueue
+              - Sid: SendOrdersToQueue
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  sqs:SendMessage
+                  - sqs:SendMessage
 
                 Resource:
                   !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:cloudmart-orders-${EnvironmentName}
@@ -303,17 +275,14 @@ Resources:
               # CLOUDWATCH CUSTOM METRICS
               # ==================================================
 
-              - Sid:
-                  PublishOrderMetrics
+              - Sid: PublishOrderMetrics
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  cloudwatch:PutMetricData
+                  - cloudwatch:PutMetricData
 
-                Resource:
-                  "*"
+                Resource: "*"
 
                 Condition:
 
@@ -327,11 +296,9 @@ Resources:
               # VPC NETWORK INTERFACES
               # ==================================================
 
-              - Sid:
-                  ManageLambdaNetworkInterfaces
+              - Sid: ManageLambdaNetworkInterfaces
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
 
@@ -341,8 +308,7 @@ Resources:
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
 
-                Resource:
-                  "*"
+                Resource: "*"
 
                 Condition:
 
@@ -354,6 +320,10 @@ Resources:
 
   # ==============================================================
   # ORDER PROCESSING LAMBDA ROLE
+  #
+  # Reads orders from RDS.
+  # Updates inventory and orders in RDS.
+  # Publishes EventBridge events.
   # ==============================================================
 
   OrderProcessingLambdaRole:
@@ -366,13 +336,11 @@ Resources:
 
       AssumeRolePolicyDocument:
 
-        Version:
-          '2012-10-17'
+        Version: '2012-10-17'
 
         Statement:
 
-          - Effect:
-              Allow
+          - Effect: Allow
 
             Principal:
 
@@ -380,7 +348,7 @@ Resources:
                 lambda.amazonaws.com
 
             Action:
-              sts:AssumeRole
+              - sts:AssumeRole
 
       ManagedPolicyArns:
 
@@ -388,13 +356,11 @@ Resources:
 
       Policies:
 
-        - PolicyName:
-            OrderProcessingPolicy
+        - PolicyName: OrderProcessingPolicy
 
           PolicyDocument:
 
-            Version:
-              '2012-10-17'
+            Version: '2012-10-17'
 
             Statement:
 
@@ -403,11 +369,9 @@ Resources:
               # SQS - CONSUME ONLY
               # ==================================================
 
-              - Sid:
-                  ConsumeOrders
+              - Sid: ConsumeOrders
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
 
@@ -423,31 +387,26 @@ Resources:
               # RDS MYSQL
               # ==================================================
 
-              - Sid:
-                  ConnectToRDS
+              - Sid: ConnectToRDS
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  rds-db:connect
+                  - rds-db:connect
 
-                Resource:
-                  "*"
+                Resource: "*"
 
 
               # ==================================================
               # EVENTBRIDGE
               # ==================================================
 
-              - Sid:
-                  PublishOrderEvents
+              - Sid: PublishOrderEvents
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  events:PutEvents
+                  - events:PutEvents
 
                 Resource:
                   !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/default
@@ -457,17 +416,14 @@ Resources:
               # CLOUDWATCH CUSTOM METRICS
               # ==================================================
 
-              - Sid:
-                  PublishOrderProcessingMetrics
+              - Sid: PublishOrderProcessingMetrics
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  cloudwatch:PutMetricData
+                  - cloudwatch:PutMetricData
 
-                Resource:
-                  "*"
+                Resource: "*"
 
                 Condition:
 
@@ -481,11 +437,9 @@ Resources:
               # VPC NETWORK INTERFACES
               # ==================================================
 
-              - Sid:
-                  ManageLambdaNetworkInterfaces
+              - Sid: ManageLambdaNetworkInterfaces
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
 
@@ -495,8 +449,7 @@ Resources:
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
 
-                Resource:
-                  "*"
+                Resource: "*"
 
                 Condition:
 
@@ -508,6 +461,9 @@ Resources:
 
   # ==============================================================
   # REPORTING LAMBDA ROLE
+  #
+  # Reads Orders, Products and Inventory from RDS.
+  # Writes reports to S3.
   # ==============================================================
 
   ReportLambdaRole:
@@ -520,13 +476,11 @@ Resources:
 
       AssumeRolePolicyDocument:
 
-        Version:
-          '2012-10-17'
+        Version: '2012-10-17'
 
         Statement:
 
-          - Effect:
-              Allow
+          - Effect: Allow
 
             Principal:
 
@@ -534,7 +488,7 @@ Resources:
                 lambda.amazonaws.com
 
             Action:
-              sts:AssumeRole
+              - sts:AssumeRole
 
       ManagedPolicyArns:
 
@@ -542,13 +496,11 @@ Resources:
 
       Policies:
 
-        - PolicyName:
-            ReportingPolicy
+        - PolicyName: ReportingPolicy
 
           PolicyDocument:
 
-            Version:
-              '2012-10-17'
+            Version: '2012-10-17'
 
             Statement:
 
@@ -557,28 +509,23 @@ Resources:
               # RDS MYSQL
               # ==================================================
 
-              - Sid:
-                  ConnectToRDS
+              - Sid: ConnectToRDS
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  rds-db:connect
+                  - rds-db:connect
 
-                Resource:
-                  "*"
+                Resource: "*"
 
 
               # ==================================================
               # S3 OBJECT ACCESS
               # ==================================================
 
-              - Sid:
-                  ReadWriteReports
+              - Sid: ReadWriteReports
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
 
@@ -600,14 +547,12 @@ Resources:
               # S3 BUCKET ACCESS
               # ==================================================
 
-              - Sid:
-                  ListReportsBucket
+              - Sid: ListReportsBucket
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
-                  s3:ListBucket
+                  - s3:ListBucket
 
                 Resource:
                   Fn::ImportValue:
@@ -615,14 +560,33 @@ Resources:
 
 
               # ==================================================
+              # CLOUDWATCH CUSTOM METRICS
+              # ==================================================
+
+              - Sid: PublishReportMetrics
+
+                Effect: Allow
+
+                Action:
+                  - cloudwatch:PutMetricData
+
+                Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    cloudwatch:namespace:
+                      - CloudMart/Application
+
+
+              # ==================================================
               # VPC NETWORK INTERFACES
               # ==================================================
 
-              - Sid:
-                  ManageLambdaNetworkInterfaces
+              - Sid: ManageLambdaNetworkInterfaces
 
-                Effect:
-                  Allow
+                Effect: Allow
 
                 Action:
 
@@ -632,8 +596,7 @@ Resources:
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
 
-                Resource:
-                  "*"
+                Resource: "*"
 
                 Condition:
 
@@ -650,23 +613,14 @@ Resources:
 Outputs:
 
 
-  # ==============================================================
-  # AUTHORIZER ROLE ARN
-  # ==============================================================
-
   AuthorizerRoleArn:
 
     Value:
       !GetAtt AuthorizerLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-authorizer-role-arn
+      Name: cloudmart-authorizer-role-arn
 
-
-  # ==============================================================
-  # PRODUCT ROLE ARN
-  # ==============================================================
 
   ProductRoleArn:
 
@@ -674,13 +628,8 @@ Outputs:
       !GetAtt ProductLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-product-role-arn
+      Name: cloudmart-product-role-arn
 
-
-  # ==============================================================
-  # ORDER ROLE ARN
-  # ==============================================================
 
   OrderRoleArn:
 
@@ -688,13 +637,8 @@ Outputs:
       !GetAtt OrderLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-order-role-arn
+      Name: cloudmart-order-role-arn
 
-
-  # ==============================================================
-  # ORDER PROCESSING ROLE ARN
-  # ==============================================================
 
   OrderProcessingRoleArn:
 
@@ -702,13 +646,8 @@ Outputs:
       !GetAtt OrderProcessingLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-order-processing-role-arn
+      Name: cloudmart-order-processing-role-arn
 
-
-  # ==============================================================
-  # REPORT ROLE ARN
-  # ==============================================================
 
   ReportRoleArn:
 
@@ -716,5 +655,4 @@ Outputs:
       !GetAtt ReportLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-report-role-arn
+      Name: cloudmart-report-role-arn

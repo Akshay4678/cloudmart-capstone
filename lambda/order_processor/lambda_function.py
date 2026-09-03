@@ -1,69 +1,31 @@
-import json
 import os
+import json
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
 import pymysql
-from botocore.config import Config
 
 
-# =========================================================
-# AWS CLIENTS
-# =========================================================
-
-events_client = boto3.client(
-    "events",
-    config=Config(
-        connect_timeout=3,
-        read_timeout=3,
-        retries={
-            "max_attempts": 1
-        }
-    )
-)
-
-dynamodb = boto3.resource("dynamodb")
-
-cloudwatch = boto3.client(
-    "cloudwatch"
-)
-
-
-# =========================================================
-# ENVIRONMENT VARIABLES
-# =========================================================
-
-ORDERS_TABLE = os.environ["ORDERS_TABLE"]
+# ================================================================
+# CONFIGURATION
+# ================================================================
 
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
 DB_PASSWORD = os.environ["DB_PASSWORD"]
-DB_PORT = int(
-    os.environ.get(
-        "DB_PORT",
-        "3306"
-    )
-)
+DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
-ENVIRONMENT = os.environ.get(
-    "ENVIRONMENT",
-    "dev"
-)
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+
+events_client = boto3.client("events")
+cloudwatch = boto3.client("cloudwatch")
 
 
-# =========================================================
-# DYNAMODB TABLE
-# =========================================================
-
-orders_table = dynamodb.Table(
-    ORDERS_TABLE
-)
-
-
-# =========================================================
+# ================================================================
 # DATABASE CONNECTION
-# =========================================================
+# ================================================================
 
 def get_connection():
 
@@ -73,19 +35,19 @@ def get_connection():
         password=DB_PASSWORD,
         database=DB_NAME,
         port=DB_PORT,
-        connect_timeout=10,
+        connect_timeout=5,
+        read_timeout=10,
+        write_timeout=10,
         cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False
+        autocommit=False,
     )
 
 
-# =========================================================
-# CLOUDWATCH METRIC
-# =========================================================
+# ================================================================
+# CLOUDWATCH METRICS
+# ================================================================
 
-def publish_metric(
-    metric_name
-):
+def put_metric(metric_name, value=1, service="OrderProcessing"):
 
     try:
 
@@ -97,153 +59,107 @@ def publish_metric(
                     "Dimensions": [
                         {
                             "Name": "Environment",
-                            "Value": ENVIRONMENT
+                            "Value": ENVIRONMENT,
                         },
                         {
                             "Name": "Service",
-                            "Value": "OrderProcessing"
-                        }
+                            "Value": service,
+                        },
                     ],
-                    "Value": 1,
-                    "Unit": "Count"
+                    "Value": value,
+                    "Unit": "Count",
                 }
-            ]
+            ],
         )
 
-    except Exception as error:
+    except Exception as exc:
 
         print(
-            "METRIC ERROR:",
-            type(error).__name__,
-            str(error)
+            f"Metric publishing failed: {type(exc).__name__}"
         )
 
 
-# =========================================================
+# ================================================================
 # EVENTBRIDGE
-# =========================================================
+# ================================================================
 
 def publish_order_event(
     detail_type,
-    detail
+    order_id,
+    customer_id,
+    status,
+    total_amount,
+    reason=None,
 ):
 
-    result = events_client.put_events(
+    detail = {
+        "order_id": order_id,
+        "customer_id": customer_id,
+        "status": status,
+        "total_amount": float(total_amount),
+    }
+
+    if reason:
+        detail["reason"] = reason
+
+    events_client.put_events(
         Entries=[
             {
                 "Source": "cloudmart.orders",
                 "DetailType": detail_type,
-                "Detail": json.dumps(
-                    detail,
-                    default=str
-                )
+                "Detail": json.dumps(detail),
+                "EventBusName": "default",
             }
         ]
     )
 
-    print(
-        "EVENTBRIDGE RESULT:",
-        json.dumps(result)
-    )
 
-    failed_count = result.get(
-        "FailedEntryCount",
-        0
-    )
+# ================================================================
+# ORDER TABLES
+# ================================================================
 
-    if failed_count:
-        raise RuntimeError(
-            "Failed to publish EventBridge order event"
+def ensure_order_tables(connection):
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id VARCHAR(50) PRIMARY KEY,
+                customer_id VARCHAR(100) NOT NULL,
+                status VARCHAR(30) NOT NULL,
+                total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL
+            )
+            """
         )
 
-
-# =========================================================
-# GET ORDER FROM DYNAMODB
-# =========================================================
-
-def get_order(
-    order_id
-):
-
-    result = orders_table.get_item(
-        Key={
-            "order_id": order_id
-        }
-    )
-
-    return result.get(
-        "Item"
-    )
-
-
-# =========================================================
-# UPDATE ORDER STATUS
-# =========================================================
-
-def update_order_status(
-    order_id,
-    status
-):
-
-    orders_table.update_item(
-        Key={
-            "order_id": order_id
-        },
-        UpdateExpression="SET #status = :status",
-        ExpressionAttributeNames={
-            "#status": "status"
-        },
-        ExpressionAttributeValues={
-            ":status": status
-        }
-    )
-
-
-# =========================================================
-# PROCESS ONE ORDER
-# =========================================================
-
-def process_order(
-    order_id
-):
-
-    print(
-        "Processing order:",
-        order_id
-    )
-
-    # -----------------------------------------------------
-    # READ ORDER FROM DYNAMODB
-    # -----------------------------------------------------
-
-    order = get_order(
-        order_id
-    )
-
-    if not order:
-
-        raise ValueError(
-            f"Order {order_id} was not found"
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS order_items (
+                order_item_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                order_id VARCHAR(50) NOT NULL,
+                product_id INT NOT NULL,
+                quantity INT NOT NULL,
+                price DECIMAL(12,2) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL,
+                CONSTRAINT fk_order_items_order
+                    FOREIGN KEY (order_id)
+                    REFERENCES orders(order_id)
+                    ON DELETE CASCADE
+            )
+            """
         )
 
-    customer_id = order.get(
-        "customer_id"
-    )
+    connection.commit()
 
-    items = order.get(
-        "items",
-        []
-    )
 
-    if not items:
+# ================================================================
+# PROCESS ORDER
+# ================================================================
 
-        raise ValueError(
-            f"Order {order_id} has no items"
-        )
-
-    # -----------------------------------------------------
-    # CONNECT TO RDS
-    # -----------------------------------------------------
+def process_order(order_id):
 
     connection = None
 
@@ -251,213 +167,307 @@ def process_order(
 
         connection = get_connection()
 
-        processed_items = []
+        ensure_order_tables(connection)
 
-        total_amount = Decimal("0")
+        with connection.cursor() as cursor:
 
-        # -------------------------------------------------
-        # PROCESS EACH PRODUCT
-        # -------------------------------------------------
+            # ----------------------------------------------------
+            # GET ORDER
+            # ----------------------------------------------------
 
-        for item in items:
-
-            product_id = int(
-                item["product_id"]
+            cursor.execute(
+                """
+                SELECT
+                    order_id,
+                    customer_id,
+                    status,
+                    total_amount
+                FROM orders
+                WHERE order_id = %s
+                FOR UPDATE
+                """,
+                (order_id,),
             )
 
-            quantity = int(
-                item["quantity"]
+            order = cursor.fetchone()
+
+            if not order:
+
+                raise ValueError(
+                    f"Order {order_id} not found"
+                )
+
+            # ----------------------------------------------------
+            # IDEMPOTENCY
+            # ----------------------------------------------------
+
+            if order["status"] == "CONFIRMED":
+
+                print(
+                    f"Order {order_id} is already confirmed"
+                )
+
+                connection.rollback()
+
+                return
+
+            if order["status"] == "CANCELLED":
+
+                print(
+                    f"Order {order_id} was cancelled"
+                )
+
+                connection.rollback()
+
+                return
+
+            # ----------------------------------------------------
+            # GET ORDER ITEMS
+            # ----------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    product_id,
+                    quantity,
+                    price
+                FROM order_items
+                WHERE order_id = %s
+                ORDER BY order_item_id
+                """,
+                (order_id,),
             )
 
-            # ---------------------------------------------
-            # READ PRODUCT
-            # ---------------------------------------------
+            items = cursor.fetchall()
 
-            with connection.cursor() as cursor:
+            if not items:
+
+                raise ValueError(
+                    f"Order {order_id} contains no items"
+                )
+
+            total_amount = Decimal("0.00")
+
+            # ----------------------------------------------------
+            # PROCESS EACH PRODUCT
+            # ----------------------------------------------------
+
+            for item in items:
+
+                product_id = item["product_id"]
+                quantity = int(item["quantity"])
+
+                # ----------------------------------------------
+                # LOCK PRODUCT
+                # ----------------------------------------------
 
                 cursor.execute(
                     """
                     SELECT
                         product_id,
-                        name,
                         price,
-                        stock_count
+                        status
                     FROM products
                     WHERE product_id = %s
                     FOR UPDATE
                     """,
-                    (
-                        product_id,
-                    )
+                    (product_id,),
                 )
 
                 product = cursor.fetchone()
 
-            if not product:
+                if not product:
 
-                raise ValueError(
-                    f"Product {product_id} not found"
+                    raise ValueError(
+                        f"Product {product_id} not found"
+                    )
+
+                if product["status"] != "Available":
+
+                    raise ValueError(
+                        f"Product {product_id} is unavailable"
+                    )
+
+                price = Decimal(
+                    str(product["price"])
                 )
 
-            # ---------------------------------------------
-            # CHECK STOCK
-            # ---------------------------------------------
-
-            stock_count = int(
-                product["stock_count"]
-            )
-
-            if stock_count < quantity:
-
-                raise ValueError(
-                    f"Insufficient stock for product "
-                    f"{product_id}"
-                )
-
-            # ---------------------------------------------
-            # PRICE
-            # ---------------------------------------------
-
-            price = Decimal(
-                str(
-                    product["price"]
-                )
-            )
-
-            item_total = (
-                price * quantity
-            )
-
-            total_amount += item_total
-
-            # ---------------------------------------------
-            # UPDATE PRODUCT STOCK
-            # ---------------------------------------------
-
-            new_stock = (
-                stock_count - quantity
-            )
-
-            with connection.cursor() as cursor:
+                # ----------------------------------------------
+                # LOCK INVENTORY
+                # ----------------------------------------------
 
                 cursor.execute(
                     """
-                    UPDATE products
-                    SET stock_count = %s
+                    SELECT
+                        product_id,
+                        quantity
+                    FROM inventory
                     WHERE product_id = %s
+                    FOR UPDATE
                     """,
-                    (
-                        new_stock,
-                        product_id
-                    )
+                    (product_id,),
                 )
 
-            # ---------------------------------------------
-            # UPDATE INVENTORY TABLE
-            #
-            # If an inventory row exists, update it.
-            # ---------------------------------------------
+                inventory = cursor.fetchone()
 
-            with connection.cursor() as cursor:
+                if not inventory:
+
+                    raise ValueError(
+                        f"Inventory not found for product {product_id}"
+                    )
+
+                available_quantity = int(
+                    inventory["quantity"]
+                )
+
+                if available_quantity < quantity:
+
+                    raise ValueError(
+                        f"Insufficient inventory for product {product_id}"
+                    )
+
+                new_quantity = (
+                    available_quantity - quantity
+                )
+
+                # ----------------------------------------------
+                # UPDATE INVENTORY
+                # ----------------------------------------------
 
                 cursor.execute(
                     """
                     UPDATE inventory
-                    SET quantity = %s
+                    SET
+                        quantity = %s,
+                        updated_at = %s
                     WHERE product_id = %s
                     """,
                     (
-                        new_stock,
-                        product_id
-                    )
+                        new_quantity,
+                        datetime.now(
+                            timezone.utc
+                        ).replace(tzinfo=None),
+                        product_id,
+                    ),
                 )
 
-            processed_items.append(
-                {
-                    "product_id": product_id,
-                    "quantity": quantity,
-                    "price": price,
-                    "remaining_stock": new_stock
-                }
+                # ----------------------------------------------
+                # UPDATE PRODUCT STOCK
+                # ----------------------------------------------
+
+                cursor.execute(
+                    """
+                    UPDATE products
+                    SET
+                        stock_count = %s,
+                        updated_at = %s
+                    WHERE product_id = %s
+                    """,
+                    (
+                        new_quantity,
+                        datetime.now(
+                            timezone.utc
+                        ).replace(tzinfo=None),
+                        product_id,
+                    ),
+                )
+
+                # ----------------------------------------------
+                # LOW STOCK EVENT
+                # ----------------------------------------------
+
+                if new_quantity <= 5:
+
+                    try:
+
+                        events_client.put_events(
+                            Entries=[
+                                {
+                                    "Source": "cloudmart.inventory",
+                                    "DetailType": "InventoryChanged",
+                                    "Detail": json.dumps(
+                                        {
+                                            "product_id": product_id,
+                                            "stock_count": new_quantity,
+                                        }
+                                    ),
+                                    "EventBusName": "default",
+                                }
+                            ]
+                        )
+
+                        put_metric(
+                            "LowStockEvents",
+                            service="OrderProcessing",
+                        )
+
+                    except Exception as exc:
+
+                        print(
+                            "Low stock event failed: "
+                            f"{type(exc).__name__}"
+                        )
+
+                total_amount += (
+                    price * quantity
+                )
+
+            # ----------------------------------------------------
+            # UPDATE ORDER
+            # ----------------------------------------------------
+
+            now = datetime.now(
+                timezone.utc
+            ).replace(tzinfo=None)
+
+            cursor.execute(
+                """
+                UPDATE orders
+                SET
+                    status = %s,
+                    total_amount = %s,
+                    updated_at = %s
+                WHERE order_id = %s
+                """,
+                (
+                    "CONFIRMED",
+                    total_amount,
+                    now,
+                    order_id,
+                ),
             )
-
-            # ---------------------------------------------
-            # LOW STOCK METRIC
-            # ---------------------------------------------
-
-            if new_stock <= 5:
-
-                publish_metric(
-                    "LowStockEvents"
-                )
-
-                print(
-                    "LOW STOCK:",
-                    product_id,
-                    new_stock
-                )
-
-        # -------------------------------------------------
-        # COMMIT RDS CHANGES
-        # -------------------------------------------------
 
         connection.commit()
 
-        # -------------------------------------------------
-        # UPDATE ORDER IN DYNAMODB
-        # -------------------------------------------------
-
-        orders_table.update_item(
-            Key={
-                "order_id": order_id
-            },
-            UpdateExpression="""
-                SET #status = :status,
-                    total_amount = :total_amount
-            """,
-            ExpressionAttributeNames={
-                "#status": "status"
-            },
-            ExpressionAttributeValues={
-                ":status": "CONFIRMED",
-                ":total_amount": total_amount
-            }
-        )
-
-        # -------------------------------------------------
-        # EVENTBRIDGE ORDER PROCESSED
-        # -------------------------------------------------
+        # --------------------------------------------------------
+        # SUCCESS EVENT
+        # --------------------------------------------------------
 
         publish_order_event(
-            "OrderProcessed",
-            {
-                "order_id": order_id,
-                "customer_id": customer_id,
-                "status": "CONFIRMED",
-                "total_amount": total_amount,
-                "items": processed_items
-            }
+            detail_type="OrderProcessed",
+            order_id=order["order_id"],
+            customer_id=order["customer_id"],
+            status="CONFIRMED",
+            total_amount=total_amount,
         )
 
-        # -------------------------------------------------
-        # CUSTOM METRIC
-        # -------------------------------------------------
-
-        publish_metric(
-            "OrdersProcessed"
+        put_metric(
+            "OrdersProcessed",
+            service="OrderProcessing",
         )
 
         print(
-            "Order processed successfully:",
-            order_id
+            json.dumps(
+                {
+                    "message": "Order processed successfully",
+                    "order_id": order_id,
+                    "status": "CONFIRMED",
+                    "total_amount": float(total_amount),
+                }
+            )
         )
 
-        return {
-            "order_id": order_id,
-            "status": "CONFIRMED"
-        }
-
-    except Exception:
+    except Exception as exc:
 
         if connection:
 
@@ -466,215 +476,160 @@ def process_order(
             except Exception:
                 pass
 
+        print(
+            f"Order processing failed: {type(exc).__name__}"
+        )
+
+        put_metric(
+            "OrdersProcessingFailures",
+            service="OrderProcessing",
+        )
+
+        # --------------------------------------------------------
+        # MARK ORDER FAILED
+        # --------------------------------------------------------
+
+        if connection:
+
+            try:
+
+                with connection.cursor() as cursor:
+
+                    cursor.execute(
+                        """
+                        SELECT
+                            customer_id,
+                            total_amount
+                        FROM orders
+                        WHERE order_id = %s
+                        """,
+                        (order_id,),
+                    )
+
+                    order = cursor.fetchone()
+
+                    if order:
+
+                        cursor.execute(
+                            """
+                            UPDATE orders
+                            SET
+                                status = %s,
+                                updated_at = %s
+                            WHERE order_id = %s
+                            """,
+                            (
+                                "FAILED",
+                                datetime.now(
+                                    timezone.utc
+                                ).replace(tzinfo=None),
+                                order_id,
+                            ),
+                        )
+
+                        connection.commit()
+
+                        try:
+
+                            publish_order_event(
+                                detail_type="OrderFailed",
+                                order_id=order_id,
+                                customer_id=order[
+                                    "customer_id"
+                                ],
+                                status="FAILED",
+                                total_amount=order[
+                                    "total_amount"
+                                ],
+                                reason=str(exc),
+                            )
+
+                        except Exception as event_exc:
+
+                            print(
+                                "Failed to publish "
+                                f"OrderFailed event: "
+                                f"{type(event_exc).__name__}"
+                            )
+
+            except Exception as update_exc:
+
+                print(
+                    "Failed to update order status: "
+                    f"{type(update_exc).__name__}"
+                )
+
+        # Raise so SQS can retry and eventually move
+        # the message to the DLQ.
+
         raise
 
     finally:
 
         if connection:
 
-            try:
-                connection.close()
-            except Exception:
-                pass
+            connection.close()
 
 
-# =========================================================
-# HANDLE FAILED ORDER
-# =========================================================
+# ================================================================
+# LAMBDA HANDLER
+# ================================================================
 
-def handle_order_failure(
-    order_id,
-    error
-):
+def lambda_handler(event, context):
 
     print(
-        "ORDER PROCESSING FAILED:",
-        order_id
-    )
-
-    print(
-        "ERROR TYPE:",
-        type(error).__name__
-    )
-
-    print(
-        "ERROR MESSAGE:",
-        str(error)
-    )
-
-    publish_metric(
-        "OrdersProcessingFailures"
-    )
-
-    # -----------------------------------------------------
-    # UPDATE ORDER STATUS
-    # -----------------------------------------------------
-
-    try:
-
-        update_order_status(
-            order_id,
-            "FAILED"
-        )
-
-    except Exception as update_error:
-
-        print(
-            "FAILED TO UPDATE ORDER STATUS:",
-            type(update_error).__name__
-        )
-
-        print(
-            "UPDATE ERROR MESSAGE:",
-            str(update_error)
-        )
-
-    # -----------------------------------------------------
-    # EVENTBRIDGE ORDER FAILED
-    # -----------------------------------------------------
-
-    try:
-
-        publish_order_event(
-            "OrderFailed",
+        json.dumps(
             {
-                "order_id": order_id,
-                "status": "FAILED",
-                "error_type": type(
-                    error
-                ).__name__,
-                "error": str(error)
+                "message": "Order Processor invoked",
+                "record_count": len(
+                    event.get("Records", [])
+                ),
             }
         )
-
-    except Exception as event_error:
-
-        print(
-            "FAILED TO PUBLISH FAILURE EVENT:",
-            type(event_error).__name__
-        )
-
-        print(
-            "EVENT ERROR MESSAGE:",
-            str(event_error)
-        )
-
-
-# =========================================================
-# LAMBDA HANDLER
-# SQS EVENT SOURCE
-# =========================================================
-
-def lambda_handler(
-    event,
-    context
-):
-
-    print(
-        "========== ORDER PROCESSOR START =========="
     )
 
-    records = event.get(
-        "Records",
-        []
-    )
+    records = event.get("Records", [])
 
     if not records:
 
-        print(
-            "No SQS records received"
-        )
+        print("No SQS records received")
 
         return {
-            "processed": 0
+            "statusCode": 200,
+            "body": "No records"
         }
-
-    processed_count = 0
-
-    # -----------------------------------------------------
-    # PROCESS EACH SQS MESSAGE
-    # -----------------------------------------------------
 
     for record in records:
 
-        body = record.get(
-            "body",
-            "{}"
-        )
+        body = record.get("body", "{}")
 
         try:
 
-            message = json.loads(
-                body
-            )
+            message = json.loads(body)
 
-        except json.JSONDecodeError as error:
+        except json.JSONDecodeError:
 
-            print(
-                "INVALID SQS MESSAGE"
-            )
+            print("Invalid SQS message JSON")
 
-            print(
-                "ERROR TYPE:",
-                type(error).__name__
-            )
-
-            print(
-                "ERROR MESSAGE:",
-                str(error)
-            )
-
-            # Raising causes SQS retry/DLQ.
             raise
 
-        order_id = message.get(
-            "order_id"
-        )
+        order_id = message.get("order_id")
 
         if not order_id:
 
-            print(
-                "SQS MESSAGE DOES NOT CONTAIN order_id"
-            )
+            print("SQS message does not contain order_id")
 
             raise ValueError(
-                "order_id is missing from SQS message"
+                "order_id is required"
             )
 
         print(
-            "SQS ORDER:",
-            order_id
+            f"Processing order {order_id}"
         )
 
-        try:
-
-            process_order(
-                order_id
-            )
-
-            processed_count += 1
-
-        except Exception as error:
-
-            handle_order_failure(
-                order_id,
-                error
-            )
-
-            # -------------------------------------------------
-            # IMPORTANT
-            #
-            # Raise the error so Lambda/SQS knows that the
-            # message failed. SQS can retry it and eventually
-            # move it to the DLQ.
-            # -------------------------------------------------
-
-            raise
-
-    print(
-        "========== ORDER PROCESSOR COMPLETE =========="
-    )
+        process_order(order_id)
 
     return {
-        "processed": processed_count
+        "statusCode": 200,
+        "body": "Order processing completed"
     }

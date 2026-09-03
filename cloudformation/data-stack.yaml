@@ -42,8 +42,7 @@ Resources:
 
     Properties:
 
-      DBSubnetGroupDescription:
-        CloudMart private RDS subnet group
+      DBSubnetGroupDescription: CloudMart private RDS subnet group
 
       SubnetIds:
 
@@ -69,8 +68,8 @@ Resources:
   #   Products
   #   Inventory
   #   Orders
-  #
-  # RDS remains private inside the VPC.
+  #   Order Items
+  #   Product History
   # ==============================================================
 
   CloudMartDatabase:
@@ -78,29 +77,21 @@ Resources:
 
     Properties:
 
-      Engine:
-        mysql
+      Engine: mysql
 
-      EngineVersion:
-        '8.0.46'
+      EngineVersion: '8.0.46'
 
-      DBInstanceClass:
-        db.t3.micro
+      DBInstanceClass: db.t3.micro
 
-      AllocatedStorage:
-        20
+      AllocatedStorage: 20
 
-      StorageType:
-        gp3
+      StorageType: gp3
 
-      StorageEncrypted:
-        true
+      StorageEncrypted: true
 
-      MultiAZ:
-        false
+      MultiAZ: false
 
-      PubliclyAccessible:
-        false
+      PubliclyAccessible: false
 
       DBName:
         !Ref DBName
@@ -111,8 +102,7 @@ Resources:
       MasterUserPassword:
         !Ref DBPassword
 
-      Port:
-        3306
+      Port: 3306
 
       VPCSecurityGroups:
 
@@ -122,17 +112,13 @@ Resources:
       DBSubnetGroupName:
         !Ref RdsSubnetGroup
 
-      BackupRetentionPeriod:
-        0
+      BackupRetentionPeriod: 0
 
-      DeletionProtection:
-        false
+      DeletionProtection: false
 
-      CopyTagsToSnapshot:
-        true
+      CopyTagsToSnapshot: true
 
-      AutoMinorVersionUpgrade:
-        true
+      AutoMinorVersionUpgrade: true
 
       Tags:
 
@@ -175,27 +161,21 @@ Resources:
 
           - ServerSideEncryptionByDefault:
 
-              SSEAlgorithm:
-                AES256
+              SSEAlgorithm: AES256
 
       PublicAccessBlockConfiguration:
 
-        BlockPublicAcls:
-          true
+        BlockPublicAcls: true
 
-        BlockPublicPolicy:
-          true
+        BlockPublicPolicy: true
 
-        IgnorePublicAcls:
-          true
+        IgnorePublicAcls: true
 
-        RestrictPublicBuckets:
-          true
+        RestrictPublicBuckets: true
 
       VersioningConfiguration:
 
-        Status:
-          Enabled
+        Status: Enabled
 
       Tags:
 
@@ -230,27 +210,21 @@ Resources:
 
           - ServerSideEncryptionByDefault:
 
-              SSEAlgorithm:
-                AES256
+              SSEAlgorithm: AES256
 
       PublicAccessBlockConfiguration:
 
-        BlockPublicAcls:
-          true
+        BlockPublicAcls: true
 
-        BlockPublicPolicy:
-          true
+        BlockPublicPolicy: true
 
-        IgnorePublicAcls:
-          true
+        IgnorePublicAcls: true
 
-        RestrictPublicBuckets:
-          true
+        RestrictPublicBuckets: true
 
       VersioningConfiguration:
 
-        Status:
-          Enabled
+        Status: Enabled
 
       Tags:
 
@@ -280,15 +254,13 @@ Outputs:
 
   DatabaseIdentifier:
 
-    Description:
-      RDS MySQL Database Identifier
+    Description: RDS MySQL Database Identifier
 
     Value:
       !Ref CloudMartDatabase
 
     Export:
-      Name:
-        cloudmart-database-identifier
+      Name: cloudmart-database-identifier
 
 
   # ==============================================================
@@ -297,15 +269,13 @@ Outputs:
 
   DatabaseResourceId:
 
-    Description:
-      RDS MySQL DB Resource ID
+    Description: RDS MySQL DB Resource ID
 
     Value:
       !GetAtt CloudMartDatabase.DbiResourceId
 
     Export:
-      Name:
-        cloudmart-database-resource-id
+      Name: cloudmart-database-resource-id
 
 
   # ==============================================================
@@ -314,15 +284,13 @@ Outputs:
 
   DatabaseEndpoint:
 
-    Description:
-      RDS MySQL Endpoint
+    Description: RDS MySQL Endpoint
 
     Value:
       !GetAtt CloudMartDatabase.Endpoint.Address
 
     Export:
-      Name:
-        cloudmart-database-endpoint
+      Name: cloudmart-database-endpoint
 
 
   # ==============================================================
@@ -331,15 +299,13 @@ Outputs:
 
   DatabasePort:
 
-    Description:
-      RDS MySQL Port
+    Description: RDS MySQL Port
 
     Value:
       !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name:
-        cloudmart-database-port
+      Name: cloudmart-database-port
 
 
   # ==============================================================
@@ -348,15 +314,13 @@ Outputs:
 
   DatabaseName:
 
-    Description:
-      CloudMart RDS Database Name
+    Description: CloudMart RDS Database Name
 
     Value:
       !Ref DBName
 
     Export:
-      Name:
-        cloudmart-database-name
+      Name: cloudmart-database-name
 
 
   # ==============================================================
@@ -365,15 +329,13 @@ Outputs:
 
   DatabaseUsername:
 
-    Description:
-      CloudMart RDS Username
+    Description: CloudMart RDS Username
 
     Value:
       !Ref DBUsername
 
     Export:
-      Name:
-        cloudmart-database-username
+      Name: cloudmart-database-username
 
 
   # ==============================================================
@@ -382,15 +344,13 @@ Outputs:
 
   DatabaseSubnetGroup:
 
-    Description:
-      CloudMart RDS Subnet Group
+    Description: CloudMart RDS Subnet Group
 
     Value:
       !Ref RdsSubnetGroup
 
     Export:
-      Name:
-        cloudmart-database-subnet-group
+      Name: cloudmart-database-subnet-group
 
 
   # ==============================================================
@@ -399,15 +359,13 @@ Outputs:
 
   ReportsBucket:
 
-    Description:
-      S3 bucket used for CloudMart daily reports
+    Description: S3 bucket used for CloudMart daily reports
 
     Value:
       !Ref ReportsBucket
 
     Export:
-      Name:
-        cloudmart-reports-bucket
+      Name: cloudmart-reports-bucket
 
 
   # ==============================================================
@@ -416,15 +374,13 @@ Outputs:
 
   ReportsBucketArn:
 
-    Description:
-      ARN of the CloudMart reports bucket
+    Description: ARN of the CloudMart reports bucket
 
     Value:
       !GetAtt ReportsBucket.Arn
 
     Export:
-      Name:
-        cloudmart-reports-bucket-arn
+      Name: cloudmart-reports-bucket-arn
 
 
   # ==============================================================
@@ -433,15 +389,13 @@ Outputs:
 
   LambdaBucket:
 
-    Description:
-      S3 bucket used for Lambda deployment packages
+    Description: S3 bucket used for Lambda deployment packages
 
     Value:
       !Ref LambdaArtifactsBucket
 
     Export:
-      Name:
-        cloudmart-lambda-bucket
+      Name: cloudmart-lambda-bucket
 
 
   # ==============================================================
@@ -450,12 +404,10 @@ Outputs:
 
   LambdaBucketArn:
 
-    Description:
-      ARN of the CloudMart Lambda deployment bucket
+    Description: ARN of the CloudMart Lambda deployment bucket
 
     Value:
       !GetAtt LambdaArtifactsBucket.Arn
 
     Export:
-      Name:
-        cloudmart-lambda-bucket-arn
+      Name: cloudmart-lambda-bucket-arn

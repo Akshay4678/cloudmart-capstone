@@ -156,22 +156,6 @@ def get_schema_path():
 # ================================================================
 
 def execute_schema_file(connection):
-    """
-    Executes schema.sql packaged inside the Order Lambda.
-
-    The deployment workflow copies:
-
-        schema.sql
-
-    into:
-
-        build/order/schema.sql
-
-    before creating the Lambda ZIP.
-
-    This function is intentionally designed to tolerate
-    objects that already exist.
-    """
 
     schema_path = get_schema_path()
 
@@ -190,7 +174,7 @@ def execute_schema_file(connection):
         raise ValueError("schema.sql is empty")
 
     # ------------------------------------------------------------
-    # Remove normal -- comments.
+    # Remove normal -- comments
     # ------------------------------------------------------------
 
     cleaned_lines = []
@@ -207,10 +191,7 @@ def execute_schema_file(connection):
     sql = "\n".join(cleaned_lines)
 
     # ------------------------------------------------------------
-    # The current CloudMart schema contains ordinary SQL
-    # statements separated by semicolons.
-    #
-    # It does not contain stored procedures or triggers.
+    # Split ordinary SQL statements by semicolon
     # ------------------------------------------------------------
 
     statements = []
@@ -252,15 +233,16 @@ def execute_schema_file(connection):
 
             except pymysql.err.OperationalError as exc:
 
-                error_code = exc.args[0] if exc.args else None
+                error_code = (
+                    exc.args[0]
+                    if exc.args
+                    else None
+                )
+
                 error_message = str(exc).lower()
 
                 # ------------------------------------------------
-                # MySQL error 1061:
-                # Duplicate key name
-                #
-                # This happens when CREATE INDEX is executed
-                # again during another deployment.
+                # Duplicate index
                 # ------------------------------------------------
 
                 if (
@@ -278,8 +260,7 @@ def execute_schema_file(connection):
                     continue
 
                 # ------------------------------------------------
-                # MySQL error 1826:
-                # Duplicate foreign key constraint name
+                # Duplicate foreign key name
                 # ------------------------------------------------
 
                 if (
@@ -298,16 +279,13 @@ def execute_schema_file(connection):
                     continue
 
                 # ------------------------------------------------
-                # MySQL error 1050:
                 # Table already exists
-                #
-                # CREATE TABLE IF NOT EXISTS normally prevents
-                # this, but tolerate it for safety.
                 # ------------------------------------------------
 
                 if (
                     error_code == 1050
-                    or "table already exists" in error_message
+                    or "table already exists"
+                    in error_message
                 ):
 
                     print(
@@ -320,7 +298,7 @@ def execute_schema_file(connection):
                     continue
 
                 # ------------------------------------------------
-                # Any other SQL error is a real failure.
+                # Any other error is a real failure
                 # ------------------------------------------------
 
                 print(
@@ -343,12 +321,6 @@ def execute_schema_file(connection):
 # ================================================================
 
 def ensure_customer_table(connection):
-    """
-    Creates the customers table if it does not already exist.
-
-    This is required because the existing RDS database may have
-    been created before the customers table was added.
-    """
 
     sql = """
     CREATE TABLE IF NOT EXISTS customers (
@@ -357,7 +329,8 @@ def ensure_customer_table(connection):
         email VARCHAR(255) NOT NULL,
         phone VARCHAR(20),
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        updated_at DATETIME NOT NULL
+            DEFAULT CURRENT_TIMESTAMP
             ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (customer_id),
         UNIQUE KEY uk_customers_email (email)
@@ -378,14 +351,6 @@ def ensure_customer_table(connection):
 # ================================================================
 
 def ensure_orders_table(connection):
-    """
-    Ensures the orders table exists with the expected structure.
-
-    IMPORTANT:
-    Existing CloudMart databases already contain orders.
-    Therefore CREATE TABLE IF NOT EXISTS alone cannot modify
-    an existing table.
-    """
 
     sql = """
     CREATE TABLE IF NOT EXISTS orders (
@@ -394,7 +359,8 @@ def ensure_orders_table(connection):
         status VARCHAR(30) NOT NULL DEFAULT 'PROCESSING',
         total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        updated_at DATETIME NOT NULL
+            DEFAULT CURRENT_TIMESTAMP
             ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (order_id)
     ) ENGINE=InnoDB
@@ -417,12 +383,12 @@ def ensure_order_items_table(connection):
 
     sql = """
     CREATE TABLE IF NOT EXISTS order_items (
-        order_item_id INT AUTO_INCREMENT PRIMARY KEY,
         order_id VARCHAR(50) NOT NULL,
         product_id INT NOT NULL,
         quantity INT NOT NULL,
         price DECIMAL(10,2) NOT NULL,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (order_id, product_id)
     ) ENGINE=InnoDB
     """
 
@@ -440,15 +406,6 @@ def ensure_order_items_table(connection):
 # ================================================================
 
 def ensure_order_customer_foreign_key(connection):
-    """
-    Adds:
-
-        orders.customer_id
-            ->
-        customers.customer_id
-
-    if the constraint does not already exist.
-    """
 
     with connection.cursor() as cursor:
 
@@ -480,7 +437,7 @@ def ensure_order_customer_foreign_key(connection):
             return
 
         # --------------------------------------------------------
-        # Find existing orders whose customer does not exist.
+        # Find existing orders whose customer does not exist
         # --------------------------------------------------------
 
         cursor.execute(
@@ -499,8 +456,7 @@ def ensure_order_customer_foreign_key(connection):
         missing_customers = cursor.fetchall()
 
         # --------------------------------------------------------
-        # Create placeholder customer records so that adding
-        # the foreign key does not fail on existing orders.
+        # Create placeholder customers for existing orders
         # --------------------------------------------------------
 
         for row in missing_customers:
@@ -509,7 +465,6 @@ def ensure_order_customer_foreign_key(connection):
                 row["customer_id"]
             )
 
-            # Deterministic unique value.
             safe_suffix = uuid.uuid5(
                 uuid.NAMESPACE_DNS,
                 customer_id,
@@ -548,7 +503,7 @@ def ensure_order_customer_foreign_key(connection):
             )
 
         # --------------------------------------------------------
-        # Add the foreign key.
+        # Add foreign key
         # --------------------------------------------------------
 
         cursor.execute(
@@ -574,14 +529,11 @@ def ensure_order_customer_foreign_key(connection):
 # ================================================================
 
 def ensure_order_item_foreign_keys(connection):
-    """
-    Adds the order_items foreign keys if they are missing.
-    """
 
     with connection.cursor() as cursor:
 
         # --------------------------------------------------------
-        # Order -> order_items
+        # order_items.order_id -> orders.order_id
         # --------------------------------------------------------
 
         cursor.execute(
@@ -612,6 +564,7 @@ def ensure_order_item_foreign_keys(connection):
                     FOREIGN KEY (order_id)
                     REFERENCES orders(order_id)
                     ON DELETE CASCADE
+                    ON UPDATE CASCADE
                     """
                 )
 
@@ -621,7 +574,6 @@ def ensure_order_item_foreign_keys(connection):
 
             except pymysql.err.OperationalError as exc:
 
-                # Duplicate FK name means it already exists.
                 if exc.args and exc.args[0] == 1826:
 
                     print(
@@ -639,7 +591,7 @@ def ensure_order_item_foreign_keys(connection):
             )
 
         # --------------------------------------------------------
-        # Product -> order_items
+        # order_items.product_id -> products.product_id
         # --------------------------------------------------------
 
         cursor.execute(
@@ -670,6 +622,7 @@ def ensure_order_item_foreign_keys(connection):
                     FOREIGN KEY (product_id)
                     REFERENCES products(product_id)
                     ON DELETE RESTRICT
+                    ON UPDATE CASCADE
                     """
                 )
 
@@ -711,9 +664,11 @@ def initialize_schema():
         print(
             "=================================================="
         )
+
         print(
             "STARTING DATABASE SCHEMA INITIALIZATION"
         )
+
         print(
             "=================================================="
         )
@@ -725,7 +680,7 @@ def initialize_schema():
         )
 
         # --------------------------------------------------------
-        # 1. Execute repository schema.sql
+        # 1. Execute schema.sql
         # --------------------------------------------------------
 
         execute_schema_file(connection)
@@ -734,19 +689,25 @@ def initialize_schema():
         # 2. Ensure customers table
         # --------------------------------------------------------
 
-        ensure_customer_table(connection)
+        ensure_customer_table(
+            connection
+        )
 
         # --------------------------------------------------------
         # 3. Ensure orders table
         # --------------------------------------------------------
 
-        ensure_orders_table(connection)
+        ensure_orders_table(
+            connection
+        )
 
         # --------------------------------------------------------
         # 4. Ensure order_items table
         # --------------------------------------------------------
 
-        ensure_order_items_table(connection)
+        ensure_order_items_table(
+            connection
+        )
 
         # --------------------------------------------------------
         # 5. Add customer foreign key
@@ -765,9 +726,7 @@ def initialize_schema():
         )
 
         # --------------------------------------------------------
-        # 7. Ensure a test customer exists.
-        #
-        # The GitHub Actions smoke test uses CUST101.
+        # 7. Ensure test customer exists
         # --------------------------------------------------------
 
         with connection.cursor() as cursor:
@@ -806,9 +765,11 @@ def initialize_schema():
         print(
             "=================================================="
         )
+
         print(
             "DATABASE SCHEMA INITIALIZATION SUCCESSFUL"
         )
+
         print(
             "=================================================="
         )
@@ -861,9 +822,13 @@ def create_order(body):
             "Request body must be a JSON object"
         )
 
-    customer_id = body.get("customer_id")
+    customer_id = body.get(
+        "customer_id"
+    )
 
-    items = body.get("items")
+    items = body.get(
+        "items"
+    )
 
     # ------------------------------------------------------------
     # Validate customer
@@ -972,9 +937,6 @@ def create_order(body):
 
     # ------------------------------------------------------------
     # Generate order ID
-    #
-    # IMPORTANT:
-    # orders table uses order_id, NOT id.
     # ------------------------------------------------------------
 
     order_id = (
@@ -1029,17 +991,7 @@ def create_order(body):
             )
 
         # --------------------------------------------------------
-        # Read product information
-        #
-        # Actual CloudMart products columns:
-        #
-        # product_id
-        # name
-        # description
-        # price
-        # stock_count
-        #
-        # There is NO products.id.
+        # Read products
         # --------------------------------------------------------
 
         total_amount = Decimal(
@@ -1064,6 +1016,8 @@ def create_order(body):
                     """
                     SELECT
                         product_id,
+                        name,
+                        description,
                         price,
                         stock_count
                     FROM products
@@ -1186,7 +1140,7 @@ def create_order(body):
                 )
 
         # --------------------------------------------------------
-        # Commit DB transaction
+        # Commit database transaction
         # --------------------------------------------------------
 
         connection.commit()
@@ -1247,7 +1201,11 @@ def create_order(body):
                     "Order accepted for processing"
                 ),
                 "order_id": order_id,
+                "customer_id": customer_id,
                 "status": "PROCESSING",
+                "total_amount": str(
+                    total_amount
+                ),
             },
         )
 
@@ -1319,7 +1277,7 @@ def get_order(order_id):
         connection = get_connection()
 
         # --------------------------------------------------------
-        # Get order
+        # Get order + customer
         # --------------------------------------------------------
 
         with connection.cursor() as cursor:
@@ -1327,14 +1285,21 @@ def get_order(order_id):
             cursor.execute(
                 """
                 SELECT
-                    order_id,
-                    customer_id,
-                    status,
-                    total_amount,
-                    created_at,
-                    updated_at
-                FROM orders
-                WHERE order_id = %s
+                    o.order_id,
+                    o.customer_id,
+                    c.name AS customer_name,
+                    c.email AS customer_email,
+                    o.status,
+                    o.total_amount,
+                    o.created_at,
+                    o.updated_at
+
+                FROM orders o
+
+                INNER JOIN customers c
+                    ON o.customer_id = c.customer_id
+
+                WHERE o.order_id = %s
                 """,
                 (
                     order_id,
@@ -1355,7 +1320,7 @@ def get_order(order_id):
             )
 
         # --------------------------------------------------------
-        # Get order items
+        # Get order items + product information
         # --------------------------------------------------------
 
         with connection.cursor() as cursor:
@@ -1363,14 +1328,21 @@ def get_order(order_id):
             cursor.execute(
                 """
                 SELECT
-                    order_item_id,
-                    product_id,
-                    quantity,
-                    price,
-                    created_at
-                FROM order_items
-                WHERE order_id = %s
-                ORDER BY order_item_id
+                    oi.product_id,
+                    p.name AS product_name,
+                    p.description AS product_description,
+                    oi.quantity,
+                    oi.price,
+                    oi.created_at
+
+                FROM order_items oi
+
+                INNER JOIN products p
+                    ON oi.product_id = p.product_id
+
+                WHERE oi.order_id = %s
+
+                ORDER BY oi.product_id
                 """,
                 (
                     order_id,
@@ -1420,32 +1392,150 @@ def get_customer_orders(customer_id):
 
         connection = get_connection()
 
+        # --------------------------------------------------------
+        # Verify customer exists
+        # --------------------------------------------------------
+
         with connection.cursor() as cursor:
 
             cursor.execute(
                 """
                 SELECT
-                    order_id,
                     customer_id,
-                    status,
-                    total_amount,
-                    created_at,
-                    updated_at
-                FROM orders
+                    name,
+                    email,
+                    phone
+                FROM customers
                 WHERE customer_id = %s
-                ORDER BY created_at DESC
                 """,
                 (
                     customer_id,
                 ),
             )
 
-            orders = cursor.fetchall()
+            customer = cursor.fetchone()
+
+        if not customer:
+
+            return response(
+                404,
+                {
+                    "message": (
+                        "Customer not found"
+                    ),
+                    "customer_id": customer_id,
+                },
+            )
+
+        # --------------------------------------------------------
+        # Get customer orders + product details
+        # --------------------------------------------------------
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    o.order_id,
+                    o.customer_id,
+                    o.status,
+                    o.total_amount,
+                    o.created_at,
+                    o.updated_at,
+
+                    oi.product_id,
+                    p.name AS product_name,
+                    p.description AS product_description,
+                    oi.quantity,
+                    oi.price AS item_price
+
+                FROM orders o
+
+                INNER JOIN order_items oi
+                    ON o.order_id = oi.order_id
+
+                INNER JOIN products p
+                    ON oi.product_id = p.product_id
+
+                WHERE o.customer_id = %s
+
+                ORDER BY
+                    o.created_at DESC,
+                    oi.product_id
+                """,
+                (
+                    customer_id,
+                ),
+            )
+
+            rows = cursor.fetchall()
+
+        # --------------------------------------------------------
+        # Group order items under their orders
+        # --------------------------------------------------------
+
+        orders = {}
+
+        for row in rows:
+
+            order_id = row[
+                "order_id"
+            ]
+
+            if order_id not in orders:
+
+                orders[order_id] = {
+                    "order_id": order_id,
+                    "customer_id": row[
+                        "customer_id"
+                    ],
+                    "status": row[
+                        "status"
+                    ],
+                    "total_amount": row[
+                        "total_amount"
+                    ],
+                    "created_at": row[
+                        "created_at"
+                    ],
+                    "updated_at": row[
+                        "updated_at"
+                    ],
+                    "items": [],
+                }
+
+            orders[order_id]["items"].append(
+                {
+                    "product_id": row[
+                        "product_id"
+                    ],
+                    "product_name": row[
+                        "product_name"
+                    ],
+                    "product_description": row[
+                        "product_description"
+                    ],
+                    "quantity": row[
+                        "quantity"
+                    ],
+                    "price": row[
+                        "item_price"
+                    ],
+                }
+            )
+
+        # --------------------------------------------------------
+        # Return customer + orders
+        # --------------------------------------------------------
 
         return response(
             200,
             {
-                "orders": orders,
+                "customer": customer,
+                "count": len(orders),
+                "orders": list(
+                    orders.values()
+                ),
             },
         )
 
@@ -1715,12 +1805,6 @@ def lambda_handler(event, context):
 
     # ============================================================
     # DATABASE SCHEMA INITIALIZATION
-    #
-    # Called from GitHub Actions using:
-    #
-    # {
-    #     "action": "initialize_schema"
-    # }
     # ============================================================
 
     if event.get(
@@ -1865,6 +1949,21 @@ def lambda_handler(event, context):
                     "message": (
                         "customer_id query "
                         "parameter is required"
+                    ),
+                },
+            )
+
+        customer_id = str(
+            customer_id
+        ).strip()
+
+        if not customer_id:
+
+            return response(
+                400,
+                {
+                    "message": (
+                        "customer_id cannot be empty"
                     ),
                 },
             )

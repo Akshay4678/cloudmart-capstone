@@ -327,11 +327,8 @@ jobs:
 
 
           mkdir -p build/product
-
           mkdir -p build/order
-
           mkdir -p build/order_processor
-
           mkdir -p build/report
 
 
@@ -538,16 +535,14 @@ jobs:
       #
       # IMPORTANT:
       #
-      # IAM MUST BE UPDATED BEFORE DATA STACK.
+      # IAM is updated before API and Data.
       #
-      # The existing IAM stack may still have a dependency on the
-      # old DynamoDB export:
+      # The new IAM template is DynamoDB-free.
       #
-      #   cloudmart-orders-table-arn
+      # This removes the old IAM dependency on:
       #
-      # This new IAM template contains no DynamoDB dependency.
-      # Updating IAM first removes that old dependency.
-      # ==============================================================
+      # cloudmart-orders-table-arn
+      # ==========================================================
 
       - name: Deploy IAM Stack
 
@@ -597,66 +592,7 @@ jobs:
 
 
       # ==========================================================
-      # 18. DEPLOY DATA
-      #
-      # IAM is intentionally deployed before Data.
-      #
-      # This allows CloudFormation to remove the old
-      # cloudmart-orders-table-arn export from the Data Stack.
-      # ==============================================================
-
-      - name: Deploy Data Stack
-
-        id: deploy_data
-
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
-        run: |
-
-          echo "=================================================="
-          echo "DEPLOYING DATA STACK"
-          echo "=================================================="
-
-
-          aws cloudformation deploy \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --template-file cloudformation/data-stack.yaml \
-            --parameter-overrides \
-              "DBPassword=$DB_PASSWORD" \
-            --no-fail-on-empty-changeset
-
-
-          echo "Data stack deployment completed."
-
-
-      # ==========================================================
-      # 19. DATA ERRORS
-      # ==========================================================
-
-      - name: Show Data Stack Errors
-
-        if: failure() && steps.deploy_data.outcome == 'failure'
-
-        run: |
-
-          echo "=================================================="
-          echo "DATA STACK EVENTS"
-          echo "=================================================="
-
-
-          aws cloudformation describe-stack-events \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-            --output table \
-            || true
-
-
-      # ==========================================================
-      # 20. DEPLOY AUTH
+      # 18. DEPLOY AUTH
       # ==========================================================
 
       - name: Deploy Auth Stack
@@ -684,7 +620,7 @@ jobs:
 
 
       # ==========================================================
-      # 21. CREATE AUTH SECURESTRING
+      # 19. CREATE AUTH SECURESTRING
       # ==========================================================
 
       - name: Create Authentication SecureString
@@ -723,7 +659,7 @@ jobs:
 
 
       # ==========================================================
-      # 22. VERIFY AUTH PARAMETER
+      # 20. VERIFY AUTH PARAMETER
       # ==========================================================
 
       - name: Verify Authentication Parameter
@@ -746,7 +682,7 @@ jobs:
 
 
       # ==========================================================
-      # 23. AUTH ERRORS
+      # 21. AUTH ERRORS
       # ==========================================================
 
       - name: Show Auth Stack Errors
@@ -769,7 +705,15 @@ jobs:
 
 
       # ==========================================================
-      # 24. GET LAMBDA ARTIFACT BUCKET
+      # 22. GET EXISTING LAMBDA ARTIFACT BUCKET
+      #
+      # IMPORTANT:
+      #
+      # Data Stack already exists.
+      #
+      # We can read its existing output before updating Data.
+      #
+      # Therefore we can deploy API BEFORE Data.
       # ==========================================================
 
       - name: Get Lambda Artifact Bucket
@@ -779,7 +723,7 @@ jobs:
         run: |
 
           echo "=================================================="
-          echo "GETTING LAMBDA ARTIFACT BUCKET"
+          echo "GETTING EXISTING LAMBDA ARTIFACT BUCKET"
           echo "=================================================="
 
 
@@ -806,7 +750,7 @@ jobs:
 
 
       # ==========================================================
-      # 25. UPLOAD PRODUCT
+      # 23. UPLOAD PRODUCT LAMBDA
       # ==========================================================
 
       - name: Upload Product Lambda
@@ -819,7 +763,7 @@ jobs:
 
 
       # ==========================================================
-      # 26. UPLOAD ORDER
+      # 24. UPLOAD ORDER LAMBDA
       # ==========================================================
 
       - name: Upload Order Lambda
@@ -832,7 +776,7 @@ jobs:
 
 
       # ==========================================================
-      # 27. UPLOAD ORDER PROCESSOR
+      # 25. UPLOAD ORDER PROCESSOR
       # ==========================================================
 
       - name: Upload Order Processor Lambda
@@ -845,7 +789,7 @@ jobs:
 
 
       # ==========================================================
-      # 28. UPLOAD REPORT
+      # 26. UPLOAD REPORT LAMBDA
       # ==========================================================
 
       - name: Upload Report Lambda
@@ -858,7 +802,7 @@ jobs:
 
 
       # ==========================================================
-      # 29. VERIFY S3 ARTIFACTS
+      # 27. VERIFY S3 ARTIFACTS
       # ==========================================================
 
       - name: Verify S3 Lambda Artifacts
@@ -887,8 +831,25 @@ jobs:
 
 
       # ==========================================================
-      # 30. DEPLOY APPLICATION
+      # 28. DEPLOY APPLICATION STACK
+      #
       # ==========================================================
+      #
+      # THIS IS THE CRITICAL CHANGE.
+      #
+      # API IS UPDATED BEFORE DATA.
+      #
+      # The current deployed API stack still references:
+      #
+      # cloudmart-orders-table-name
+      #
+      # The new api-stack.yaml does NOT contain that dependency.
+      #
+      # Updating API now removes its dependency while the old
+      # Data Stack export still exists.
+      #
+      # AFTER THIS STEP SUCCEEDS, DATA CAN REMOVE THE OLD EXPORT.
+      # ==============================================================
 
       - name: Deploy Application Stack
 
@@ -921,7 +882,7 @@ jobs:
 
 
       # ==========================================================
-      # 31. APPLICATION ERRORS
+      # 29. APPLICATION ERRORS
       # ==========================================================
 
       - name: Show Application Stack Errors
@@ -938,6 +899,76 @@ jobs:
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-api-stack \
+            --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
+
+
+      # ==========================================================
+      # 30. DEPLOY DATA STACK
+      #
+      # IMPORTANT:
+      #
+      # IAM has already been updated.
+      #
+      # API has now also been updated.
+      #
+      # Therefore the old DynamoDB exports should no longer have
+      # any consumers.
+      #
+      # Data Stack can now remove:
+      #
+      # cloudmart-orders-table-arn
+      # cloudmart-orders-table-name
+      #
+      # without violating CloudFormation export dependencies.
+      # ==============================================================
+
+      - name: Deploy Data Stack
+
+        id: deploy_data
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING DATA STACK"
+          echo "=================================================="
+
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --template-file cloudformation/data-stack.yaml \
+            --parameter-overrides \
+              "DBPassword=$DB_PASSWORD" \
+            --no-fail-on-empty-changeset
+
+
+          echo "Data stack deployment completed."
+
+
+      # ==========================================================
+      # 31. DATA ERRORS
+      # ==========================================================
+
+      - name: Show Data Stack Errors
+
+        if: failure() && steps.deploy_data.outcome == 'failure'
+
+        run: |
+
+          echo "=================================================="
+          echo "DATA STACK EVENTS"
+          echo "=================================================="
+
+
+          aws cloudformation describe-stack-events \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
             --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table \
             || true
@@ -1135,18 +1166,6 @@ jobs:
 
 
           echo ""
-          echo "===== DATA STACK ====="
-
-
-          aws cloudformation describe-stacks \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --query "Stacks[0].[StackName,StackStatus]" \
-            --output table \
-            || true
-
-
-          echo ""
           echo "===== AUTH STACK ====="
 
 
@@ -1165,6 +1184,18 @@ jobs:
           aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name cloudmart-api-stack \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table \
+            || true
+
+
+          echo ""
+          echo "===== DATA STACK ====="
+
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].[StackName,StackStatus]" \
             --output table \
             || true

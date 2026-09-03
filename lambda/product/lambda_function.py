@@ -240,7 +240,7 @@ def lambda_handler(event, context):
 
         path_parameters = event.get("pathParameters") or {}
 
-        product_id = path_parameters.get("id")
+        product_id = path_parameters.get("productId")
 
         print("HTTP Method:", http_method)
         print("Product ID:", product_id)

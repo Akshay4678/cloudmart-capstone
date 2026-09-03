@@ -1,16 +1,13 @@
 name: Deploy CloudMart Infrastructure
 
-
 # ================================================================
 # TRIGGERS
 # ================================================================
 
 on:
-
   workflow_dispatch:
 
   push:
-
     branches:
       - M3-redobranch
 
@@ -20,7 +17,6 @@ on:
 # ================================================================
 
 permissions:
-
   id-token: write
   contents: read
 
@@ -36,21 +32,16 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-
       AWS_REGION: ap-south-1
-
       ENVIRONMENT_NAME: dev
 
-
     steps:
-
 
       # ==========================================================
       # 1. CHECKOUT
       # ==========================================================
 
       - name: Checkout Repository
-
         uses: actions/checkout@v4
 
 
@@ -59,13 +50,10 @@ jobs:
       # ==========================================================
 
       - name: Configure AWS Credentials
-
         uses: aws-actions/configure-aws-credentials@v4
 
         with:
-
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-
           aws-region: ${{ env.AWS_REGION }}
 
 
@@ -91,11 +79,8 @@ jobs:
       - name: Check Required Secrets
 
         env:
-
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
         run: |
@@ -104,33 +89,20 @@ jobs:
           echo "CHECKING REQUIRED SECRETS"
           echo "=================================================="
 
-
           if [ -z "$AWS_ROLE_ARN" ]; then
-
             echo "ERROR: AWS_ROLE_ARN secret is missing."
-
             exit 1
-
           fi
-
 
           if [ -z "$DB_PASSWORD" ]; then
-
             echo "ERROR: DB_PASSWORD secret is missing."
-
             exit 1
-
           fi
-
 
           if [ -z "$AUTH_TOKEN" ]; then
-
             echo "ERROR: AUTH_TOKEN secret is missing."
-
             exit 1
-
           fi
-
 
           echo "Required secrets are configured."
 
@@ -144,7 +116,6 @@ jobs:
         run: |
 
           python -m pip install --upgrade pip
-
           pip install cfn-lint
 
 
@@ -160,16 +131,13 @@ jobs:
           echo "VALIDATING NETWORK STACK"
           echo "=================================================="
 
-
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/network-stack.yaml
 
-
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/network-stack.yaml
-
 
           echo "Network stack validation passed."
 
@@ -186,16 +154,13 @@ jobs:
           echo "VALIDATING DATA STACK"
           echo "=================================================="
 
-
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/data-stack.yaml
 
-
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/data-stack.yaml
-
 
           echo "Data stack validation passed."
 
@@ -212,16 +177,13 @@ jobs:
           echo "VALIDATING IAM STACK"
           echo "=================================================="
 
-
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/iam-stack.yaml
 
-
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/iam-stack.yaml
-
 
           echo "IAM stack validation passed."
 
@@ -238,16 +200,13 @@ jobs:
           echo "VALIDATING AUTH STACK"
           echo "=================================================="
 
-
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/auth-stack.yaml
 
-
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/auth-stack.yaml
-
 
           echo "Auth stack validation passed."
 
@@ -264,16 +223,13 @@ jobs:
           echo "VALIDATING APPLICATION STACK"
           echo "=================================================="
 
-
           cfn-lint \
             --non-zero-exit-code error \
             cloudformation/api-stack.yaml
 
-
           aws cloudformation validate-template \
             --region "$AWS_REGION" \
             --template-body file://cloudformation/api-stack.yaml
-
 
           echo "Application stack validation passed."
 
@@ -290,28 +246,67 @@ jobs:
           echo "CHECKING LAMBDA SOURCE FILES"
           echo "=================================================="
 
-
           test -f lambda/product/lambda_function.py
           test -f lambda/product/requirements.txt
-
 
           test -f lambda/order/lambda_function.py
           test -f lambda/order/requirements.txt
 
-
           test -f lambda/order_processor/lambda_function.py
           test -f lambda/order_processor/requirements.txt
 
-
           test -f lambda/report/lambda_function.py
           test -f lambda/report/requirements.txt
-
 
           echo "All Lambda source files are present."
 
 
       # ==========================================================
-      # 12. PACKAGE LAMBDAS
+      # 12. VERIFY LAMBDA REQUIREMENTS
+      # ==========================================================
+
+      - name: Verify Lambda Requirements
+
+        run: |
+
+          echo "=================================================="
+          echo "VERIFYING LAMBDA REQUIREMENTS"
+          echo "=================================================="
+
+          echo ""
+          echo "Order Lambda requirements:"
+          cat lambda/order/requirements.txt
+
+          echo ""
+          echo "Order Processor Lambda requirements:"
+          cat lambda/order_processor/requirements.txt
+
+          echo ""
+          echo "Report Lambda requirements:"
+          cat lambda/report/requirements.txt
+
+          echo ""
+
+          grep -qi "^PyMySQL==" lambda/order/requirements.txt || {
+            echo "ERROR: PyMySQL is missing from lambda/order/requirements.txt"
+            exit 1
+          }
+
+          grep -qi "^PyMySQL==" lambda/order_processor/requirements.txt || {
+            echo "ERROR: PyMySQL is missing from lambda/order_processor/requirements.txt"
+            exit 1
+          }
+
+          grep -qi "^PyMySQL==" lambda/report/requirements.txt || {
+            echo "ERROR: PyMySQL is missing from lambda/report/requirements.txt"
+            exit 1
+          }
+
+          echo "PyMySQL requirement is present in all RDS Lambda functions."
+
+
+      # ==========================================================
+      # 13. PACKAGE LAMBDAS
       # ==========================================================
 
       - name: Package Lambda Functions
@@ -322,9 +317,7 @@ jobs:
           echo "PACKAGING LAMBDA FUNCTIONS"
           echo "=================================================="
 
-
           rm -rf build
-
 
           mkdir -p build/product
           mkdir -p build/order
@@ -336,26 +329,24 @@ jobs:
           # PRODUCT
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Product Lambda..."
-
 
           cp \
             lambda/product/lambda_function.py \
             build/product/index.py
 
-
-          pip install \
+          python -m pip install \
+            --no-cache-dir \
+            --upgrade \
             -r lambda/product/requirements.txt \
             -t build/product
 
-
           cd build/product
-
 
           zip -r \
             ../product-lambda-${{ github.sha }}.zip \
             .
-
 
           cd ../..
 
@@ -364,26 +355,37 @@ jobs:
           # ORDER
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Order Lambda..."
-
 
           cp \
             lambda/order/lambda_function.py \
             build/order/index.py
 
-
-          pip install \
+          python -m pip install \
+            --no-cache-dir \
+            --upgrade \
             -r lambda/order/requirements.txt \
             -t build/order
 
+          echo ""
+          echo "Checking PyMySQL inside Order Lambda build directory..."
+
+          if [ ! -d "build/order/pymysql" ]; then
+            echo "ERROR: PyMySQL directory is missing from build/order."
+            echo ""
+            echo "Contents of build/order:"
+            ls -la build/order
+            exit 1
+          fi
+
+          echo "PyMySQL found in build/order."
 
           cd build/order
-
 
           zip -r \
             ../order-lambda-${{ github.sha }}.zip \
             .
-
 
           cd ../..
 
@@ -392,26 +394,34 @@ jobs:
           # ORDER PROCESSOR
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Order Processor Lambda..."
-
 
           cp \
             lambda/order_processor/lambda_function.py \
             build/order_processor/index.py
 
-
-          pip install \
+          python -m pip install \
+            --no-cache-dir \
+            --upgrade \
             -r lambda/order_processor/requirements.txt \
             -t build/order_processor
 
+          echo ""
+          echo "Checking PyMySQL inside Order Processor build directory..."
+
+          if [ ! -d "build/order_processor/pymysql" ]; then
+            echo "ERROR: PyMySQL directory is missing from build/order_processor."
+            exit 1
+          fi
+
+          echo "PyMySQL found in build/order_processor."
 
           cd build/order_processor
-
 
           zip -r \
             ../order-processor-${{ github.sha }}.zip \
             .
-
 
           cd ../..
 
@@ -420,35 +430,43 @@ jobs:
           # REPORT
           # ------------------------------------------------------
 
+          echo ""
           echo "Packaging Report Lambda..."
-
 
           cp \
             lambda/report/lambda_function.py \
             build/report/index.py
 
-
-          pip install \
+          python -m pip install \
+            --no-cache-dir \
+            --upgrade \
             -r lambda/report/requirements.txt \
             -t build/report
 
+          echo ""
+          echo "Checking PyMySQL inside Report Lambda build directory..."
+
+          if [ ! -d "build/report/pymysql" ]; then
+            echo "ERROR: PyMySQL directory is missing from build/report."
+            exit 1
+          fi
+
+          echo "PyMySQL found in build/report."
 
           cd build/report
-
 
           zip -r \
             ../report-lambda-${{ github.sha }}.zip \
             .
 
-
           cd ../..
 
-
+          echo ""
           echo "All Lambda packages created."
 
 
       # ==========================================================
-      # 13. VERIFY PACKAGES
+      # 14. VERIFY PACKAGES
       # ==========================================================
 
       - name: Verify Lambda Packages
@@ -459,31 +477,94 @@ jobs:
           echo "VERIFYING LAMBDA PACKAGES"
           echo "=================================================="
 
-
+          echo ""
+          echo "Build directory:"
           ls -lh build/
 
+          echo ""
 
           test -f \
             build/product-lambda-${{ github.sha }}.zip
 
-
           test -f \
             build/order-lambda-${{ github.sha }}.zip
 
-
           test -f \
             build/order-processor-${{ github.sha }}.zip
-
 
           test -f \
             build/report-lambda-${{ github.sha }}.zip
 
 
-          echo "All Lambda packages are present."
+          echo ""
+          echo "Checking ZIP sizes..."
+
+          test -s \
+            build/product-lambda-${{ github.sha }}.zip
+
+          test -s \
+            build/order-lambda-${{ github.sha }}.zip
+
+          test -s \
+            build/order-processor-${{ github.sha }}.zip
+
+          test -s \
+            build/report-lambda-${{ github.sha }}.zip
+
+
+          echo ""
+          echo "Checking PyMySQL in Order Lambda ZIP..."
+
+          if ! unzip -l \
+            build/order-lambda-${{ github.sha }}.zip | grep -qi "pymysql"; then
+
+            echo "ERROR: PyMySQL is missing from Order Lambda ZIP."
+
+            echo ""
+            echo "ZIP CONTENT:"
+            unzip -l \
+              build/order-lambda-${{ github.sha }}.zip | head -100
+
+            exit 1
+          fi
+
+          echo "PyMySQL is present in Order Lambda ZIP."
+
+
+          echo ""
+          echo "Checking PyMySQL in Order Processor ZIP..."
+
+          if ! unzip -l \
+            build/order-processor-${{ github.sha }}.zip | grep -qi "pymysql"; then
+
+            echo "ERROR: PyMySQL is missing from Order Processor ZIP."
+
+            exit 1
+          fi
+
+          echo "PyMySQL is present in Order Processor ZIP."
+
+
+          echo ""
+          echo "Checking PyMySQL in Report Lambda ZIP..."
+
+          if ! unzip -l \
+            build/report-lambda-${{ github.sha }}.zip | grep -qi "pymysql"; then
+
+            echo "ERROR: PyMySQL is missing from Report Lambda ZIP."
+
+            exit 1
+          fi
+
+          echo "PyMySQL is present in Report Lambda ZIP."
+
+
+          echo ""
+          echo "All Lambda packages are valid."
 
 
       # ==========================================================
-      # 14. DEPLOY NETWORK
+      # 15. DEPLOY NETWORK
       # ==========================================================
 
       - name: Deploy Network Stack
@@ -496,19 +577,17 @@ jobs:
           echo "DEPLOYING NETWORK STACK"
           echo "=================================================="
 
-
           aws cloudformation deploy \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
             --no-fail-on-empty-changeset
 
-
           echo "Network stack deployment completed."
 
 
       # ==========================================================
-      # 15. NETWORK ERRORS
+      # 16. NETWORK ERRORS
       # ==========================================================
 
       - name: Show Network Stack Errors
@@ -521,7 +600,6 @@ jobs:
           echo "NETWORK STACK EVENTS"
           echo "=================================================="
 
-
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
@@ -531,17 +609,11 @@ jobs:
 
 
       # ==========================================================
-      # 16. DEPLOY IAM
+      # 17. DEPLOY IAM
       #
-      # IMPORTANT:
+      # IAM MUST BE UPDATED BEFORE API.
       #
-      # IAM is updated before API and Data.
-      #
-      # The new IAM template is DynamoDB-free.
-      #
-      # This removes the old IAM dependency on:
-      #
-      # cloudmart-orders-table-arn
+      # The IAM template is DynamoDB-free.
       # ==========================================================
 
       - name: Deploy IAM Stack
@@ -554,7 +626,6 @@ jobs:
           echo "DEPLOYING IAM STACK"
           echo "=================================================="
 
-
           aws cloudformation deploy \
             --region "$AWS_REGION" \
             --stack-name cloudmart-iam-stack \
@@ -564,12 +635,11 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-
           echo "IAM stack deployment completed."
 
 
       # ==========================================================
-      # 17. IAM ERRORS
+      # 18. IAM ERRORS
       # ==========================================================
 
       - name: Show IAM Stack Errors
@@ -582,7 +652,6 @@ jobs:
           echo "IAM STACK EVENTS"
           echo "=================================================="
 
-
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-iam-stack \
@@ -592,7 +661,7 @@ jobs:
 
 
       # ==========================================================
-      # 18. DEPLOY AUTH
+      # 19. DEPLOY AUTH
       # ==========================================================
 
       - name: Deploy Auth Stack
@@ -605,7 +674,6 @@ jobs:
           echo "DEPLOYING AUTH STACK"
           echo "=================================================="
 
-
           aws cloudformation deploy \
             --region "$AWS_REGION" \
             --stack-name cloudmart-auth-stack \
@@ -615,12 +683,11 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-
           echo "Auth stack deployment completed."
 
 
       # ==========================================================
-      # 19. CREATE AUTH SECURESTRING
+      # 20. CREATE AUTH SECURESTRING
       # ==========================================================
 
       - name: Create Authentication SecureString
@@ -628,7 +695,6 @@ jobs:
         id: create_auth_parameter
 
         env:
-
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
 
         run: |
@@ -637,15 +703,10 @@ jobs:
           echo "CREATING AUTHENTICATION SECURESTRING"
           echo "=================================================="
 
-
           if [ -z "$AUTH_TOKEN" ]; then
-
             echo "ERROR: AUTH_TOKEN is empty."
-
             exit 1
-
           fi
-
 
           aws ssm put-parameter \
             --region "$AWS_REGION" \
@@ -654,12 +715,11 @@ jobs:
             --type SecureString \
             --overwrite
 
-
           echo "Authentication SecureString created/updated."
 
 
       # ==========================================================
-      # 20. VERIFY AUTH PARAMETER
+      # 21. VERIFY AUTH PARAMETER
       # ==========================================================
 
       - name: Verify Authentication Parameter
@@ -670,19 +730,17 @@ jobs:
           echo "VERIFYING AUTHENTICATION PARAMETER"
           echo "=================================================="
 
-
           aws ssm get-parameter \
             --region "$AWS_REGION" \
             --name "/cloudmart/${ENVIRONMENT_NAME}/auth/token" \
             --query "Parameter.[Name,Type]" \
             --output table
 
-
           echo "Authentication parameter exists."
 
 
       # ==========================================================
-      # 21. AUTH ERRORS
+      # 22. AUTH ERRORS
       # ==========================================================
 
       - name: Show Auth Stack Errors
@@ -695,7 +753,6 @@ jobs:
           echo "AUTH STACK EVENTS"
           echo "=================================================="
 
-
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-auth-stack \
@@ -705,15 +762,12 @@ jobs:
 
 
       # ==========================================================
-      # 22. GET EXISTING LAMBDA ARTIFACT BUCKET
-      #
-      # IMPORTANT:
+      # 23. GET EXISTING LAMBDA ARTIFACT BUCKET
       #
       # Data Stack already exists.
       #
-      # We can read its existing output before updating Data.
-      #
-      # Therefore we can deploy API BEFORE Data.
+      # We read the existing Lambda bucket before Data Stack
+      # is updated.
       # ==========================================================
 
       - name: Get Lambda Artifact Bucket
@@ -726,31 +780,24 @@ jobs:
           echo "GETTING EXISTING LAMBDA ARTIFACT BUCKET"
           echo "=================================================="
 
-
           BUCKET=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaBucket'].OutputValue" \
             --output text)
 
-
           echo "Lambda artifact bucket: $BUCKET"
 
-
           if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
-
             echo "ERROR: Lambda artifact bucket was not found."
-
             exit 1
-
           fi
-
 
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
 
       # ==========================================================
-      # 23. UPLOAD PRODUCT LAMBDA
+      # 24. UPLOAD PRODUCT LAMBDA
       # ==========================================================
 
       - name: Upload Product Lambda
@@ -763,7 +810,7 @@ jobs:
 
 
       # ==========================================================
-      # 24. UPLOAD ORDER LAMBDA
+      # 25. UPLOAD ORDER LAMBDA
       # ==========================================================
 
       - name: Upload Order Lambda
@@ -776,7 +823,7 @@ jobs:
 
 
       # ==========================================================
-      # 25. UPLOAD ORDER PROCESSOR
+      # 26. UPLOAD ORDER PROCESSOR
       # ==========================================================
 
       - name: Upload Order Processor Lambda
@@ -789,7 +836,7 @@ jobs:
 
 
       # ==========================================================
-      # 26. UPLOAD REPORT LAMBDA
+      # 27. UPLOAD REPORT LAMBDA
       # ==========================================================
 
       - name: Upload Report Lambda
@@ -802,7 +849,7 @@ jobs:
 
 
       # ==========================================================
-      # 27. VERIFY S3 ARTIFACTS
+      # 28. VERIFY S3 ARTIFACTS
       # ==========================================================
 
       - name: Verify S3 Lambda Artifacts
@@ -813,50 +860,40 @@ jobs:
           echo "VERIFYING S3 ARTIFACTS"
           echo "=================================================="
 
-
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/"
-
 
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/"
 
-
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/"
-
 
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/report/"
 
 
       # ==========================================================
-      # 28. DEPLOY APPLICATION STACK
+      # 29. DEPLOY APPLICATION STACK
       #
-      # ==========================================================
-      #
-      # THIS IS THE CRITICAL CHANGE.
+      # IMPORTANT:
       #
       # API IS UPDATED BEFORE DATA.
       #
-      # The current deployed API stack still references:
+      # The old API stack had a dependency on:
       #
       # cloudmart-orders-table-name
       #
-      # The new api-stack.yaml does NOT contain that dependency.
+      # The new API stack is DynamoDB-free.
       #
-      # Updating API now removes its dependency while the old
-      # Data Stack export still exists.
-      #
-      # AFTER THIS STEP SUCCEEDS, DATA CAN REMOVE THE OLD EXPORT.
-      # ==============================================================
+      # Updating API first removes the dependency.
+      # ==========================================================
 
       - name: Deploy Application Stack
 
         id: deploy_application
 
         env:
-
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
         run: |
@@ -864,7 +901,6 @@ jobs:
           echo "=================================================="
           echo "DEPLOYING APPLICATION STACK"
           echo "=================================================="
-
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
@@ -877,12 +913,11 @@ jobs:
               "EnvironmentName=$ENVIRONMENT_NAME" \
             --no-fail-on-empty-changeset
 
-
           echo "Application stack deployment completed."
 
 
       # ==========================================================
-      # 29. APPLICATION ERRORS
+      # 30. APPLICATION ERRORS
       # ==========================================================
 
       - name: Show Application Stack Errors
@@ -895,7 +930,6 @@ jobs:
           echo "APPLICATION STACK EVENTS"
           echo "=================================================="
 
-
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-api-stack \
@@ -905,31 +939,21 @@ jobs:
 
 
       # ==========================================================
-      # 30. DEPLOY DATA STACK
+      # 31. DEPLOY DATA STACK
       #
-      # IMPORTANT:
+      # API has already been updated.
       #
-      # IAM has already been updated.
+      # Therefore the old DynamoDB exports can now be removed
+      # from Data Stack without the old API dependency.
       #
-      # API has now also been updated.
-      #
-      # Therefore the old DynamoDB exports should no longer have
-      # any consumers.
-      #
-      # Data Stack can now remove:
-      #
-      # cloudmart-orders-table-arn
-      # cloudmart-orders-table-name
-      #
-      # without violating CloudFormation export dependencies.
-      # ==============================================================
+      # NO DYNAMODB IS CREATED.
+      # ==========================================================
 
       - name: Deploy Data Stack
 
         id: deploy_data
 
         env:
-
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
         run: |
@@ -937,7 +961,6 @@ jobs:
           echo "=================================================="
           echo "DEPLOYING DATA STACK"
           echo "=================================================="
-
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
@@ -947,12 +970,11 @@ jobs:
               "DBPassword=$DB_PASSWORD" \
             --no-fail-on-empty-changeset
 
-
           echo "Data stack deployment completed."
 
 
       # ==========================================================
-      # 31. DATA ERRORS
+      # 32. DATA ERRORS
       # ==========================================================
 
       - name: Show Data Stack Errors
@@ -965,7 +987,6 @@ jobs:
           echo "DATA STACK EVENTS"
           echo "=================================================="
 
-
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-data-stack \
@@ -975,7 +996,7 @@ jobs:
 
 
       # ==========================================================
-      # 32. GET API URL
+      # 33. GET API URL
       # ==========================================================
 
       - name: Get API URL
@@ -988,37 +1009,29 @@ jobs:
           echo "GETTING API URL"
           echo "=================================================="
 
-
           API_URL=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name cloudmart-api-stack \
             --query "Stacks[0].Outputs[?OutputKey=='ApiInvokeUrl'].OutputValue" \
             --output text)
 
-
           echo "API URL: $API_URL"
 
-
           if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
-
             echo "ERROR: API URL was not found."
-
             exit 1
-
           fi
-
 
           echo "url=$API_URL" >> "$GITHUB_OUTPUT"
 
 
       # ==========================================================
-      # 33. SMOKE TEST GET PRODUCTS
+      # 34. SMOKE TEST GET PRODUCTS
       # ==========================================================
 
       - name: Smoke Test - GET Products
 
         env:
-
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
 
         run: |
@@ -1026,7 +1039,6 @@ jobs:
           echo "=================================================="
           echo "SMOKE TEST - GET /products"
           echo "=================================================="
-
 
           HTTP_STATUS=$(curl \
             --silent \
@@ -1037,37 +1049,27 @@ jobs:
             --header "Authorization: Bearer $AUTH_TOKEN" \
             "${{ steps.api_url.outputs.url }}/products")
 
-
           echo "HTTP STATUS: $HTTP_STATUS"
 
-
           echo "RESPONSE:"
-
           cat /tmp/products-response.json
-
           echo ""
 
-
           if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
-
             echo "ERROR: GET /products smoke test failed."
-
             exit 1
-
           fi
-
 
           echo "GET /products smoke test passed."
 
 
       # ==========================================================
-      # 34. SMOKE TEST POST ORDER
+      # 35. SMOKE TEST POST ORDER
       # ==========================================================
 
       - name: Smoke Test - POST Order
 
         env:
-
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
 
         run: |
@@ -1075,7 +1077,6 @@ jobs:
           echo "=================================================="
           echo "SMOKE TEST - POST /orders"
           echo "=================================================="
-
 
           cat > /tmp/order.json <<'EOF'
           {
@@ -1089,7 +1090,6 @@ jobs:
           }
           EOF
 
-
           HTTP_STATUS=$(curl \
             --silent \
             --show-error \
@@ -1101,33 +1101,23 @@ jobs:
             --data @/tmp/order.json \
             "${{ steps.api_url.outputs.url }}/orders")
 
-
           echo "HTTP STATUS: $HTTP_STATUS"
 
-
           echo "RESPONSE:"
-
           cat /tmp/order-response.json
-
           echo ""
 
-
           if [ "$HTTP_STATUS" != "202" ]; then
-
             echo "ERROR: POST /orders smoke test failed."
-
             echo "Expected HTTP 202."
-
             exit 1
-
           fi
-
 
           echo "POST /orders smoke test passed."
 
 
       # ==========================================================
-      # 35. FINAL STACK STATUS
+      # 36. FINAL STACK STATUS
       # ==========================================================
 
       - name: Final CloudFormation Status
@@ -1144,7 +1134,6 @@ jobs:
           echo ""
           echo "===== NETWORK STACK ====="
 
-
           aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
@@ -1155,7 +1144,6 @@ jobs:
 
           echo ""
           echo "===== IAM STACK ====="
-
 
           aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
@@ -1168,7 +1156,6 @@ jobs:
           echo ""
           echo "===== AUTH STACK ====="
 
-
           aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name cloudmart-auth-stack \
@@ -1180,7 +1167,6 @@ jobs:
           echo ""
           echo "===== APPLICATION STACK ====="
 
-
           aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
             --stack-name cloudmart-api-stack \
@@ -1191,7 +1177,6 @@ jobs:
 
           echo ""
           echo "===== DATA STACK ====="
-
 
           aws cloudformation describe-stacks \
             --region "$AWS_REGION" \

@@ -14,24 +14,16 @@ Parameters:
     Default: cloudmart
     Description: CloudMart RDS database name
 
-
   DBUsername:
     Type: String
     Default: cloudmartadmin
     Description: CloudMart RDS master username
-
 
   DBPassword:
     Type: String
     NoEcho: true
     MinLength: 8
     Description: CloudMart RDS master password
-
-
-  OrdersTableName:
-    Type: String
-    Default: cloudmart-orders
-    Description: DynamoDB table for CloudMart orders
 
 
 # ================================================================
@@ -76,6 +68,7 @@ Resources:
   # Used for:
   #   Products
   #   Inventory
+  #   Orders
   #
   # RDS remains private inside the VPC.
   # ==============================================================
@@ -85,42 +78,29 @@ Resources:
 
     Properties:
 
-      # ------------------------------------------------------------
-      # DATABASE ENGINE
-      # ------------------------------------------------------------
+      Engine:
+        mysql
 
-      Engine: mysql
+      EngineVersion:
+        '8.0.46'
 
-      # Use the currently supported MySQL 8.0 minor version
-      # matching the RDS instance encountered during deployment.
-      EngineVersion: '8.0.46'
+      DBInstanceClass:
+        db.t3.micro
 
+      AllocatedStorage:
+        20
 
-      # ------------------------------------------------------------
-      # INSTANCE
-      # ------------------------------------------------------------
+      StorageType:
+        gp3
 
-      DBInstanceClass: db.t3.micro
+      StorageEncrypted:
+        true
 
-      AllocatedStorage: 20
+      MultiAZ:
+        false
 
-      StorageType: gp3
-
-      StorageEncrypted: true
-
-
-      # ------------------------------------------------------------
-      # AVAILABILITY
-      # ------------------------------------------------------------
-
-      MultiAZ: false
-
-      PubliclyAccessible: false
-
-
-      # ------------------------------------------------------------
-      # DATABASE CONFIGURATION
-      # ------------------------------------------------------------
+      PubliclyAccessible:
+        false
 
       DBName:
         !Ref DBName
@@ -131,43 +111,28 @@ Resources:
       MasterUserPassword:
         !Ref DBPassword
 
-      Port: 3306
-
-
-      # ------------------------------------------------------------
-      # SECURITY GROUP
-      # ------------------------------------------------------------
+      Port:
+        3306
 
       VPCSecurityGroups:
 
         - Fn::ImportValue:
             cloudmart-rds-sg
 
-
-      # ------------------------------------------------------------
-      # PRIVATE SUBNET GROUP
-      # ------------------------------------------------------------
-
       DBSubnetGroupName:
         !Ref RdsSubnetGroup
 
+      BackupRetentionPeriod:
+        0
 
-      # ------------------------------------------------------------
-      # BACKUP
-      # ------------------------------------------------------------
+      DeletionProtection:
+        false
 
-      BackupRetentionPeriod: 0
+      CopyTagsToSnapshot:
+        true
 
-      DeletionProtection: false
-
-      CopyTagsToSnapshot: true
-
-      AutoMinorVersionUpgrade: true
-
-
-      # ------------------------------------------------------------
-      # TAGS
-      # ------------------------------------------------------------
+      AutoMinorVersionUpgrade:
+        true
 
       Tags:
 
@@ -185,124 +150,12 @@ Resources:
 
 
   # ==============================================================
-  # DYNAMODB ORDERS TABLE
-  #
-  # Partition Key:
-  #   order_id
-  #
-  # GSI:
-  #   customer_id-index
-  #
-  # Used for:
-  #   POST /orders
-  #   GET /orders/{orderId}
-  #   GET orders by customer
-  # ==============================================================
-
-  OrdersTable:
-    Type: AWS::DynamoDB::Table
-
-    Properties:
-
-      TableName:
-        !Ref OrdersTableName
-
-
-      # ------------------------------------------------------------
-      # ON-DEMAND BILLING
-      # ------------------------------------------------------------
-
-      BillingMode: PAY_PER_REQUEST
-
-
-      # ------------------------------------------------------------
-      # ATTRIBUTES
-      #
-      # Only attributes used by keys are defined here.
-      # ------------------------------------------------------------
-
-      AttributeDefinitions:
-
-        - AttributeName: order_id
-          AttributeType: S
-
-        - AttributeName: customer_id
-          AttributeType: S
-
-
-      # ------------------------------------------------------------
-      # PRIMARY KEY
-      # ------------------------------------------------------------
-
-      KeySchema:
-
-        - AttributeName: order_id
-          KeyType: HASH
-
-
-      # ------------------------------------------------------------
-      # CUSTOMER ID GSI
-      # ------------------------------------------------------------
-
-      GlobalSecondaryIndexes:
-
-        - IndexName: customer_id-index
-
-          KeySchema:
-
-            - AttributeName: customer_id
-              KeyType: HASH
-
-          Projection:
-            ProjectionType: ALL
-
-
-      # ------------------------------------------------------------
-      # POINT-IN-TIME RECOVERY
-      # ------------------------------------------------------------
-
-      PointInTimeRecoverySpecification:
-
-        PointInTimeRecoveryEnabled: true
-
-
-      # ------------------------------------------------------------
-      # SERVER-SIDE ENCRYPTION
-      # ------------------------------------------------------------
-
-      SSESpecification:
-
-        SSEEnabled: true
-
-
-      # ------------------------------------------------------------
-      # TAGS
-      # ------------------------------------------------------------
-
-      Tags:
-
-        - Key: Name
-          Value: cloudmart-orders
-
-        - Key: Service
-          Value: CloudMart
-
-        - Key: DataType
-          Value: Orders
-
-        - Key: Environment
-          Value: dev
-
-
-  # ==============================================================
   # S3 BUCKET - REPORTS
-  #
-  # Used by:
   #
   # Report Lambda
   #       |
   #       v
-  #     S3
+  #      S3
   #       |
   #       v
   # EC2 Flask Dashboard
@@ -316,47 +169,33 @@ Resources:
       BucketName:
         !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
 
-
-      # ------------------------------------------------------------
-      # ENCRYPTION
-      # ------------------------------------------------------------
-
       BucketEncryption:
 
         ServerSideEncryptionConfiguration:
 
           - ServerSideEncryptionByDefault:
 
-              SSEAlgorithm: AES256
-
-
-      # ------------------------------------------------------------
-      # PUBLIC ACCESS BLOCK
-      # ------------------------------------------------------------
+              SSEAlgorithm:
+                AES256
 
       PublicAccessBlockConfiguration:
 
-        BlockPublicAcls: true
+        BlockPublicAcls:
+          true
 
-        BlockPublicPolicy: true
+        BlockPublicPolicy:
+          true
 
-        IgnorePublicAcls: true
+        IgnorePublicAcls:
+          true
 
-        RestrictPublicBuckets: true
-
-
-      # ------------------------------------------------------------
-      # VERSIONING
-      # ------------------------------------------------------------
+        RestrictPublicBuckets:
+          true
 
       VersioningConfiguration:
 
-        Status: Enabled
-
-
-      # ------------------------------------------------------------
-      # TAGS
-      # ------------------------------------------------------------
+        Status:
+          Enabled
 
       Tags:
 
@@ -375,15 +214,6 @@ Resources:
 
   # ==============================================================
   # S3 BUCKET - LAMBDA DEPLOYMENT ARTIFACTS
-  #
-  # GitHub Actions uploads:
-  #
-  # product/product-lambda-<commit>.zip
-  # order/order-lambda-<commit>.zip
-  # order-processor/order-processor-<commit>.zip
-  # report/report-lambda-<commit>.zip
-  #
-  # Application Stack then reads these objects.
   # ==============================================================
 
   LambdaArtifactsBucket:
@@ -394,47 +224,33 @@ Resources:
       BucketName:
         !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
 
-
-      # ------------------------------------------------------------
-      # ENCRYPTION
-      # ------------------------------------------------------------
-
       BucketEncryption:
 
         ServerSideEncryptionConfiguration:
 
           - ServerSideEncryptionByDefault:
 
-              SSEAlgorithm: AES256
-
-
-      # ------------------------------------------------------------
-      # PUBLIC ACCESS BLOCK
-      # ------------------------------------------------------------
+              SSEAlgorithm:
+                AES256
 
       PublicAccessBlockConfiguration:
 
-        BlockPublicAcls: true
+        BlockPublicAcls:
+          true
 
-        BlockPublicPolicy: true
+        BlockPublicPolicy:
+          true
 
-        IgnorePublicAcls: true
+        IgnorePublicAcls:
+          true
 
-        RestrictPublicBuckets: true
-
-
-      # ------------------------------------------------------------
-      # VERSIONING
-      # ------------------------------------------------------------
+        RestrictPublicBuckets:
+          true
 
       VersioningConfiguration:
 
-        Status: Enabled
-
-
-      # ------------------------------------------------------------
-      # TAGS
-      # ------------------------------------------------------------
+        Status:
+          Enabled
 
       Tags:
 
@@ -473,6 +289,23 @@ Outputs:
     Export:
       Name:
         cloudmart-database-identifier
+
+
+  # ==============================================================
+  # RDS DATABASE RESOURCE ID
+  # ==============================================================
+
+  DatabaseResourceId:
+
+    Description:
+      RDS MySQL DB Resource ID
+
+    Value:
+      !GetAtt CloudMartDatabase.DbiResourceId
+
+    Export:
+      Name:
+        cloudmart-database-resource-id
 
 
   # ==============================================================
@@ -561,40 +394,6 @@ Outputs:
 
 
   # ==============================================================
-  # DYNAMODB ORDERS TABLE NAME
-  # ==============================================================
-
-  OrdersTableName:
-
-    Description:
-      DynamoDB Orders Table Name
-
-    Value:
-      !Ref OrdersTable
-
-    Export:
-      Name:
-        cloudmart-orders-table-name
-
-
-  # ==============================================================
-  # DYNAMODB ORDERS TABLE ARN
-  # ==============================================================
-
-  OrdersTableArn:
-
-    Description:
-      DynamoDB Orders Table ARN
-
-    Value:
-      !GetAtt OrdersTable.Arn
-
-    Export:
-      Name:
-        cloudmart-orders-table-arn
-
-
-  # ==============================================================
   # REPORTS S3 BUCKET
   # ==============================================================
 
@@ -652,7 +451,7 @@ Outputs:
   LambdaBucketArn:
 
     Description:
-      ARN of the Lambda deployment artifacts bucket
+      ARN of the CloudMart Lambda deployment bucket
 
     Value:
       !GetAtt LambdaArtifactsBucket.Arn

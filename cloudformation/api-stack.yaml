@@ -154,6 +154,9 @@ Resources:
 
   ############################################################
   # ORDER LAMBDA
+  #
+  # Order data is stored in RDS MySQL.
+  # SQS is used for asynchronous processing.
   ############################################################
 
   OrderLambda:
@@ -195,8 +198,20 @@ Resources:
 
         Variables:
 
-          ORDERS_TABLE:
-            Fn::ImportValue: cloudmart-orders-table-name
+          DB_HOST:
+            Fn::ImportValue: cloudmart-database-endpoint
+
+          DB_NAME:
+            Fn::ImportValue: cloudmart-database-name
+
+          DB_USER:
+            Fn::ImportValue: cloudmart-database-username
+
+          DB_PASSWORD:
+            !Ref DBPassword
+
+          DB_PORT:
+            "3306"
 
           ORDER_QUEUE_URL:
             !Ref OrderQueue
@@ -215,6 +230,9 @@ Resources:
 
   ############################################################
   # ORDER PROCESSING LAMBDA
+  #
+  # Reads order messages from SQS.
+  # Reads and updates Orders, Products and Inventory in RDS.
   ############################################################
 
   OrderProcessorLambda:
@@ -271,9 +289,6 @@ Resources:
           DB_PORT:
             "3306"
 
-          ORDERS_TABLE:
-            Fn::ImportValue: cloudmart-orders-table-name
-
           ENVIRONMENT:
             !Ref EnvironmentName
 
@@ -287,7 +302,7 @@ Resources:
 
 
   ############################################################
-  # SQS → ORDER PROCESSING LAMBDA
+  # SQS -> ORDER PROCESSING LAMBDA
   ############################################################
 
   OrderProcessorEventSource:
@@ -651,6 +666,9 @@ Resources:
 
   ############################################################
   # REPORT LAMBDA
+  #
+  # Reads Orders, Products and Inventory from RDS.
+  # Generates report in S3.
   ############################################################
 
   ReportLambda:
@@ -695,8 +713,20 @@ Resources:
           REPORTS_BUCKET:
             Fn::ImportValue: cloudmart-reports-bucket
 
-          ORDERS_TABLE:
-            Fn::ImportValue: cloudmart-orders-table-name
+          DB_HOST:
+            Fn::ImportValue: cloudmart-database-endpoint
+
+          DB_NAME:
+            Fn::ImportValue: cloudmart-database-name
+
+          DB_USER:
+            Fn::ImportValue: cloudmart-database-username
+
+          DB_PASSWORD:
+            !Ref DBPassword
+
+          DB_PORT:
+            "3306"
 
           ENVIRONMENT:
             !Ref EnvironmentName
@@ -741,7 +771,7 @@ Resources:
 
 
   ############################################################
-  # EVENTBRIDGE → REPORT LAMBDA PERMISSION
+  # EVENTBRIDGE -> REPORT LAMBDA PERMISSION
   ############################################################
 
   ReportLambdaPermission:
@@ -1325,7 +1355,7 @@ Resources:
 
 
   ############################################################
-  # API GATEWAY → AUTHORIZER PERMISSION
+  # API GATEWAY -> AUTHORIZER PERMISSION
   ############################################################
 
   AuthorizerLambdaPermission:
@@ -1347,7 +1377,7 @@ Resources:
 
 
   ############################################################
-  # API GATEWAY → PRODUCT LAMBDA
+  # API GATEWAY -> PRODUCT LAMBDA
   ############################################################
 
   ProductLambdaPermission:
@@ -1369,7 +1399,7 @@ Resources:
 
 
   ############################################################
-  # API GATEWAY → ORDER LAMBDA
+  # API GATEWAY -> ORDER LAMBDA
   ############################################################
 
   OrderLambdaApiPermission:

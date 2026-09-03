@@ -2,7 +2,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart IAM Stack
 
-
 #################################################
 # PARAMETERS
 #################################################
@@ -12,18 +11,15 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: dev
-
     AllowedValues:
       - dev
       - prod
-
 
 #################################################
 # RESOURCES
 #################################################
 
 Resources:
-
 
   #################################################
   # AUTHORIZER LAMBDA ROLE
@@ -38,11 +34,9 @@ Resources:
         !Sub cloudmart-authorizer-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
-
         Version: '2012-10-17'
 
         Statement:
-
           - Effect: Allow
 
             Principal:
@@ -53,7 +47,6 @@ Resources:
               - sts:AssumeRole
 
       ManagedPolicyArns:
-
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
@@ -61,7 +54,6 @@ Resources:
         - PolicyName: AuthorizerSSMPolicy
 
           PolicyDocument:
-
             Version: '2012-10-17'
 
             Statement:
@@ -90,11 +82,9 @@ Resources:
         !Sub cloudmart-product-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
-
         Version: '2012-10-17'
 
         Statement:
-
           - Effect: Allow
 
             Principal:
@@ -105,7 +95,6 @@ Resources:
               - sts:AssumeRole
 
       ManagedPolicyArns:
-
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
@@ -113,17 +102,13 @@ Resources:
         - PolicyName: ProductPolicy
 
           PolicyDocument:
-
             Version: '2012-10-17'
 
             Statement:
 
-
               #################################################
               # EVENTBRIDGE
-              #
-              # Product Lambda publishes InventoryChanged
-              # events after inventory changes.
+              # Product Lambda publishes inventory events
               #################################################
 
               - Sid: PublishInventoryEvents
@@ -146,7 +131,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
@@ -156,9 +140,7 @@ Resources:
                 Resource: "*"
 
                 Condition:
-
                   StringEquals:
-
                     aws:RequestedRegion:
                       - !Ref AWS::Region
 
@@ -177,9 +159,7 @@ Resources:
                 Resource: "*"
 
                 Condition:
-
                   StringEquals:
-
                     cloudwatch:namespace:
                       - CloudMart/Application
 
@@ -197,11 +177,9 @@ Resources:
         !Sub cloudmart-order-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
-
         Version: '2012-10-17'
 
         Statement:
-
           - Effect: Allow
 
             Principal:
@@ -212,7 +190,6 @@ Resources:
               - sts:AssumeRole
 
       ManagedPolicyArns:
-
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
@@ -220,11 +197,9 @@ Resources:
         - PolicyName: OrderPolicy
 
           PolicyDocument:
-
             Version: '2012-10-17'
 
             Statement:
-
 
               #################################################
               # DYNAMODB - ORDERS TABLE
@@ -235,7 +210,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - dynamodb:GetItem
                   - dynamodb:PutItem
                   - dynamodb:Query
@@ -280,9 +254,7 @@ Resources:
                 Resource: "*"
 
                 Condition:
-
                   StringEquals:
-
                     cloudwatch:namespace:
                       - CloudMart/Application
 
@@ -296,7 +268,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
@@ -306,9 +277,7 @@ Resources:
                 Resource: "*"
 
                 Condition:
-
                   StringEquals:
-
                     aws:RequestedRegion:
                       - !Ref AWS::Region
 
@@ -326,11 +295,9 @@ Resources:
         !Sub cloudmart-order-processing-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
-
         Version: '2012-10-17'
 
         Statement:
-
           - Effect: Allow
 
             Principal:
@@ -341,7 +308,6 @@ Resources:
               - sts:AssumeRole
 
       ManagedPolicyArns:
-
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
@@ -349,11 +315,9 @@ Resources:
         - PolicyName: OrderProcessingPolicy
 
           PolicyDocument:
-
             Version: '2012-10-17'
 
             Statement:
-
 
               #################################################
               # SQS - CONSUME ONLY
@@ -364,7 +328,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
@@ -382,7 +345,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - dynamodb:GetItem
                   - dynamodb:UpdateItem
 
@@ -419,9 +381,7 @@ Resources:
                 Resource: "*"
 
                 Condition:
-
                   StringEquals:
-
                     cloudwatch:namespace:
                       - CloudMart/Application
 
@@ -435,7 +395,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
@@ -445,9 +404,7 @@ Resources:
                 Resource: "*"
 
                 Condition:
-
                   StringEquals:
-
                     aws:RequestedRegion:
                       - !Ref AWS::Region
 
@@ -465,11 +422,9 @@ Resources:
         !Sub cloudmart-report-role-${EnvironmentName}
 
       AssumeRolePolicyDocument:
-
         Version: '2012-10-17'
 
         Statement:
-
           - Effect: Allow
 
             Principal:
@@ -480,7 +435,6 @@ Resources:
               - sts:AssumeRole
 
       ManagedPolicyArns:
-
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
       Policies:
@@ -488,11 +442,9 @@ Resources:
         - PolicyName: ReportingPolicy
 
           PolicyDocument:
-
             Version: '2012-10-17'
 
             Statement:
-
 
               #################################################
               # S3 - REPORTS BUCKET
@@ -503,17 +455,30 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - s3:GetObject
                   - s3:PutObject
 
                 Resource:
-
                   Fn::Sub:
                     - ${ReportsBucketArn}/*
                     - ReportsBucketArn:
                         Fn::ImportValue:
                           cloudmart-reports-bucket-arn
+
+
+              #################################################
+              # S3 - BUCKET ACCESS
+              #################################################
+
+              - Sid: ListReportsBucket
+
+                Effect: Allow
+
+                Action:
+                  - s3:ListBucket
+
+                Resource:
+                  Fn::ImportValue: cloudmart-reports-bucket-arn
 
 
               #################################################
@@ -526,6 +491,7 @@ Resources:
 
                 Action:
                   - dynamodb:Scan
+                  - dynamodb:GetItem
 
                 Resource:
                   Fn::ImportValue: cloudmart-orders-table-arn
@@ -540,7 +506,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
@@ -550,9 +515,7 @@ Resources:
                 Resource: "*"
 
                 Condition:
-
                   StringEquals:
-
                     aws:RequestedRegion:
                       - !Ref AWS::Region
 
@@ -562,7 +525,6 @@ Resources:
 #################################################
 
 Outputs:
-
 
   #################################################
   # AUTHORIZER ROLE ARN

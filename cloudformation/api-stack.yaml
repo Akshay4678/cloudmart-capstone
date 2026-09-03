@@ -16,6 +16,7 @@ Parameters:
   DBPassword:
     Type: String
     NoEcho: true
+    MinLength: 8
     Description: CloudMart RDS master password
 
   EnvironmentName:
@@ -57,6 +58,8 @@ Resources:
 
       Timeout: 15
 
+      MemorySize: 256
+
       VpcConfig:
 
         SubnetIds:
@@ -88,7 +91,8 @@ Resources:
           DB_PASSWORD:
             !Ref DBPassword
 
-          DB_PORT: "3306"
+          DB_PORT:
+            "3306"
 
           ENVIRONMENT:
             !Ref EnvironmentName
@@ -146,8 +150,8 @@ Resources:
   # ==============================================================
   # ORDER LAMBDA
   #
-  # Order data is stored in RDS MySQL.
-  # SQS is used for asynchronous processing.
+  # Stores orders in RDS MySQL.
+  # Sends asynchronous processing request to SQS.
   # ==============================================================
 
   OrderLambda:
@@ -167,6 +171,8 @@ Resources:
 
       Timeout: 15
 
+      MemorySize: 256
+
       VpcConfig:
 
         SubnetIds:
@@ -198,7 +204,8 @@ Resources:
           DB_PASSWORD:
             !Ref DBPassword
 
-          DB_PORT: "3306"
+          DB_PORT:
+            "3306"
 
           ORDER_QUEUE_URL:
             !Ref OrderQueue
@@ -218,8 +225,9 @@ Resources:
   # ==============================================================
   # ORDER PROCESSING LAMBDA
   #
-  # Reads order messages from SQS.
+  # Reads messages from SQS.
   # Reads and updates Orders, Products and Inventory in RDS.
+  # Publishes order events to EventBridge.
   # ==============================================================
 
   OrderProcessorLambda:
@@ -238,6 +246,8 @@ Resources:
         Fn::ImportValue: cloudmart-order-processing-role-arn
 
       Timeout: 30
+
+      MemorySize: 256
 
       VpcConfig:
 
@@ -270,7 +280,8 @@ Resources:
           DB_PASSWORD:
             !Ref DBPassword
 
-          DB_PORT: "3306"
+          DB_PORT:
+            "3306"
 
           ENVIRONMENT:
             !Ref EnvironmentName
@@ -318,7 +329,7 @@ Resources:
 
 
   # ==============================================================
-  # LOW STOCK EMAIL
+  # LOW STOCK EMAIL SUBSCRIPTION
   # ==============================================================
 
   LowStockEmailSubscription:
@@ -625,7 +636,7 @@ Resources:
   # REPORT LAMBDA
   #
   # Reads Orders, Products and Inventory from RDS.
-  # Generates report in S3.
+  # Writes daily report to S3.
   # ==============================================================
 
   ReportLambda:
@@ -644,6 +655,8 @@ Resources:
         Fn::ImportValue: cloudmart-report-role-arn
 
       Timeout: 60
+
+      MemorySize: 256
 
       VpcConfig:
 
@@ -679,7 +692,8 @@ Resources:
           DB_PASSWORD:
             !Ref DBPassword
 
-          DB_PORT: "3306"
+          DB_PORT:
+            "3306"
 
           ENVIRONMENT:
             !Ref EnvironmentName
@@ -743,7 +757,7 @@ Resources:
 
 
   # ==============================================================
-  # API GATEWAY
+  # API GATEWAY REST API
   # ==============================================================
 
   CloudMartApi:
@@ -753,6 +767,11 @@ Resources:
 
       Name:
         !Sub cloudmart-api-${EnvironmentName}
+
+      EndpointConfiguration:
+
+        Types:
+          - REGIONAL
 
 
   # ==============================================================
@@ -1266,7 +1285,8 @@ Resources:
 
     Properties:
 
-      Action: lambda:InvokeFunction
+      Action:
+        lambda:InvokeFunction
 
       FunctionName:
         Fn::ImportValue: cloudmart-authorizer-lambda-arn
@@ -1287,7 +1307,8 @@ Resources:
 
     Properties:
 
-      Action: lambda:InvokeFunction
+      Action:
+        lambda:InvokeFunction
 
       FunctionName:
         !Ref ProductLambda
@@ -1308,7 +1329,8 @@ Resources:
 
     Properties:
 
-      Action: lambda:InvokeFunction
+      Action:
+        lambda:InvokeFunction
 
       FunctionName:
         !Ref OrderLambda
@@ -1396,7 +1418,7 @@ Resources:
 
       Namespace: CloudMart/Application
 
-      MetricName: OrderProcessingFailures
+      MetricName: OrdersProcessingFailures
 
       Dimensions:
 

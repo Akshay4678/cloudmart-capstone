@@ -1,6 +1,6 @@
-import os
 import csv
 import io
+import os
 from datetime import datetime, timezone
 
 import boto3
@@ -8,8 +8,18 @@ import pymysql
 
 
 # ================================================================
-# CONFIGURATION
+# AWS CLIENTS
 # ================================================================
+
+s3 = boto3.client("s3")
+cloudwatch = boto3.client("cloudwatch")
+
+
+# ================================================================
+# ENVIRONMENT
+# ================================================================
+
+REPORTS_BUCKET = os.environ["REPORTS_BUCKET"]
 
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
@@ -17,16 +27,11 @@ DB_USER = os.environ["DB_USER"]
 DB_PASSWORD = os.environ["DB_PASSWORD"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
-REPORTS_BUCKET = os.environ["REPORTS_BUCKET"]
-
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
-
-s3 = boto3.client("s3")
-cloudwatch = boto3.client("cloudwatch")
 
 
 # ================================================================
-# DATABASE CONNECTION
+# DATABASE
 # ================================================================
 
 def get_connection():
@@ -38,18 +43,18 @@ def get_connection():
         database=DB_NAME,
         port=DB_PORT,
         connect_timeout=5,
-        read_timeout=15,
-        write_timeout=15,
+        read_timeout=20,
+        write_timeout=20,
         cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True,
+        autocommit=True
     )
 
 
 # ================================================================
-# CLOUDWATCH METRIC
+# METRICS
 # ================================================================
 
-def put_metric(metric_name, value=1):
+def put_metric():
 
     try:
 
@@ -57,28 +62,26 @@ def put_metric(metric_name, value=1):
             Namespace="CloudMart/Application",
             MetricData=[
                 {
-                    "MetricName": metric_name,
+                    "MetricName": "ReportsGenerated",
+                    "Value": 1,
+                    "Unit": "Count",
                     "Dimensions": [
                         {
                             "Name": "Environment",
-                            "Value": ENVIRONMENT,
+                            "Value": ENVIRONMENT
                         },
                         {
                             "Name": "Service",
-                            "Value": "Report",
-                        },
-                    ],
-                    "Value": value,
-                    "Unit": "Count",
+                            "Value": "Report"
+                        }
+                    ]
                 }
-            ],
+            ]
         )
 
     except Exception as exc:
 
-        print(
-            f"Metric publishing failed: {type(exc).__name__}"
-        )
+        print(f"Metric error: {exc}")
 
 
 # ================================================================
@@ -93,16 +96,8 @@ def generate_report():
 
         connection = get_connection()
 
-        report_date = datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d")
-
-        generated_at = datetime.now(
-            timezone.utc
-        ).isoformat()
-
         # --------------------------------------------------------
-        # ORDERS
+        # Orders summary
         # --------------------------------------------------------
 
         with connection.cursor() as cursor:
@@ -110,21 +105,55 @@ def generate_report():
             cursor.execute(
                 """
                 SELECT
-                    order_id,
-                    customer_id,
-                    status,
-                    total_amount,
-                    created_at,
-                    updated_at
+                    COUNT(*) AS total_orders,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'CONFIRMED'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS confirmed_orders,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'FAILED'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS failed_orders,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'CANCELLED'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS cancelled_orders,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'CONFIRMED'
+                                THEN total_amount
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS total_revenue
                 FROM orders
-                ORDER BY created_at DESC
                 """
             )
 
-            orders = cursor.fetchall()
+            order_summary = cursor.fetchone()
 
         # --------------------------------------------------------
-        # PRODUCTS
+        # Products summary
         # --------------------------------------------------------
 
         with connection.cursor() as cursor:
@@ -132,23 +161,29 @@ def generate_report():
             cursor.execute(
                 """
                 SELECT
-                    product_id,
-                    product_name,
-                    category,
-                    price,
-                    stock_count,
-                    status,
-                    created_at,
-                    updated_at
+                    COUNT(*) AS total_products,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN active = 1
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS active_products,
+                    COALESCE(
+                        SUM(stock_count),
+                        0
+                    ) AS total_stock
                 FROM products
-                ORDER BY product_id
                 """
             )
 
-            products = cursor.fetchall()
+            product_summary = cursor.fetchone()
 
         # --------------------------------------------------------
-        # INVENTORY
+        # Low stock products
         # --------------------------------------------------------
 
         with connection.cursor() as cursor:
@@ -156,104 +191,25 @@ def generate_report():
             cursor.execute(
                 """
                 SELECT
-                    product_id,
-                    quantity,
-                    updated_at
-                FROM inventory
-                ORDER BY product_id
+                    id,
+                    name,
+                    stock_count
+                FROM products
+                WHERE active = 1
+                  AND stock_count <= 5
+                ORDER BY stock_count ASC
                 """
             )
 
-            inventory = cursor.fetchall()
+            low_stock_products = cursor.fetchall()
 
         # --------------------------------------------------------
-        # SUMMARY
-        # --------------------------------------------------------
-
-        total_orders = len(orders)
-
-        confirmed_orders = sum(
-            1
-            for order in orders
-            if order["status"] == "CONFIRMED"
-        )
-
-        processing_orders = sum(
-            1
-            for order in orders
-            if order["status"] == "PROCESSING"
-        )
-
-        failed_orders = sum(
-            1
-            for order in orders
-            if order["status"] == "FAILED"
-        )
-
-        cancelled_orders = sum(
-            1
-            for order in orders
-            if order["status"] == "CANCELLED"
-        )
-
-        total_sales = sum(
-            float(order["total_amount"] or 0)
-            for order in orders
-            if order["status"] == "CONFIRMED"
-        )
-
-        low_stock_products = sum(
-            1
-            for item in inventory
-            if int(item["quantity"]) <= 5
-        )
-
-        # --------------------------------------------------------
-        # CSV
+        # Generate CSV
         # --------------------------------------------------------
 
         output = io.StringIO()
 
         writer = csv.writer(output)
-
-        writer.writerow(
-            [
-                "CloudMart Daily Report"
-            ]
-        )
-
-        writer.writerow(
-            [
-                "Environment",
-                ENVIRONMENT
-            ]
-        )
-
-        writer.writerow(
-            [
-                "Report Date",
-                report_date
-            ]
-        )
-
-        writer.writerow(
-            [
-                "Generated At",
-                generated_at
-            ]
-        )
-
-        writer.writerow([])
-
-        # --------------------------------------------------------
-        # SUMMARY SECTION
-        # --------------------------------------------------------
-
-        writer.writerow(
-            [
-                "SUMMARY"
-            ]
-        )
 
         writer.writerow(
             [
@@ -264,98 +220,74 @@ def generate_report():
 
         writer.writerow(
             [
+                "Report Date",
+                datetime.now(
+                    timezone.utc
+                ).strftime("%Y-%m-%d")
+            ]
+        )
+
+        writer.writerow(
+            [
                 "Total Orders",
-                total_orders
+                order_summary["total_orders"]
             ]
         )
 
         writer.writerow(
             [
                 "Confirmed Orders",
-                confirmed_orders
-            ]
-        )
-
-        writer.writerow(
-            [
-                "Processing Orders",
-                processing_orders
+                order_summary["confirmed_orders"]
             ]
         )
 
         writer.writerow(
             [
                 "Failed Orders",
-                failed_orders
+                order_summary["failed_orders"]
             ]
         )
 
         writer.writerow(
             [
                 "Cancelled Orders",
-                cancelled_orders
+                order_summary["cancelled_orders"]
             ]
         )
 
         writer.writerow(
             [
-                "Total Sales",
-                f"{total_sales:.2f}"
+                "Total Revenue",
+                order_summary["total_revenue"]
             ]
         )
 
         writer.writerow(
             [
-                "Low Stock Products",
-                low_stock_products
+                "Total Products",
+                product_summary["total_products"]
+            ]
+        )
+
+        writer.writerow(
+            [
+                "Active Products",
+                product_summary["active_products"]
+            ]
+        )
+
+        writer.writerow(
+            [
+                "Total Stock",
+                product_summary["total_stock"]
             ]
         )
 
         writer.writerow([])
 
-        # --------------------------------------------------------
-        # ORDERS SECTION
-        # --------------------------------------------------------
-
         writer.writerow(
             [
-                "ORDERS"
-            ]
-        )
-
-        writer.writerow(
-            [
-                "Order ID",
-                "Customer ID",
-                "Status",
-                "Total Amount",
-                "Created At",
-                "Updated At",
-            ]
-        )
-
-        for order in orders:
-
-            writer.writerow(
-                [
-                    order["order_id"],
-                    order["customer_id"],
-                    order["status"],
-                    order["total_amount"],
-                    order["created_at"],
-                    order["updated_at"],
-                ]
-            )
-
-        writer.writerow([])
-
-        # --------------------------------------------------------
-        # PRODUCTS SECTION
-        # --------------------------------------------------------
-
-        writer.writerow(
-            [
-                "PRODUCTS"
+                "Low Stock Products"
             ]
         )
 
@@ -363,95 +295,57 @@ def generate_report():
             [
                 "Product ID",
                 "Product Name",
-                "Category",
-                "Price",
-                "Stock Count",
-                "Status",
-                "Created At",
-                "Updated At",
+                "Stock Count"
             ]
         )
 
-        for product in products:
+        for product in low_stock_products:
 
             writer.writerow(
                 [
-                    product["product_id"],
-                    product["product_name"],
-                    product["category"],
-                    product["price"],
-                    product["stock_count"],
-                    product["status"],
-                    product["created_at"],
-                    product["updated_at"],
+                    product["id"],
+                    product["name"],
+                    product["stock_count"]
                 ]
             )
 
-        writer.writerow([])
+        report_date = datetime.now(
+            timezone.utc
+        ).strftime("%Y-%m-%d")
 
-        # --------------------------------------------------------
-        # INVENTORY SECTION
-        # --------------------------------------------------------
-
-        writer.writerow(
-            [
-                "INVENTORY"
-            ]
-        )
-
-        writer.writerow(
-            [
-                "Product ID",
-                "Quantity",
-                "Updated At",
-            ]
-        )
-
-        for item in inventory:
-
-            writer.writerow(
-                [
-                    item["product_id"],
-                    item["quantity"],
-                    item["updated_at"],
-                ]
-            )
-
-        # --------------------------------------------------------
-        # UPLOAD TO S3
-        # --------------------------------------------------------
-
-        object_key = (
+        key = (
             f"daily-reports/"
             f"cloudmart-report-{report_date}.csv"
         )
 
+        # --------------------------------------------------------
+        # Upload report
+        # --------------------------------------------------------
+
         s3.put_object(
             Bucket=REPORTS_BUCKET,
-            Key=object_key,
+            Key=key,
             Body=output.getvalue().encode("utf-8"),
-            ContentType="text/csv",
+            ContentType="text/csv"
         )
 
-        put_metric("ReportsGenerated")
+        put_metric()
 
         print(
-            f"Report generated successfully: {object_key}"
+            f"Report generated successfully: "
+            f"s3://{REPORTS_BUCKET}/{key}"
         )
 
         return {
+            "status": "SUCCESS",
             "bucket": REPORTS_BUCKET,
-            "key": object_key,
-            "report_date": report_date,
-            "total_orders": total_orders,
-            "confirmed_orders": confirmed_orders,
-            "failed_orders": failed_orders,
-            "total_sales": total_sales,
+            "key": key
         }
 
     finally:
 
         if connection:
+
             connection.close()
 
 
@@ -461,23 +355,18 @@ def generate_report():
 
 def lambda_handler(event, context):
 
-    print(
-        "CloudMart Report Lambda started"
-    )
+    print("Report Lambda started")
 
     try:
 
         result = generate_report()
 
-        return {
-            "statusCode": 200,
-            "body": result,
-        }
+        return result
 
     except Exception as exc:
 
         print(
-            f"Report generation failed: {type(exc).__name__}"
+            f"Report generation failed: {exc}"
         )
 
         raise

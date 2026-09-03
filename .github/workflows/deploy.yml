@@ -10,6 +10,7 @@ on:
   workflow_dispatch:
 
   push:
+
     branches:
       - M3-redobranch
 
@@ -25,7 +26,7 @@ permissions:
 
 
 # ================================================================
-# JOBS
+# JOB
 # ================================================================
 
 jobs:
@@ -37,24 +38,25 @@ jobs:
     env:
 
       AWS_REGION: ap-south-1
+
       ENVIRONMENT_NAME: dev
 
 
     steps:
 
 
-      # ============================================================
-      # 1. CHECKOUT REPOSITORY
-      # ============================================================
+      # ==========================================================
+      # 1. CHECKOUT
+      # ==========================================================
 
       - name: Checkout Repository
 
         uses: actions/checkout@v4
 
 
-      # ============================================================
-      # 2. CONFIGURE AWS CREDENTIALS
-      # ============================================================
+      # ==========================================================
+      # 2. AWS CREDENTIALS
+      # ==========================================================
 
       - name: Configure AWS Credentials
 
@@ -67,9 +69,9 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
 
-      # ============================================================
+      # ==========================================================
       # 3. VERIFY AWS ACCESS
-      # ============================================================
+      # ==========================================================
 
       - name: Verify AWS Access
 
@@ -82,22 +84,24 @@ jobs:
           aws sts get-caller-identity
 
 
-      # ============================================================
-      # 4. CHECK REQUIRED GITHUB SECRETS
-      # ============================================================
+      # ==========================================================
+      # 4. CHECK REQUIRED SECRETS
+      # ==========================================================
 
       - name: Check Required Secrets
 
         env:
 
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
         run: |
 
           echo "=================================================="
-          echo "CHECKING REQUIRED GITHUB SECRETS"
+          echo "CHECKING REQUIRED SECRETS"
           echo "=================================================="
 
 
@@ -131,27 +135,22 @@ jobs:
           echo "Required secrets are configured."
 
 
-      # ============================================================
+      # ==========================================================
       # 5. INSTALL CFN-LINT
-      # ============================================================
+      # ==========================================================
 
       - name: Install cfn-lint
 
         run: |
-
-          echo "=================================================="
-          echo "INSTALLING CFN-LINT"
-          echo "=================================================="
-
 
           python -m pip install --upgrade pip
 
           pip install cfn-lint
 
 
-      # ============================================================
-      # 6. VALIDATE NETWORK STACK
-      # ============================================================
+      # ==========================================================
+      # 6. VALIDATE NETWORK
+      # ==========================================================
 
       - name: Validate Network Stack
 
@@ -175,9 +174,9 @@ jobs:
           echo "Network stack validation passed."
 
 
-      # ============================================================
-      # 7. VALIDATE DATA STACK
-      # ============================================================
+      # ==========================================================
+      # 7. VALIDATE DATA
+      # ==========================================================
 
       - name: Validate Data Stack
 
@@ -201,9 +200,9 @@ jobs:
           echo "Data stack validation passed."
 
 
-      # ============================================================
-      # 8. VALIDATE IAM STACK
-      # ============================================================
+      # ==========================================================
+      # 8. VALIDATE IAM
+      # ==========================================================
 
       - name: Validate IAM Stack
 
@@ -227,9 +226,9 @@ jobs:
           echo "IAM stack validation passed."
 
 
-      # ============================================================
-      # 9. VALIDATE AUTH STACK
-      # ============================================================
+      # ==========================================================
+      # 9. VALIDATE AUTH
+      # ==========================================================
 
       - name: Validate Auth Stack
 
@@ -253,9 +252,9 @@ jobs:
           echo "Auth stack validation passed."
 
 
-      # ============================================================
-      # 10. VALIDATE APPLICATION STACK
-      # ============================================================
+      # ==========================================================
+      # 10. VALIDATE API
+      # ==========================================================
 
       - name: Validate Application Stack
 
@@ -279,89 +278,68 @@ jobs:
           echo "Application stack validation passed."
 
 
-      # ============================================================
-      # 11. CHECK LAMBDA SOURCE FILES
-      # ============================================================
+      # ==========================================================
+      # 11. CHECK LAMBDA FILES
+      # ==========================================================
 
       - name: Check Lambda Source Files
 
         run: |
 
           echo "=================================================="
-          echo "CHECKING PRODUCT LAMBDA"
+          echo "CHECKING LAMBDA SOURCE FILES"
           echo "=================================================="
 
 
           test -f lambda/product/lambda_function.py
           test -f lambda/product/requirements.txt
 
-          ls -la lambda/product/
-
-
-          echo "=================================================="
-          echo "CHECKING ORDER LAMBDA"
-          echo "=================================================="
-
 
           test -f lambda/order/lambda_function.py
           test -f lambda/order/requirements.txt
-
-          ls -la lambda/order/
-
-
-          echo "=================================================="
-          echo "CHECKING ORDER PROCESSOR LAMBDA"
-          echo "=================================================="
 
 
           test -f lambda/order_processor/lambda_function.py
           test -f lambda/order_processor/requirements.txt
 
-          ls -la lambda/order_processor/
-
-
-          echo "=================================================="
-          echo "CHECKING REPORT LAMBDA"
-          echo "=================================================="
-
 
           test -f lambda/report/lambda_function.py
           test -f lambda/report/requirements.txt
-
-          ls -la lambda/report/
 
 
           echo "All Lambda source files are present."
 
 
-      # ============================================================
-      # 12. PACKAGE LAMBDA FUNCTIONS
-      # ============================================================
+      # ==========================================================
+      # 12. PACKAGE LAMBDAS
+      # ==========================================================
 
       - name: Package Lambda Functions
 
         run: |
 
           echo "=================================================="
-          echo "BUILDING LAMBDA PACKAGES"
+          echo "PACKAGING LAMBDA FUNCTIONS"
           echo "=================================================="
 
 
           rm -rf build
 
+
           mkdir -p build/product
+
           mkdir -p build/order
+
           mkdir -p build/order_processor
+
           mkdir -p build/report
 
 
-          # ========================================================
-          # PRODUCT LAMBDA
-          # ========================================================
+          # ------------------------------------------------------
+          # PRODUCT
+          # ------------------------------------------------------
 
-          echo "=================================================="
-          echo "PACKAGING PRODUCT LAMBDA"
-          echo "=================================================="
+          echo "Packaging Product Lambda..."
 
 
           cp \
@@ -378,20 +356,18 @@ jobs:
 
 
           zip -r \
-            ../../build/product-lambda-${{ github.sha }}.zip \
+            ../product-lambda-${{ github.sha }}.zip \
             .
 
 
           cd ../..
 
 
-          # ========================================================
-          # ORDER LAMBDA
-          # ========================================================
+          # ------------------------------------------------------
+          # ORDER
+          # ------------------------------------------------------
 
-          echo "=================================================="
-          echo "PACKAGING ORDER LAMBDA"
-          echo "=================================================="
+          echo "Packaging Order Lambda..."
 
 
           cp \
@@ -408,20 +384,18 @@ jobs:
 
 
           zip -r \
-            ../../build/order-lambda-${{ github.sha }}.zip \
+            ../order-lambda-${{ github.sha }}.zip \
             .
 
 
           cd ../..
 
 
-          # ========================================================
-          # ORDER PROCESSOR LAMBDA
-          # ========================================================
+          # ------------------------------------------------------
+          # ORDER PROCESSOR
+          # ------------------------------------------------------
 
-          echo "=================================================="
-          echo "PACKAGING ORDER PROCESSOR LAMBDA"
-          echo "=================================================="
+          echo "Packaging Order Processor Lambda..."
 
 
           cp \
@@ -438,20 +412,18 @@ jobs:
 
 
           zip -r \
-            ../../build/order-processor-${{ github.sha }}.zip \
+            ../order-processor-${{ github.sha }}.zip \
             .
 
 
           cd ../..
 
 
-          # ========================================================
-          # REPORT LAMBDA
-          # ========================================================
+          # ------------------------------------------------------
+          # REPORT
+          # ------------------------------------------------------
 
-          echo "=================================================="
-          echo "PACKAGING REPORT LAMBDA"
-          echo "=================================================="
+          echo "Packaging Report Lambda..."
 
 
           cp \
@@ -468,7 +440,7 @@ jobs:
 
 
           zip -r \
-            ../../build/report-lambda-${{ github.sha }}.zip \
+            ../report-lambda-${{ github.sha }}.zip \
             .
 
 
@@ -478,9 +450,9 @@ jobs:
           echo "All Lambda packages created."
 
 
-      # ============================================================
-      # 13. VERIFY LAMBDA PACKAGES
-      # ============================================================
+      # ==========================================================
+      # 13. VERIFY PACKAGES
+      # ==========================================================
 
       - name: Verify Lambda Packages
 
@@ -492,12 +464,6 @@ jobs:
 
 
           ls -lh build/
-
-
-          echo ""
-          echo "=================================================="
-          echo "CHECKING ZIP FILES"
-          echo "=================================================="
 
 
           test -f \
@@ -516,14 +482,12 @@ jobs:
             build/report-lambda-${{ github.sha }}.zip
 
 
-          echo ""
-
           echo "All Lambda packages are present."
 
 
-      # ============================================================
-      # 14. DEPLOY NETWORK STACK
-      # ============================================================
+      # ==========================================================
+      # 14. DEPLOY NETWORK
+      # ==========================================================
 
       - name: Deploy Network Stack
 
@@ -539,16 +503,16 @@ jobs:
           aws cloudformation deploy \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
-            --template-file cloudformation/network-stack.yaml
+            --template-file cloudformation/network-stack.yaml \
+            --no-fail-on-empty-changeset
 
 
-          echo ""
           echo "Network stack deployment completed."
 
 
-      # ============================================================
-      # 15. SHOW NETWORK STACK EVENTS ON FAILURE
-      # ============================================================
+      # ==========================================================
+      # 15. NETWORK ERRORS
+      # ==========================================================
 
       - name: Show Network Stack Errors
 
@@ -561,28 +525,17 @@ jobs:
           echo "=================================================="
 
 
-          if aws cloudformation describe-stacks \
+          aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
-            >/dev/null 2>&1
-          then
-
-            aws cloudformation describe-stack-events \
-              --region "$AWS_REGION" \
-              --stack-name cloudmart-network-stack \
-              --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-              --output table
-
-          else
-
-            echo "Network stack does not exist."
-
-          fi
+            --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
 
 
-      # ============================================================
-      # 16. DEPLOY DATA STACK
-      # ============================================================
+      # ==========================================================
+      # 16. DEPLOY DATA
+      # ==========================================================
 
       - name: Deploy Data Stack
 
@@ -604,16 +557,16 @@ jobs:
             --stack-name cloudmart-data-stack \
             --template-file cloudformation/data-stack.yaml \
             --parameter-overrides \
-              "DBPassword=$DB_PASSWORD"
+              "DBPassword=$DB_PASSWORD" \
+            --no-fail-on-empty-changeset
 
 
-          echo ""
           echo "Data stack deployment completed."
 
 
-      # ============================================================
-      # 17. SHOW DATA STACK EVENTS ON FAILURE
-      # ============================================================
+      # ==========================================================
+      # 17. DATA ERRORS
+      # ==========================================================
 
       - name: Show Data Stack Errors
 
@@ -626,37 +579,26 @@ jobs:
           echo "=================================================="
 
 
-          if aws cloudformation describe-stacks \
+          aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-data-stack \
-            >/dev/null 2>&1
-          then
-
-            aws cloudformation describe-stack-events \
-              --region "$AWS_REGION" \
-              --stack-name cloudmart-data-stack \
-              --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-              --output table
-
-          else
-
-            echo "Data stack does not exist."
-
-          fi
+            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
 
 
-      # ============================================================
-      # 18. DEPLOY IAM STACK
-      # ============================================================
+      # ==========================================================
+      # 18. DEPLOY IAM
+      #
+      # IMPORTANT:
+      # IAM STACK ONLY RECEIVES EnvironmentName.
+      # No DBPassword.
+      # No AuthToken.
+      # ==========================================================
 
       - name: Deploy IAM Stack
 
         id: deploy_iam
-
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
 
         run: |
 
@@ -669,20 +611,18 @@ jobs:
             --region "$AWS_REGION" \
             --stack-name cloudmart-iam-stack \
             --template-file cloudformation/iam-stack.yaml \
-            --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
-              "DBUsername=cloudmartadmin" \
-              "DBPassword=$DB_PASSWORD" \
-              "AuthToken=$AUTH_TOKEN"
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
 
 
-          echo ""
           echo "IAM stack deployment completed."
 
 
-      # ============================================================
-      # 19. SHOW IAM STACK EVENTS ON FAILURE
-      # ============================================================
+      # ==========================================================
+      # 19. IAM ERRORS
+      # ==========================================================
 
       - name: Show IAM Stack Errors
 
@@ -695,33 +635,17 @@ jobs:
           echo "=================================================="
 
 
-          if aws cloudformation describe-stacks \
+          aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-iam-stack \
-            >/dev/null 2>&1
-          then
-
-            aws cloudformation describe-stack-events \
-              --region "$AWS_REGION" \
-              --stack-name cloudmart-iam-stack \
-              --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-              --output table
-
-          else
-
-            echo "IAM stack does not exist."
-
-          fi
+            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
 
 
-      # ============================================================
-      # 20. DEPLOY AUTH STACK
-      #
-      # The updated auth-stack.yaml does NOT create SecureString
-      # through CloudFormation.
-      #
-      # Therefore AUTH_TOKEN is NOT passed to CloudFormation here.
-      # ============================================================
+      # ==========================================================
+      # 20. DEPLOY AUTH
+      # ==============================================================
 
       - name: Deploy Auth Stack
 
@@ -738,18 +662,18 @@ jobs:
             --region "$AWS_REGION" \
             --stack-name cloudmart-auth-stack \
             --template-file cloudformation/auth-stack.yaml \
-            --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME"
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
 
 
-          echo ""
           echo "Auth stack deployment completed."
 
 
-      # ============================================================
-      # 21. CREATE / UPDATE AUTHENTICATION SECURESTRING
-      # ============================================================
+      # ==========================================================
+      # 21. CREATE AUTH SECURESTRING
+      # ==========================================================
 
       - name: Create Authentication SecureString
 
@@ -783,16 +707,12 @@ jobs:
             --overwrite
 
 
-          echo ""
-          echo "Authentication SecureString created/updated successfully."
+          echo "Authentication SecureString created/updated."
 
 
-      # ============================================================
-      # 22. VERIFY AUTHENTICATION PARAMETER
-      #
-      # We only verify that the parameter exists.
-      # We DO NOT print the token.
-      # ============================================================
+      # ==========================================================
+      # 22. VERIFY AUTH PARAMETER
+      # ==============================================================
 
       - name: Verify Authentication Parameter
 
@@ -810,13 +730,12 @@ jobs:
             --output table
 
 
-          echo ""
           echo "Authentication parameter exists."
 
 
-      # ============================================================
-      # 23. SHOW AUTH STACK EVENTS ON FAILURE
-      # ============================================================
+      # ==========================================================
+      # 23. AUTH ERRORS
+      # ==========================================================
 
       - name: Show Auth Stack Errors
 
@@ -829,28 +748,17 @@ jobs:
           echo "=================================================="
 
 
-          if aws cloudformation describe-stacks \
+          aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-auth-stack \
-            >/dev/null 2>&1
-          then
-
-            aws cloudformation describe-stack-events \
-              --region "$AWS_REGION" \
-              --stack-name cloudmart-auth-stack \
-              --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-              --output table
-
-          else
-
-            echo "Auth stack does not exist."
-
-          fi
+            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
 
 
-      # ============================================================
+      # ==========================================================
       # 24. GET LAMBDA ARTIFACT BUCKET
-      # ============================================================
+      # ==========================================================
 
       - name: Get Lambda Artifact Bucket
 
@@ -885,126 +793,90 @@ jobs:
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
 
-      # ============================================================
-      # 25. UPLOAD PRODUCT LAMBDA
-      # ============================================================
+      # ==========================================================
+      # 25. UPLOAD PRODUCT
+      # ==========================================================
 
       - name: Upload Product Lambda
 
         run: |
-
-          echo "=================================================="
-          echo "UPLOADING PRODUCT LAMBDA"
-          echo "=================================================="
-
 
           aws s3 cp \
             "build/product-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/product-lambda-${{ github.sha }}.zip"
 
 
-      # ============================================================
-      # 26. UPLOAD ORDER LAMBDA
-      # ============================================================
+      # ==========================================================
+      # 26. UPLOAD ORDER
+      # ==========================================================
 
       - name: Upload Order Lambda
 
         run: |
-
-          echo "=================================================="
-          echo "UPLOADING ORDER LAMBDA"
-          echo "=================================================="
-
 
           aws s3 cp \
             "build/order-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/order-lambda-${{ github.sha }}.zip"
 
 
-      # ============================================================
-      # 27. UPLOAD ORDER PROCESSOR LAMBDA
-      # ============================================================
+      # ==========================================================
+      # 27. UPLOAD ORDER PROCESSOR
+      # ==========================================================
 
       - name: Upload Order Processor Lambda
 
         run: |
-
-          echo "=================================================="
-          echo "UPLOADING ORDER PROCESSOR LAMBDA"
-          echo "=================================================="
-
 
           aws s3 cp \
             "build/order-processor-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/order-processor-${{ github.sha }}.zip"
 
 
-      # ============================================================
-      # 28. UPLOAD REPORT LAMBDA
-      # ============================================================
+      # ==========================================================
+      # 28. UPLOAD REPORT
+      # ==========================================================
 
       - name: Upload Report Lambda
 
         run: |
-
-          echo "=================================================="
-          echo "UPLOADING REPORT LAMBDA"
-          echo "=================================================="
-
 
           aws s3 cp \
             "build/report-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/report/report-lambda-${{ github.sha }}.zip"
 
 
-      # ============================================================
+      # ==========================================================
       # 29. VERIFY S3 ARTIFACTS
-      # ============================================================
+      # ==========================================================
 
       - name: Verify S3 Lambda Artifacts
 
         run: |
 
           echo "=================================================="
-          echo "VERIFYING LAMBDA ARTIFACTS IN S3"
+          echo "VERIFYING S3 ARTIFACTS"
           echo "=================================================="
-
-
-          echo ""
-          echo "===== PRODUCT ====="
 
 
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/"
 
 
-          echo ""
-          echo "===== ORDER ====="
-
-
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/"
-
-
-          echo ""
-          echo "===== ORDER PROCESSOR ====="
 
 
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/"
 
 
-          echo ""
-          echo "===== REPORT ====="
-
-
           aws s3 ls \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/report/"
 
 
-      # ============================================================
-      # 30. DEPLOY APPLICATION STACK
-      # ============================================================
+      # ==========================================================
+      # 30. DEPLOY APPLICATION
+      # ==============================================================
 
       - name: Deploy Application Stack
 
@@ -1029,16 +901,16 @@ jobs:
             --parameter-overrides \
               "DBPassword=$DB_PASSWORD" \
               "CodeVersion=${{ github.sha }}" \
-              "EnvironmentName=$ENVIRONMENT_NAME"
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+            --no-fail-on-empty-changeset
 
 
-          echo ""
           echo "Application stack deployment completed."
 
 
-      # ============================================================
-      # 31. SHOW APPLICATION STACK EVENTS ON FAILURE
-      # ============================================================
+      # ==========================================================
+      # 31. APPLICATION ERRORS
+      # ==========================================================
 
       - name: Show Application Stack Errors
 
@@ -1051,28 +923,17 @@ jobs:
           echo "=================================================="
 
 
-          if aws cloudformation describe-stacks \
+          aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
             --stack-name cloudmart-api-stack \
-            >/dev/null 2>&1
-          then
-
-            aws cloudformation describe-stack-events \
-              --region "$AWS_REGION" \
-              --stack-name cloudmart-api-stack \
-              --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-              --output table
-
-          else
-
-            echo "Application stack does not exist."
-
-          fi
+            --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
 
 
-      # ============================================================
+      # ==========================================================
       # 32. GET API URL
-      # ============================================================
+      # ==========================================================
 
       - name: Get API URL
 
@@ -1107,9 +968,9 @@ jobs:
           echo "url=$API_URL" >> "$GITHUB_OUTPUT"
 
 
-      # ============================================================
-      # 33. SMOKE TEST - GET PRODUCTS
-      # ============================================================
+      # ==========================================================
+      # 33. SMOKE TEST GET PRODUCTS
+      # ==========================================================
 
       - name: Smoke Test - GET Products
 
@@ -1134,16 +995,12 @@ jobs:
             "${{ steps.api_url.outputs.url }}/products")
 
 
-          echo ""
           echo "HTTP STATUS: $HTTP_STATUS"
 
 
-          echo ""
           echo "RESPONSE:"
 
-
           cat /tmp/products-response.json
-
 
           echo ""
 
@@ -1160,9 +1017,9 @@ jobs:
           echo "GET /products smoke test passed."
 
 
-      # ============================================================
-      # 34. SMOKE TEST - POST ORDER
-      # ============================================================
+      # ==========================================================
+      # 34. SMOKE TEST POST ORDER
+      # ==============================================================
 
       - name: Smoke Test - POST Order
 
@@ -1202,16 +1059,12 @@ jobs:
             "${{ steps.api_url.outputs.url }}/orders")
 
 
-          echo ""
           echo "HTTP STATUS: $HTTP_STATUS"
 
 
-          echo ""
           echo "RESPONSE:"
 
-
           cat /tmp/order-response.json
-
 
           echo ""
 
@@ -1230,9 +1083,9 @@ jobs:
           echo "POST /orders smoke test passed."
 
 
-      # ============================================================
-      # 35. FINAL CLOUDFORMATION STATUS
-      # ============================================================
+      # ==========================================================
+      # 35. FINAL STACK STATUS
+      # ==========================================================
 
       - name: Final CloudFormation Status
 

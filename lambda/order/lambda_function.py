@@ -1,5 +1,5 @@
-import os
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -9,8 +9,18 @@ import pymysql
 
 
 # ================================================================
-# CONFIGURATION
+# AWS CLIENTS
 # ================================================================
+
+sqs = boto3.client("sqs")
+cloudwatch = boto3.client("cloudwatch")
+
+
+# ================================================================
+# ENVIRONMENT VARIABLES
+# ================================================================
+
+QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
 
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
@@ -18,12 +28,7 @@ DB_USER = os.environ["DB_USER"]
 DB_PASSWORD = os.environ["DB_PASSWORD"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
-ORDER_QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
-
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
-
-sqs = boto3.client("sqs")
-cloudwatch = boto3.client("cloudwatch")
 
 
 # ================================================================
@@ -41,82 +46,38 @@ def get_connection():
         read_timeout=10,
         write_timeout=10,
         cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False,
+        autocommit=False
     )
 
 
 # ================================================================
-# DATABASE INITIALIZATION
-# ================================================================
-
-def ensure_order_tables(connection):
-
-    with connection.cursor() as cursor:
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS orders (
-                order_id VARCHAR(50) PRIMARY KEY,
-                customer_id VARCHAR(100) NOT NULL,
-                status VARCHAR(30) NOT NULL,
-                total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
-            )
-            """
-        )
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS order_items (
-                order_item_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                order_id VARCHAR(50) NOT NULL,
-                product_id INT NOT NULL,
-                quantity INT NOT NULL,
-                price DECIMAL(12,2) NOT NULL DEFAULT 0,
-                created_at TIMESTAMP NOT NULL,
-                CONSTRAINT fk_order_items_order
-                    FOREIGN KEY (order_id)
-                    REFERENCES orders(order_id)
-                    ON DELETE CASCADE
-            )
-            """
-        )
-
-    connection.commit()
-
-
-# ================================================================
-# CLOUDWATCH METRICS
+# METRICS
 # ================================================================
 
 def put_metric(metric_name, value=1):
-
     try:
-
         cloudwatch.put_metric_data(
             Namespace="CloudMart/Application",
             MetricData=[
                 {
                     "MetricName": metric_name,
+                    "Value": value,
+                    "Unit": "Count",
                     "Dimensions": [
                         {
                             "Name": "Environment",
-                            "Value": ENVIRONMENT,
+                            "Value": ENVIRONMENT
                         },
                         {
                             "Name": "Service",
-                            "Value": "Order",
-                        },
-                    ],
-                    "Value": value,
-                    "Unit": "Count",
+                            "Value": "Order"
+                        }
+                    ]
                 }
-            ],
+            ]
         )
-
     except Exception as exc:
-        print(f"Metric publishing failed: {type(exc).__name__}")
+        print(f"Metric error: {exc}")
 
 
 # ================================================================
@@ -124,158 +85,156 @@ def put_metric(metric_name, value=1):
 # ================================================================
 
 def response(status_code, body):
-
     return {
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json"
         },
-        "body": json.dumps(body, default=str),
+        "body": json.dumps(body, default=str)
     }
 
 
 # ================================================================
-# REQUEST BODY
+# CREATE ORDERS TABLE
 # ================================================================
 
-def get_body(event):
+def initialize_orders_table(connection):
 
-    body = event.get("body")
+    sql = """
+    CREATE TABLE IF NOT EXISTS orders (
+        order_id VARCHAR(50) PRIMARY KEY,
+        customer_id VARCHAR(100) NOT NULL,
+        status VARCHAR(30) NOT NULL,
+        total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL
+    )
+    """
 
-    if body is None:
-        return {}
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
 
-    if isinstance(body, str):
+    connection.commit()
 
-        try:
-            return json.loads(body)
 
-        except json.JSONDecodeError:
-            return None
+# ================================================================
+# CREATE ORDER ITEMS TABLE
+# ================================================================
 
-    if isinstance(body, dict):
-        return body
+def initialize_order_items_table(connection):
 
-    return None
+    sql = """
+    CREATE TABLE IF NOT EXISTS order_items (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        order_id VARCHAR(50) NOT NULL,
+        product_id INT NOT NULL,
+        quantity INT NOT NULL,
+        price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        created_at DATETIME NOT NULL,
+        INDEX idx_order_items_order_id (order_id)
+    )
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+
+    connection.commit()
 
 
 # ================================================================
 # CREATE ORDER
 # ================================================================
 
-def create_order(event):
+def create_order(body):
 
-    body = get_body(event)
-
-    if body is None:
-        return response(
-            400,
-            {
-                "message": "Request body must be valid JSON"
-            },
-        )
+    if not isinstance(body, dict):
+        raise ValueError("Request body must be a JSON object")
 
     customer_id = body.get("customer_id")
     items = body.get("items")
 
     if not customer_id:
-        return response(
-            400,
-            {
-                "message": "customer_id is required"
-            },
-        )
+        raise ValueError("customer_id is required")
 
-    if not isinstance(items, list) or not items:
-        return response(
-            400,
-            {
-                "message": "items must be a non-empty list"
-            },
-        )
+    if not isinstance(items, list) or len(items) == 0:
+        raise ValueError("items must contain at least one item")
+
+    for item in items:
+
+        if not isinstance(item, dict):
+            raise ValueError("Each item must be an object")
+
+        if "product_id" not in item:
+            raise ValueError("product_id is required")
+
+        if "quantity" not in item:
+            raise ValueError("quantity is required")
+
+        try:
+            product_id = int(item["product_id"])
+            quantity = int(item["quantity"])
+        except (TypeError, ValueError):
+            raise ValueError("product_id and quantity must be numbers")
+
+        if product_id <= 0:
+            raise ValueError("product_id must be greater than zero")
+
+        if quantity <= 0:
+            raise ValueError("quantity must be greater than zero")
+
+    order_id = "ORD-" + uuid.uuid4().hex[:12].upper()
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     connection = None
 
     try:
 
-        order_id = f"ORD-{uuid.uuid4().hex[:12].upper()}"
-
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-        print(
-            json.dumps(
-                {
-                    "message": "Creating order",
-                    "order_id": order_id,
-                    "customer_id": customer_id,
-                }
-            )
-        )
-
         connection = get_connection()
 
-        ensure_order_tables(connection)
+        initialize_orders_table(connection)
+        initialize_order_items_table(connection)
 
         total_amount = Decimal("0.00")
 
-        validated_items = []
+        # --------------------------------------------------------
+        # Read product prices
+        # --------------------------------------------------------
 
         with connection.cursor() as cursor:
 
             for item in items:
 
-                product_id = item.get("product_id")
-                quantity = item.get("quantity")
-
-                if product_id is None:
-                    raise ValueError("Each item requires product_id")
-
-                if quantity is None:
-                    raise ValueError("Each item requires quantity")
-
-                try:
-                    product_id = int(product_id)
-                    quantity = int(quantity)
-                except (TypeError, ValueError):
-                    raise ValueError(
-                        "product_id and quantity must be numbers"
-                    )
-
-                if quantity <= 0:
-                    raise ValueError(
-                        "quantity must be greater than zero"
-                    )
-
                 cursor.execute(
                     """
-                    SELECT
-                        product_id,
-                        price,
-                        status
+                    SELECT id, price
                     FROM products
-                    WHERE product_id = %s
+                    WHERE id = %s
+                      AND active = 1
                     """,
-                    (product_id,),
+                    (int(item["product_id"]),)
                 )
 
                 product = cursor.fetchone()
 
                 if not product:
                     raise ValueError(
-                        f"Product {product_id} does not exist"
+                        f"Product {item['product_id']} does not exist"
                     )
 
                 price = Decimal(str(product["price"]))
 
-                total_amount += price * quantity
+                item["price"] = price
 
-                validated_items.append(
-                    {
-                        "product_id": product_id,
-                        "quantity": quantity,
-                        "price": price,
-                    }
+                total_amount += (
+                    price * int(item["quantity"])
                 )
+
+        # --------------------------------------------------------
+        # Insert order
+        # --------------------------------------------------------
+
+        with connection.cursor() as cursor:
 
             cursor.execute(
                 """
@@ -304,11 +263,17 @@ def create_order(event):
                     "PROCESSING",
                     total_amount,
                     now,
-                    now,
-                ),
+                    now
+                )
             )
 
-            for item in validated_items:
+        # --------------------------------------------------------
+        # Insert order items
+        # --------------------------------------------------------
+
+        with connection.cursor() as cursor:
+
+            for item in items:
 
                 cursor.execute(
                     """
@@ -331,29 +296,27 @@ def create_order(event):
                     """,
                     (
                         order_id,
-                        item["product_id"],
-                        item["quantity"],
+                        int(item["product_id"]),
+                        int(item["quantity"]),
                         item["price"],
-                        now,
-                    ),
+                        now
+                    )
                 )
 
         connection.commit()
 
-        print("Order successfully stored in RDS")
+        # --------------------------------------------------------
+        # Send order to SQS
+        # --------------------------------------------------------
 
-        print("Sending order to SQS")
+        message = {
+            "order_id": order_id
+        }
 
         sqs.send_message(
-            QueueUrl=ORDER_QUEUE_URL,
-            MessageBody=json.dumps(
-                {
-                    "order_id": order_id,
-                }
-            ),
+            QueueUrl=QUEUE_URL,
+            MessageBody=json.dumps(message)
         )
-
-        print("Order successfully sent to SQS")
 
         put_metric("OrdersCreated")
         put_metric("OrderRequests")
@@ -363,8 +326,8 @@ def create_order(event):
             {
                 "message": "Order accepted for processing",
                 "order_id": order_id,
-                "status": "PROCESSING",
-            },
+                "status": "PROCESSING"
+            }
         )
 
     except ValueError as exc:
@@ -372,15 +335,13 @@ def create_order(event):
         if connection:
             connection.rollback()
 
-        print(f"Order validation failed: {str(exc)}")
-
         put_metric("OrderRequests")
 
         return response(
             400,
             {
                 "message": str(exc)
-            },
+            }
         )
 
     except Exception as exc:
@@ -388,15 +349,15 @@ def create_order(event):
         if connection:
             connection.rollback()
 
-        print(
-            f"Order creation failed: {type(exc).__name__}"
-        )
+        print(f"Order creation error: {exc}")
+
+        put_metric("OrderRequests")
 
         return response(
             500,
             {
-                "message": "Unable to create order"
-            },
+                "message": "Internal server error"
+            }
         )
 
     finally:
@@ -406,7 +367,7 @@ def create_order(event):
 
 
 # ================================================================
-# GET ORDER BY ID
+# GET SINGLE ORDER
 # ================================================================
 
 def get_order(order_id):
@@ -417,7 +378,7 @@ def get_order(order_id):
 
         connection = get_connection()
 
-        ensure_order_tables(connection)
+        initialize_orders_table(connection)
 
         with connection.cursor() as cursor:
 
@@ -433,18 +394,21 @@ def get_order(order_id):
                 FROM orders
                 WHERE order_id = %s
                 """,
-                (order_id,),
+                (order_id,)
             )
 
             order = cursor.fetchone()
 
-            if not order:
-                return response(
-                    404,
-                    {
-                        "message": "Order not found"
-                    },
-                )
+        if not order:
+
+            return response(
+                404,
+                {
+                    "message": "Order not found"
+                }
+            )
+
+        with connection.cursor() as cursor:
 
             cursor.execute(
                 """
@@ -454,29 +418,28 @@ def get_order(order_id):
                     price
                 FROM order_items
                 WHERE order_id = %s
-                ORDER BY order_item_id
                 """,
-                (order_id,),
+                (order_id,)
             )
 
-            order["items"] = cursor.fetchall()
+            items = cursor.fetchall()
+
+        order["items"] = items
 
         return response(
             200,
-            order,
+            order
         )
 
     except Exception as exc:
 
-        print(
-            f"Get order failed: {type(exc).__name__}"
-        )
+        print(f"Get order error: {exc}")
 
         return response(
             500,
             {
-                "message": "Unable to retrieve order"
-            },
+                "message": "Internal server error"
+            }
         )
 
     finally:
@@ -486,17 +449,10 @@ def get_order(order_id):
 
 
 # ================================================================
-# GET ORDERS
+# GET ORDERS FOR CUSTOMER
 # ================================================================
 
-def get_orders(event):
-
-    customer_id = None
-
-    query_params = event.get("queryStringParameters")
-
-    if query_params:
-        customer_id = query_params.get("customer_id")
+def get_customer_orders(customer_id):
 
     connection = None
 
@@ -504,43 +460,25 @@ def get_orders(event):
 
         connection = get_connection()
 
-        ensure_order_tables(connection)
+        initialize_orders_table(connection)
 
         with connection.cursor() as cursor:
 
-            if customer_id:
-
-                cursor.execute(
-                    """
-                    SELECT
-                        order_id,
-                        customer_id,
-                        status,
-                        total_amount,
-                        created_at,
-                        updated_at
-                    FROM orders
-                    WHERE customer_id = %s
-                    ORDER BY created_at DESC
-                    """,
-                    (customer_id,),
-                )
-
-            else:
-
-                cursor.execute(
-                    """
-                    SELECT
-                        order_id,
-                        customer_id,
-                        status,
-                        total_amount,
-                        created_at,
-                        updated_at
-                    FROM orders
-                    ORDER BY created_at DESC
-                    """
-                )
+            cursor.execute(
+                """
+                SELECT
+                    order_id,
+                    customer_id,
+                    status,
+                    total_amount,
+                    created_at,
+                    updated_at
+                FROM orders
+                WHERE customer_id = %s
+                ORDER BY created_at DESC
+                """,
+                (customer_id,)
+            )
 
             orders = cursor.fetchall()
 
@@ -548,20 +486,18 @@ def get_orders(event):
             200,
             {
                 "orders": orders
-            },
+            }
         )
 
     except Exception as exc:
 
-        print(
-            f"Get orders failed: {type(exc).__name__}"
-        )
+        print(f"Get customer orders error: {exc}")
 
         return response(
             500,
             {
-                "message": "Unable to retrieve orders"
-            },
+                "message": "Internal server error"
+            }
         )
 
     finally:
@@ -574,26 +510,16 @@ def get_orders(event):
 # UPDATE ORDER
 # ================================================================
 
-def update_order(order_id, event):
-
-    body = get_body(event)
-
-    if body is None:
-        return response(
-            400,
-            {
-                "message": "Request body must be valid JSON"
-            },
-        )
+def update_order(order_id, body):
 
     status = body.get("status")
 
-    allowed_statuses = {
+    allowed_statuses = [
         "PROCESSING",
         "CONFIRMED",
         "FAILED",
-        "CANCELLED",
-    }
+        "CANCELLED"
+    ]
 
     if status not in allowed_statuses:
 
@@ -601,7 +527,7 @@ def update_order(order_id, event):
             400,
             {
                 "message": "Invalid order status"
-            },
+            }
         )
 
     connection = None
@@ -609,10 +535,6 @@ def update_order(order_id, event):
     try:
 
         connection = get_connection()
-
-        ensure_order_tables(connection)
-
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         with connection.cursor() as cursor:
 
@@ -626,9 +548,9 @@ def update_order(order_id, event):
                 """,
                 (
                     status,
-                    now,
-                    order_id,
-                ),
+                    datetime.now(timezone.utc).replace(tzinfo=None),
+                    order_id
+                )
             )
 
             if cursor.rowcount == 0:
@@ -639,7 +561,7 @@ def update_order(order_id, event):
                     404,
                     {
                         "message": "Order not found"
-                    },
+                    }
                 )
 
         connection.commit()
@@ -649,8 +571,8 @@ def update_order(order_id, event):
             {
                 "message": "Order updated",
                 "order_id": order_id,
-                "status": status,
-            },
+                "status": status
+            }
         )
 
     except Exception as exc:
@@ -658,15 +580,13 @@ def update_order(order_id, event):
         if connection:
             connection.rollback()
 
-        print(
-            f"Update order failed: {type(exc).__name__}"
-        )
+        print(f"Update order error: {exc}")
 
         return response(
             500,
             {
-                "message": "Unable to update order"
-            },
+                "message": "Internal server error"
+            }
         )
 
     finally:
@@ -687,10 +607,6 @@ def cancel_order(order_id):
 
         connection = get_connection()
 
-        ensure_order_tables(connection)
-
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-
         with connection.cursor() as cursor:
 
             cursor.execute(
@@ -699,7 +615,7 @@ def cancel_order(order_id):
                 FROM orders
                 WHERE order_id = %s
                 """,
-                (order_id,),
+                (order_id,)
             )
 
             order = cursor.fetchone()
@@ -710,31 +626,30 @@ def cancel_order(order_id):
                     404,
                     {
                         "message": "Order not found"
-                    },
+                    }
                 )
 
-            if order["status"] != "PROCESSING":
+            if order["status"] not in ["PROCESSING"]:
 
                 return response(
                     400,
                     {
-                        "message": "Only processing orders can be cancelled"
-                    },
+                        "message": "Order cannot be cancelled"
+                    }
                 )
 
             cursor.execute(
                 """
                 UPDATE orders
                 SET
-                    status = %s,
+                    status = 'CANCELLED',
                     updated_at = %s
                 WHERE order_id = %s
                 """,
                 (
-                    "CANCELLED",
-                    now,
-                    order_id,
-                ),
+                    datetime.now(timezone.utc).replace(tzinfo=None),
+                    order_id
+                )
             )
 
         connection.commit()
@@ -744,8 +659,8 @@ def cancel_order(order_id):
             {
                 "message": "Order cancelled",
                 "order_id": order_id,
-                "status": "CANCELLED",
-            },
+                "status": "CANCELLED"
+            }
         )
 
     except Exception as exc:
@@ -753,15 +668,13 @@ def cancel_order(order_id):
         if connection:
             connection.rollback()
 
-        print(
-            f"Cancel order failed: {type(exc).__name__}"
-        )
+        print(f"Cancel order error: {exc}")
 
         return response(
             500,
             {
-                "message": "Unable to cancel order"
-            },
+                "message": "Internal server error"
+            }
         )
 
     finally:
@@ -771,74 +684,111 @@ def cancel_order(order_id):
 
 
 # ================================================================
-# MAIN HANDLER
+# LAMBDA HANDLER
 # ================================================================
 
 def lambda_handler(event, context):
 
     print(
-        json.dumps(
-            {
-                "http_method": event.get("httpMethod"),
-                "path": event.get("path"),
-            }
-        )
+        f"Order Lambda request: "
+        f"{event.get('httpMethod')} "
+        f"{event.get('path')}"
     )
 
-    method = event.get("httpMethod", "GET").upper()
-
-    path = event.get("path", "")
-
+    method = event.get("httpMethod", "")
     path_parameters = event.get("pathParameters") or {}
+    query_parameters = event.get("queryStringParameters") or {}
 
     order_id = path_parameters.get("orderId")
 
-    try:
+    # ------------------------------------------------------------
+    # POST /orders
+    # ------------------------------------------------------------
 
-        if method == "POST" and path.endswith("/cancel"):
+    if method == "POST" and not order_id:
 
-            if not order_id:
-                return response(
-                    400,
-                    {
-                        "message": "orderId is required"
-                    },
-                )
+        try:
+
+            body = event.get("body")
+
+            if isinstance(body, str):
+                body = json.loads(body)
+
+            return create_order(body)
+
+        except json.JSONDecodeError:
+
+            return response(
+                400,
+                {
+                    "message": "Invalid JSON body"
+                }
+            )
+
+    # ------------------------------------------------------------
+    # GET /orders/{orderId}
+    # ------------------------------------------------------------
+
+    if method == "GET" and order_id:
+
+        return get_order(order_id)
+
+    # ------------------------------------------------------------
+    # GET /orders?customer_id=...
+    # ------------------------------------------------------------
+
+    if method == "GET":
+
+        customer_id = query_parameters.get("customer_id")
+
+        if not customer_id:
+
+            return response(
+                400,
+                {
+                    "message": "customer_id query parameter is required"
+                }
+            )
+
+        return get_customer_orders(customer_id)
+
+    # ------------------------------------------------------------
+    # PUT /orders/{orderId}
+    # ------------------------------------------------------------
+
+    if method == "PUT" and order_id:
+
+        try:
+
+            body = event.get("body")
+
+            if isinstance(body, str):
+                body = json.loads(body)
+
+            return update_order(order_id, body)
+
+        except json.JSONDecodeError:
+
+            return response(
+                400,
+                {
+                    "message": "Invalid JSON body"
+                }
+            )
+
+    # ------------------------------------------------------------
+    # POST /orders/{orderId}/cancel
+    # ------------------------------------------------------------
+
+    if method == "POST" and order_id:
+
+        if event.get("path", "").endswith("/cancel"):
 
             return cancel_order(order_id)
 
-        if method == "POST":
-
-            return create_order(event)
-
-        if method == "GET" and order_id:
-
-            return get_order(order_id)
-
-        if method == "GET":
-
-            return get_orders(event)
-
-        if method == "PUT" and order_id:
-
-            return update_order(order_id, event)
-
-        return response(
-            405,
-            {
-                "message": "Method not allowed"
-            },
-        )
-
-    except Exception as exc:
-
-        print(
-            f"Unhandled order Lambda error: {type(exc).__name__}"
-        )
-
-        return response(
-            500,
-            {
-                "message": "Internal server error"
-            },
-        )
+    return response(
+        404,
+        {
+            "message": "Route not found"
+        }
+    )

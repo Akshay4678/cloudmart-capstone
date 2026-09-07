@@ -1,5 +1,6 @@
 import json
 import os
+import math
 
 import boto3
 import pymysql
@@ -312,6 +313,124 @@ def publish_inventory_event(
 
 
 # =========================================================
+# VALIDATION HELPERS
+# =========================================================
+
+def validate_name(name):
+    if name is None:
+        return "name is required"
+
+    if not isinstance(name, str):
+        return "name must be a string"
+
+    if not name.strip():
+        return "name cannot be empty"
+
+    if len(name.strip()) > 255:
+        return "name must not exceed 255 characters"
+
+    return None
+
+
+def validate_description(description):
+    if description is None:
+        return None
+
+    if not isinstance(description, str):
+        return "description must be a string"
+
+    return None
+
+
+def validate_price(price):
+    if price is None:
+        return "price is required"
+
+    # JSON numbers should be actual numbers, not strings or booleans.
+    if isinstance(price, bool) or not isinstance(price, (int, float)):
+        return "price must be a number"
+
+    if not math.isfinite(float(price)):
+        return "price must be a valid number"
+
+    if float(price) <= 0:
+        return "price must be greater than 0"
+
+    # products.price is DECIMAL(10,2)
+    if round(float(price), 2) != float(price):
+        return "price can have at most 2 decimal places"
+
+    if float(price) >= 100000000:
+        return "price is too large"
+
+    return None
+
+
+def validate_stock_count(stock_count):
+    if stock_count is None:
+        return "stock_count is required"
+
+    # Do not silently convert 1.5, "10", or true into an integer.
+    if isinstance(stock_count, bool) or not isinstance(stock_count, int):
+        return "stock_count must be an integer"
+
+    if stock_count < 0:
+        return "stock_count cannot be negative"
+
+    return None
+
+
+def validate_product_id(product_id):
+    if product_id is None:
+        return "productId is required"
+
+    try:
+        parsed_id = int(product_id)
+    except (TypeError, ValueError):
+        return "productId must be a valid integer"
+
+    if parsed_id <= 0:
+        return "productId must be greater than 0"
+
+    return None
+
+
+def parse_json_body(event):
+    body = event.get("body")
+
+    if body is None or body == "":
+        return None, response(
+            400,
+            {
+                "message": "Request body is required"
+            }
+        )
+
+    if isinstance(body, dict):
+        data = body
+    else:
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, TypeError):
+            return None, response(
+                400,
+                {
+                    "message": "Invalid JSON body"
+                }
+            )
+
+    if not isinstance(data, dict):
+        return None, response(
+            400,
+            {
+                "message": "Request body must be a JSON object"
+            }
+        )
+
+    return data, None
+
+
+# =========================================================
 # CREATE PRODUCT
 # =========================================================
 
@@ -342,18 +461,10 @@ def create_product(
     # PARSE JSON
     # ---------------------------------------------------------
 
-    try:
+    data, error_response = parse_json_body(event)
 
-        data = json.loads(body)
-
-    except json.JSONDecodeError:
-
-        return response(
-            400,
-            {
-                "message": "Invalid JSON body"
-            }
-        )
+    if error_response:
+        return error_response
 
     # ---------------------------------------------------------
     # READ DATA
@@ -368,49 +479,21 @@ def create_product(
     # VALIDATION
     # ---------------------------------------------------------
 
-    if (
-        not name
-        or price is None
-        or stock_count is None
-    ):
+    error = validate_name(name)
+    if error:
+        return response(400, {"message": error})
 
-        return response(
-            400,
-            {
-                "message": (
-                    "name, price and "
-                    "stock_count are required"
-                )
-            }
-        )
+    error = validate_description(description)
+    if error:
+        return response(400, {"message": error})
 
-    try:
+    error = validate_price(price)
+    if error:
+        return response(400, {"message": error})
 
-        stock_count = int(
-            stock_count
-        )
-
-    except (TypeError, ValueError):
-
-        return response(
-            400,
-            {
-                "message": (
-                    "stock_count must be an integer"
-                )
-            }
-        )
-
-    if stock_count < 0:
-
-        return response(
-            400,
-            {
-                "message": (
-                    "stock_count cannot be negative"
-                )
-            }
-        )
+    error = validate_stock_count(stock_count)
+    if error:
+        return response(400, {"message": error})
 
     # ---------------------------------------------------------
     # DETERMINE INITIAL STATUS
@@ -670,35 +753,14 @@ def update_product(
     connection
 ):
 
-    body = event.get("body")
+    # PUT is treated as a full replacement.
+    # Therefore name, price and stock_count are mandatory.
+    # description is optional.
 
-    if not body:
+    data, error_response = parse_json_body(event)
 
-        return response(
-            400,
-            {
-                "message": (
-                    "Request body is required"
-                )
-            }
-        )
-
-    # ---------------------------------------------------------
-    # PARSE JSON
-    # ---------------------------------------------------------
-
-    try:
-
-        data = json.loads(body)
-
-    except json.JSONDecodeError:
-
-        return response(
-            400,
-            {
-                "message": "Invalid JSON body"
-            }
-        )
+    if error_response:
+        return error_response
 
     name = data.get("name")
     description = data.get("description")
@@ -709,49 +771,21 @@ def update_product(
     # VALIDATION
     # ---------------------------------------------------------
 
-    if (
-        not name
-        or price is None
-        or stock_count is None
-    ):
+    error = validate_name(name)
+    if error:
+        return response(400, {"message": error})
 
-        return response(
-            400,
-            {
-                "message": (
-                    "name, price and "
-                    "stock_count are required"
-                )
-            }
-        )
+    error = validate_description(description)
+    if error:
+        return response(400, {"message": error})
 
-    try:
+    error = validate_price(price)
+    if error:
+        return response(400, {"message": error})
 
-        stock_count = int(
-            stock_count
-        )
-
-    except (TypeError, ValueError):
-
-        return response(
-            400,
-            {
-                "message": (
-                    "stock_count must be an integer"
-                )
-            }
-        )
-
-    if stock_count < 0:
-
-        return response(
-            400,
-            {
-                "message": (
-                    "stock_count cannot be negative"
-                )
-            }
-        )
+    error = validate_stock_count(stock_count)
+    if error:
+        return response(400, {"message": error})
 
     performed_by = get_performed_by(
         event
@@ -1227,6 +1261,17 @@ def lambda_handler(
             product_id
         )
 
+        # Validate productId whenever an endpoint requires it.
+        if http_method in ["GET", "PUT", "DELETE"]:
+            product_id_error = validate_product_id(product_id)
+            if product_id_error:
+                return response(
+                    400,
+                    {
+                        "message": product_id_error
+                    }
+                )
+
         # =====================================================
         # DATABASE CONNECTION
         # =====================================================
@@ -1302,12 +1347,18 @@ def lambda_handler(
         # INVALID REQUEST
         # =====================================================
 
+        if http_method in ["PUT", "DELETE"] and not product_id:
+            return response(
+                400,
+                {
+                    "message": "productId is required in the URL"
+                }
+            )
+
         return response(
             405,
             {
-                "message": (
-                    "Method not allowed"
-                )
+                "message": "Method not allowed"
             }
         )
 

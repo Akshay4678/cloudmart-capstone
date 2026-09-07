@@ -1260,10 +1260,21 @@ def lambda_handler(
             "Product ID:",
             product_id
         )
+        
 
-        # Validate productId whenever an endpoint requires it.
-        if http_method in ["GET", "PUT", "DELETE"]:
+        # Validate productId only when the endpoint uses a product ID.
+        # GET /products does not require productId.
+        if http_method in ["PUT", "DELETE"] and product_id is None:
+            return response(
+                400,
+                {
+                    "message": "productId is required in the URL"
+                }
+            )
+
+        if product_id is not None:
             product_id_error = validate_product_id(product_id)
+
             if product_id_error:
                 return response(
                     400,
@@ -1271,6 +1282,8 @@ def lambda_handler(
                         "message": product_id_error
                     }
                 )
+
+            product_id = int(product_id)
 
         # =====================================================
         # DATABASE CONNECTION

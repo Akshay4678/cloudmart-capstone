@@ -148,12 +148,17 @@ def parse_request_body(event):
 # SCHEMA INITIALIZATION
 # ================================================================
 
+
 def execute_schema_file(connection):
     """
     Executes the schema.sql file packaged inside the Lambda ZIP.
 
     The deployment workflow copies the repository root schema.sql
     into the Order Lambda package before creating the ZIP.
+
+    Existing database objects are skipped when MySQL reports that
+    the object already exists. This makes schema initialization
+    safe to run multiple times against an existing database.
     """
 
     schema_path = os.path.join(
@@ -171,7 +176,10 @@ def execute_schema_file(connection):
     with open(schema_path, "r", encoding="utf-8") as schema_file:
         sql = schema_file.read()
 
+    # ------------------------------------------------------------
     # Remove simple SQL comments.
+    # ------------------------------------------------------------
+
     cleaned_lines = []
 
     for line in sql.splitlines():
@@ -184,30 +192,90 @@ def execute_schema_file(connection):
 
     sql = "\n".join(cleaned_lines)
 
-    # The current CloudMart schema contains normal SQL statements
-    # separated by semicolons. This is intentionally simple because
-    # the schema does not contain stored procedures or triggers.
+    # ------------------------------------------------------------
+    # Split normal SQL statements by semicolon.
+    #
+    # CloudMart schema.sql does not contain stored procedures,
+    # triggers, or other SQL that requires delimiter handling.
+    # ------------------------------------------------------------
+
     statements = [
         statement.strip()
         for statement in sql.split(";")
         if statement.strip()
     ]
 
+    executed_count = 0
+    skipped_count = 0
+
     with connection.cursor() as cursor:
+
         for statement in statements:
+
             print(
                 "Executing schema statement: "
                 + statement[:120].replace("\n", " ")
             )
-            cursor.execute(statement)
+
+            try:
+
+                cursor.execute(statement)
+
+                executed_count += 1
+
+            except pymysql.MySQLError as exc:
+
+                # ------------------------------------------------
+                # MySQL error 1050:
+                # Table already exists
+                #
+                # MySQL error 1061:
+                # Duplicate key/index name
+                #
+                # These are safe to skip during repeated
+                # schema initialization.
+                # ------------------------------------------------
+
+                error_code = (
+                    exc.args[0]
+                    if exc.args
+                    else None
+                )
+
+                error_message = str(exc)
+
+                if error_code in (1050, 1061):
+
+                    skipped_count += 1
+
+                    print(
+                        "Skipping existing database object. "
+                        f"MySQL error {error_code}: "
+                        f"{error_message}"
+                    )
+
+                    continue
+
+                # ------------------------------------------------
+                # Any other database error is a real schema error.
+                # Do NOT hide it.
+                # ------------------------------------------------
+
+                print(
+                    "Schema statement failed. "
+                    f"MySQL error {error_code}: "
+                    f"{error_message}"
+                )
+
+                raise
 
     connection.commit()
 
     print(
-        f"schema.sql executed successfully. "
-        f"Statements executed: {len(statements)}"
+        "schema.sql execution completed successfully. "
+        f"Statements executed: {executed_count}. "
+        f"Existing objects skipped: {skipped_count}."
     )
-
 
 def ensure_customer_table(connection):
     """

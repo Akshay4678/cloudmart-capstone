@@ -13,11 +13,6 @@ Parameters:
     Type: String
     Description: Git commit SHA used for Lambda deployment packages
 
-  DBPassword:
-    Type: String
-    NoEcho: true
-    MinLength: 8
-    Description: CloudMart RDS master password
 
   EnvironmentName:
     Type: String
@@ -88,8 +83,8 @@ Resources:
           DB_USER:
             Fn::ImportValue: cloudmart-database-username
 
-          DB_PASSWORD:
-            !Ref DBPassword
+          DB_PASSWORD_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/database/password
 
           DB_PORT:
             "3306"
@@ -201,8 +196,8 @@ Resources:
           DB_USER:
             Fn::ImportValue: cloudmart-database-username
 
-          DB_PASSWORD:
-            !Ref DBPassword
+          DB_PASSWORD_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/database/password
 
           DB_PORT:
             "3306"
@@ -277,8 +272,8 @@ Resources:
           DB_USER:
             Fn::ImportValue: cloudmart-database-username
 
-          DB_PASSWORD:
-            !Ref DBPassword
+          DB_PASSWORD_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/database/password
 
           DB_PORT:
             "3306"
@@ -689,8 +684,8 @@ Resources:
           DB_USER:
             Fn::ImportValue: cloudmart-database-username
 
-          DB_PASSWORD:
-            !Ref DBPassword
+          DB_PASSWORD_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/database/password
 
           DB_PORT:
             "3306"

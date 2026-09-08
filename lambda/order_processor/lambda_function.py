@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
+
+ssm = boto3.client("ssm")
 import pymysql
 
 
@@ -22,22 +24,41 @@ cloudwatch = boto3.client("cloudwatch")
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
-DB_PASSWORD = os.environ["DB_PASSWORD"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+
+DB_PASSWORD_PARAMETER = os.environ.get(
+    "DB_PASSWORD_PARAMETER",
+    f"/cloudmart/{ENVIRONMENT}/database/password"
+)
 
 
 # ================================================================
 # DATABASE CONNECTION
 # ================================================================
 
+_db_password = None
+
+def get_db_password():
+    global _db_password
+
+    if _db_password is None:
+        parameter = ssm.get_parameter(
+            Name=DB_PASSWORD_PARAMETER,
+            WithDecryption=True,
+        )
+        _db_password = parameter["Parameter"]["Value"]
+
+    return _db_password
+
+
 def get_connection():
 
     return pymysql.connect(
         host=DB_HOST,
         user=DB_USER,
-        password=DB_PASSWORD,
+        password=get_db_password(),
         database=DB_NAME,
         port=DB_PORT,
         connect_timeout=5,

@@ -1170,13 +1170,21 @@ jobs:
       # before the Data stack attempts to remove old exports.
       # ==========================================================
 
+      - name: Create Database Password SecureString
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
+            --value "$DB_PASSWORD" \
+            --type SecureString \
+            --overwrite
+
       - name: Deploy Application Stack
 
         id: deploy_application
 
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
         run: |
 
@@ -1191,7 +1199,6 @@ jobs:
             --template-file cloudformation/api-stack.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
-              "DBPassword=$DB_PASSWORD" \
               "CodeVersion=${{ github.sha }}" \
               "EnvironmentName=$ENVIRONMENT_NAME" \
             --no-fail-on-empty-changeset

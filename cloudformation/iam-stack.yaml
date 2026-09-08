@@ -114,6 +114,13 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+              - Sid: ReadDatabasePassword
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
               # ==================================================
               # RDS
@@ -230,6 +237,13 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+              - Sid: ReadDatabasePassword
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
               # ==================================================
               # RDS
@@ -346,6 +360,13 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+              - Sid: ReadDatabasePassword
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
               # ==================================================
               # SQS
@@ -480,6 +501,13 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+              - Sid: ReadDatabasePassword
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
               # ==================================================
               # RDS

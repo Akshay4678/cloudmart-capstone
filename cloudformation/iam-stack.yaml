@@ -64,7 +64,7 @@ Resources:
 
             Statement:
 
-              - Sid: ReadAuthToken
+              - Sid: ReadUserAuthToken
 
                 Effect: Allow
 
@@ -72,7 +72,19 @@ Resources:
                   - ssm:GetParameter
 
                 Resource:
-                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/token
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/user-token
+
+
+              - Sid: ReadAdminAuthToken
+
+                Effect: Allow
+
+                Action:
+                  - ssm:GetParameter
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/admin-token
+
 
 
   # ==============================================================
@@ -115,11 +127,15 @@ Resources:
 
             Statement:
               - Sid: ReadDatabasePassword
+
                 Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -238,11 +254,15 @@ Resources:
 
             Statement:
               - Sid: ReadDatabasePassword
+
                 Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -361,11 +381,15 @@ Resources:
 
             Statement:
               - Sid: ReadDatabasePassword
+
                 Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -502,11 +526,15 @@ Resources:
 
             Statement:
               - Sid: ReadDatabasePassword
+
                 Effect: Allow
+
                 Action:
                   - ssm:GetParameter
+
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================

@@ -91,7 +91,9 @@ jobs:
 
         env:
 
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
+
+          ADMIN_AUTH_TOKEN: ${{ secrets.ADMIN_AUTH_TOKEN }}
 
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
@@ -122,9 +124,18 @@ jobs:
           fi
 
 
-          if [ -z "$AUTH_TOKEN" ]; then
+          if [ -z "$USER_AUTH_TOKEN" ]; then
 
-            echo "ERROR: AUTH_TOKEN secret is missing."
+            echo "ERROR: USER_AUTH_TOKEN secret is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$ADMIN_AUTH_TOKEN" ]; then
+
+            echo "ERROR: ADMIN_AUTH_TOKEN secret is missing."
 
             exit 1
 
@@ -966,31 +977,71 @@ jobs:
 
 
       # ==========================================================
-      # 21. CREATE AUTH SECURESTRING
+      # 21. CREATE / UPDATE USER AND ADMIN AUTH SECURESTRINGS
       # ==========================================================
 
-      - name: Create Authentication SecureString
+      - name: Create Authentication SecureStrings
 
         env:
 
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
+
+          ADMIN_AUTH_TOKEN: ${{ secrets.ADMIN_AUTH_TOKEN }}
 
         run: |
 
           echo "=================================================="
-          echo "CREATING AUTHENTICATION SECURESTRING"
+          echo "CREATING USER AND ADMIN AUTHENTICATION SECURESTRINGS"
           echo "=================================================="
 
 
           aws ssm put-parameter \
             --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/token" \
-            --value "$AUTH_TOKEN" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/user-token" \
+            --value "$USER_AUTH_TOKEN" \
             --type SecureString \
             --overwrite
 
 
-          echo "Authentication SecureString created."
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/admin-token" \
+            --value "$ADMIN_AUTH_TOKEN" \
+            --type SecureString \
+            --overwrite
+
+
+          echo "User and admin authentication SecureStrings created/updated."
+
+
+      # ==========================================================
+      # 22. VERIFY AUTH PARAMETERS
+      # ==========================================================
+
+      - name: Verify Authentication Parameters
+
+        run: |
+
+          echo "=================================================="
+          echo "VERIFYING AUTHENTICATION PARAMETERS"
+          echo "=================================================="
+
+
+          aws ssm get-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/user-token" \
+            --query "Parameter.[Name,Type]" \
+            --output table
+
+
+          aws ssm get-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/admin-token" \
+            --query "Parameter.[Name,Type]" \
+            --output table
+
+
+          echo "Authentication parameters exist."
 
 
       # ==========================================================
@@ -1161,6 +1212,32 @@ jobs:
 
 
       # ==========================================================
+      # 28. CREATE DATABASE PASSWORD SECURESTRING
+      # ==========================================================
+
+      - name: Create Database Password SecureString
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "CREATING DATABASE PASSWORD SECURESTRING"
+          echo "=================================================="
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
+            --value "$DB_PASSWORD" \
+            --type SecureString \
+            --overwrite
+
+          echo "Database password SecureString created."
+
+
+      # ==========================================================
       # 28. DEPLOY APPLICATION
       #
       # IMPORTANT:
@@ -1170,21 +1247,9 @@ jobs:
       # before the Data stack attempts to remove old exports.
       # ==========================================================
 
-      - name: Create Database Password SecureString
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: |
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
-            --value "$DB_PASSWORD" \
-            --type SecureString \
-            --overwrite
-
       - name: Deploy Application Stack
 
         id: deploy_application
-
 
         run: |
 
@@ -1452,7 +1517,7 @@ jobs:
 
         env:
 
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
 
         run: |
 
@@ -1467,7 +1532,7 @@ jobs:
             --output /tmp/products-response.json \
             --write-out "%{http_code}" \
             --request GET \
-            --header "Authorization: Bearer $AUTH_TOKEN" \
+            --header "Authorization: Bearer $USER_AUTH_TOKEN" \
             "${{ steps.api_url.outputs.url }}/products")
 
 
@@ -1501,7 +1566,7 @@ jobs:
 
         env:
 
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
 
         run: |
 
@@ -1538,7 +1603,7 @@ jobs:
             --write-out "%{http_code}" \
             --request POST \
             --header "Content-Type: application/json" \
-            --header "Authorization: Bearer $AUTH_TOKEN" \
+            --header "Authorization: Bearer $USER_AUTH_TOKEN" \
             --data @/tmp/order.json \
             "${{ steps.api_url.outputs.url }}/orders")
 

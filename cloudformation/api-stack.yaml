@@ -1564,7 +1564,8 @@ Resources:
       DeploymentId:
         !Ref ApiDeployment
 
-      StageName: prod
+      StageName:
+        !Ref EnvironmentName
 
 
 # ================================================================
@@ -1594,7 +1595,7 @@ Outputs:
   ApiInvokeUrl:
 
     Value:
-      !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+      !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}
 
     Export:
       Name: cloudmart-api-invoke-url

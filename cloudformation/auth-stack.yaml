@@ -204,7 +204,7 @@ Resources:
                     return method in {"GET", "POST"}
 
                 if normalized_path.startswith("/orders/"):
-                    return method == "GET"
+                    return method in {"GET", "PUT"}
 
                 return False
 
@@ -227,7 +227,7 @@ Resources:
                     return method == "GET"
 
                 if normalized_path.startswith("/orders/"):
-                    return method == "GET"
+                    return method in {"GET", "PUT"}
 
                 return False
 

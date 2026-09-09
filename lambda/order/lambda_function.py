@@ -1089,6 +1089,62 @@ def cancel_order(order_id):
         if connection:
             connection.close()
 
+# ================================================================
+# GET ALL ORDERS
+# ================================================================
+
+def get_all_orders():
+
+    connection = None
+
+    try:
+
+        connection = get_connection()
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    order_id,
+                    customer_id,
+                    status,
+                    total_amount,
+                    created_at,
+                    updated_at
+                FROM orders
+                ORDER BY created_at DESC
+                """
+            )
+
+            orders = cursor.fetchall()
+
+        return response(
+            200,
+            {
+                "orders": orders
+            }
+        )
+
+    except Exception as exc:
+
+        print(
+            f"Get all orders error: {exc}"
+        )
+
+        return response(
+            500,
+            {
+                "message": "Internal server error"
+            }
+        )
+
+    finally:
+
+        if connection:
+            connection.close()
+
+
 
 # ================================================================
 # LAMBDA HANDLER
@@ -1182,12 +1238,63 @@ def lambda_handler(event, context):
         return get_order(order_id)
 
     # ============================================================
-    # GET /orders?customer_id=...
+    # GET /orders
+    #
+    # USER:
+    #   GET /orders?customer_id=CUST102
+    #
+    # ADMIN:
+    #   GET /orders
+    #   GET /orders?customer_id=CUST102
     # ============================================================
 
     if method == "GET":
 
         customer_id = query_parameters.get("customer_id")
+
+        # --------------------------------------------------------
+        # Get caller role from Lambda authorizer
+        # --------------------------------------------------------
+
+        request_context = event.get(
+            "requestContext"
+        ) or {}
+
+        authorizer = request_context.get(
+            "authorizer"
+        ) or {}
+
+        role = authorizer.get(
+            "role"
+        )
+
+        print(
+            f"GET /orders requested by role={role}, "
+            f"customer_id={customer_id}"
+        )
+
+        # --------------------------------------------------------
+        # ADMIN
+        #
+        # No customer_id -> return ALL orders
+        # customer_id -> return that customer's orders
+        # --------------------------------------------------------
+
+        if role == "admin":
+
+            if customer_id:
+
+                return get_customer_orders(
+                    customer_id
+                )
+
+            return get_all_orders()
+
+        # --------------------------------------------------------
+        # USER
+        #
+        # customer_id is required
+        # --------------------------------------------------------
 
         if not customer_id:
 
@@ -1195,12 +1302,15 @@ def lambda_handler(event, context):
                 400,
                 {
                     "message": (
-                        "customer_id query parameter is required"
-                    ),
-                },
+                        "customer_id query parameter "
+                        "is required for users"
+                    )
+                }
             )
 
-        return get_customer_orders(customer_id)
+        return get_customer_orders(
+            customer_id
+        )
 
     # ============================================================
     # PUT /orders/{orderId}

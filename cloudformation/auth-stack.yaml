@@ -183,29 +183,56 @@ Resources:
           # =========================================================
 
           def is_allowed(role, method, path):
-              normalized_path = path.rstrip("/") or "/"
 
-              if role == "user":
-                  return (
-                      method == "GET"
-                      and (
-                          normalized_path == "/products"
-                          or normalized_path.startswith("/products/")
-                      )
-                  ) or (
-                      method == "POST"
-                      and normalized_path == "/orders"
-                  )
+            normalized_path = path.rstrip("/") or "/"
 
-              if role == "admin":
-                  if normalized_path == "/products":
-                      return method in {"GET", "POST"}
+            # =========================================================
+            # USER
+            # =========================================================
 
-                  if normalized_path.startswith("/products/"):
-                      return method in {"GET", "PUT", "DELETE"}
+            if role == "user":
 
-              return False
+                # Products - read only
+                if normalized_path == "/products":
+                    return method == "GET"
 
+                if normalized_path.startswith("/products/"):
+                    return method == "GET"
+
+                # Orders
+                if normalized_path == "/orders":
+                    return method in {"GET", "POST"}
+
+                if normalized_path.startswith("/orders/"):
+                    return method == "GET"
+
+                return False
+
+
+            # =========================================================
+            # ADMIN
+            # =========================================================
+
+            if role == "admin":
+
+                # Products
+                if normalized_path == "/products":
+                    return method in {"GET", "POST"}
+
+                if normalized_path.startswith("/products/"):
+                    return method in {"GET", "PUT", "DELETE"}
+
+                # Orders
+                if normalized_path == "/orders":
+                    return method == "GET"
+
+                if normalized_path.startswith("/orders/"):
+                    return method == "GET"
+
+                return False
+
+
+            return False
 
           # =========================================================
           # LAMBDA HANDLER

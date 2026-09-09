@@ -810,6 +810,7 @@ def get_order(order_id):
             cursor.execute(
                 """
                 SELECT
+                    id AS order_item_id,
                     product_id,
                     quantity,
                     price,

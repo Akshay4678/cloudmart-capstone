@@ -383,13 +383,7 @@ Resources:
             InputPathsMap:
               productId: $.detail.product_id
               stockCount: $.detail.stock_count
-            InputTemplate: |
-              LOW STOCK ALERT!
-
-              Product <productId> is running low on stock.
-              Remaining stock: <stockCount> units.
-
-              Please restock this product soon.
+            InputTemplate: '"LOW STOCK ALERT!\n\nProduct <productId> is running low on stock.\nRemaining stock: <stockCount> units.\n\nPlease restock this product soon."'
 
 
   # ==============================================================
@@ -500,15 +494,7 @@ Resources:
               customerId: $.detail.customer_id
               status: $.detail.status
               totalAmount: $.detail.total_amount
-            InputTemplate: |
-              ORDER CONFIRMED!
-
-              Your order <orderId> has been successfully processed.
-              Customer: <customerId>
-              Status: <status>
-              Total Amount: <totalAmount>
-
-              Thank you for shopping with CloudMart!
+            InputTemplate: '"ORDER CONFIRMED!\n\nYour order <orderId> has been successfully processed.\nCustomer: <customerId>\nStatus: <status>\nTotal Amount: <totalAmount>\n\nThank you for shopping with CloudMart!"'
 
 
   # ==============================================================
@@ -619,15 +605,7 @@ Resources:
               customerId: $.detail.customer_id
               status: $.detail.status
               reason: $.detail.reason
-            InputTemplate: |
-              ORDER PROCESSING FAILED
-
-              Order <orderId> could not be completed.
-              Customer: <customerId>
-              Status: <status>
-              Reason: <reason>
-
-              Please check the order and try again if required.
+            InputTemplate: '"ORDER PROCESSING FAILED\n\nOrder <orderId> could not be completed.\nCustomer: <customerId>\nStatus: <status>\nReason: <reason>\n\nPlease check the order and try again if required."'
 
 
   # ==============================================================

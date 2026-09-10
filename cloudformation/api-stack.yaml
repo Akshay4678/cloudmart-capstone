@@ -379,6 +379,18 @@ Resources:
 
           Id: LowStockSNSTarget
 
+          InputTransformer:
+            InputPathsMap:
+              productId: $.detail.product_id
+              stockCount: $.detail.stock_count
+            InputTemplate: |
+              "LOW STOCK ALERT!
+
+              Product <productId> is running low on stock.
+              Remaining stock: <stockCount> units.
+
+              Please restock this product soon."
+
 
   # ==============================================================
   # LOW STOCK SNS POLICY
@@ -482,6 +494,22 @@ Resources:
 
           Id: OrderConfirmationSNSTarget
 
+          InputTransformer:
+            InputPathsMap:
+              orderId: $.detail.order_id
+              customerId: $.detail.customer_id
+              status: $.detail.status
+              totalAmount: $.detail.total_amount
+            InputTemplate: |
+              "ORDER CONFIRMED!
+
+              Your order <orderId> has been successfully processed.
+              Customer: <customerId>
+              Status: <status>
+              Total Amount: <totalAmount>
+
+              Thank you for shopping with CloudMart!"
+
 
   # ==============================================================
   # ORDER CONFIRMATION SNS POLICY
@@ -584,6 +612,22 @@ Resources:
             !Ref OrderFailureTopic
 
           Id: OrderFailureSNSTarget
+
+          InputTransformer:
+            InputPathsMap:
+              orderId: $.detail.order_id
+              customerId: $.detail.customer_id
+              status: $.detail.status
+              reason: $.detail.reason
+            InputTemplate: |
+              "ORDER PROCESSING FAILED
+
+              Order <orderId> could not be completed.
+              Customer: <customerId>
+              Status: <status>
+              Reason: <reason>
+
+              Please check the order and try again if required."
 
 
   # ==============================================================

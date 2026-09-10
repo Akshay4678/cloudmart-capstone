@@ -91,10 +91,6 @@ jobs:
 
         env:
 
-          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
-
-          ADMIN_AUTH_TOKEN: ${{ secrets.ADMIN_AUTH_TOKEN }}
-
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
@@ -118,24 +114,6 @@ jobs:
           if [ -z "$DB_PASSWORD" ]; then
 
             echo "ERROR: DB_PASSWORD secret is missing."
-
-            exit 1
-
-          fi
-
-
-          if [ -z "$USER_AUTH_TOKEN" ]; then
-
-            echo "ERROR: USER_AUTH_TOKEN secret is missing."
-
-            exit 1
-
-          fi
-
-
-          if [ -z "$ADMIN_AUTH_TOKEN" ]; then
-
-            echo "ERROR: ADMIN_AUTH_TOKEN secret is missing."
 
             exit 1
 
@@ -407,6 +385,31 @@ jobs:
 
 
           echo ""
+          echo "Checking Authorizer Lambda..."
+
+
+          if [ ! -f "lambda/authorizer/lambda_function.py" ]; then
+
+            echo "ERROR: Missing lambda/authorizer/lambda_function.py"
+
+            exit 1
+
+          fi
+
+
+          if [ ! -f "lambda/authorizer/requirements.txt" ]; then
+
+            echo "ERROR: Missing lambda/authorizer/requirements.txt"
+
+            exit 1
+
+          fi
+
+
+          echo "Authorizer Lambda files OK."
+
+
+          echo ""
           echo "Checking root schema.sql..."
 
 
@@ -496,7 +499,22 @@ jobs:
           }
 
 
-          echo "PyMySQL requirement verified."
+          echo ""
+          echo "Authorizer Lambda requirements:"
+          cat lambda/authorizer/requirements.txt
+
+
+          grep -qi "^PyMySQL==" \
+            lambda/authorizer/requirements.txt || {
+
+            echo "ERROR: PyMySQL missing from Authorizer Lambda."
+
+            exit 1
+
+          }
+
+
+          echo "PyMySQL requirement verified for all database Lambdas."
 
 
       # ==========================================================
@@ -515,10 +533,62 @@ jobs:
           rm -rf build
 
 
+          mkdir -p build/authorizer
           mkdir -p build/product
           mkdir -p build/order
           mkdir -p build/order_processor
           mkdir -p build/report
+
+
+          # ------------------------------------------------------
+          # AUTHORIZER
+          # ------------------------------------------------------
+
+          echo ""
+          echo "Packaging Authorizer Lambda..."
+
+
+          cp \
+            lambda/authorizer/lambda_function.py \
+            build/authorizer/index.py
+
+
+          python -m pip install \
+            --no-cache-dir \
+            -r lambda/authorizer/requirements.txt \
+            -t build/authorizer
+
+
+          if [ ! -f "build/authorizer/index.py" ]; then
+
+            echo "ERROR: Authorizer index.py was not created."
+
+            exit 1
+
+          fi
+
+
+          if [ ! -d "build/authorizer/pymysql" ]; then
+
+            echo "ERROR: PyMySQL missing from Authorizer Lambda."
+
+            exit 1
+
+          fi
+
+
+          cd build/authorizer
+
+
+          zip -r \
+            ../authorizer-lambda-${{ github.sha }}.zip \
+            .
+
+
+          cd ../..
+
+
+          echo "Authorizer Lambda packaged successfully."
 
 
           # ------------------------------------------------------
@@ -779,6 +849,46 @@ jobs:
           fi
 
 
+          if [ ! -s "build/authorizer-lambda-${{ github.sha }}.zip" ]; then
+
+            echo "ERROR: Authorizer Lambda ZIP is missing."
+
+            exit 1
+
+          fi
+
+
+          echo ""
+          echo "Checking Authorizer Lambda package..."
+
+
+          if ! unzip -l \
+            "build/authorizer-lambda-${{ github.sha }}.zip" \
+            | grep -qi "pymysql"; then
+
+            echo "ERROR: PyMySQL not found inside Authorizer Lambda ZIP."
+
+            exit 1
+
+          fi
+
+
+          if ! unzip -l \
+            "build/authorizer-lambda-${{ github.sha }}.zip" \
+            | grep -qi "index.py"; then
+
+            echo "ERROR: index.py not found inside Authorizer Lambda ZIP."
+
+            exit 1
+
+          fi
+
+
+          echo "Authorizer Lambda contains:"
+          echo "  - index.py"
+          echo "  - PyMySQL"
+
+
           echo ""
           echo "Checking Order Lambda package..."
 
@@ -926,126 +1036,7 @@ jobs:
 
 
       # ==========================================================
-      # 19. DEPLOY AUTH
-      # ==========================================================
-
-      - name: Deploy Auth Stack
-
-        id: deploy_auth
-
-        run: |
-
-          echo "=================================================="
-          echo "DEPLOYING AUTH STACK"
-          echo "=================================================="
-
-
-          aws cloudformation deploy \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack \
-            --template-file cloudformation/auth-stack.yaml \
-            --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
-
-
-          echo "Auth stack deployment completed."
-
-
-      # ==========================================================
-      # 20. AUTH ERRORS
-      # ==========================================================
-
-      - name: Show Auth Stack Errors
-
-        if: failure() && steps.deploy_auth.outcome == 'failure'
-
-        run: |
-
-          echo "=================================================="
-          echo "AUTH STACK EVENTS"
-          echo "=================================================="
-
-
-          aws cloudformation describe-stack-events \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack \
-            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-            --output table \
-            || true
-
-
-      # ==========================================================
-      # 21. CREATE / UPDATE USER AND ADMIN AUTH SECURESTRINGS
-      # ==========================================================
-
-      - name: Create Authentication SecureStrings
-
-        env:
-
-          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
-
-          ADMIN_AUTH_TOKEN: ${{ secrets.ADMIN_AUTH_TOKEN }}
-
-        run: |
-
-          echo "=================================================="
-          echo "CREATING USER AND ADMIN AUTHENTICATION SECURESTRINGS"
-          echo "=================================================="
-
-
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/user-token" \
-            --value "$USER_AUTH_TOKEN" \
-            --type SecureString \
-            --overwrite
-
-
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/admin-token" \
-            --value "$ADMIN_AUTH_TOKEN" \
-            --type SecureString \
-            --overwrite
-
-
-          echo "User and admin authentication SecureStrings created/updated."
-
-
-      # ==========================================================
-      # 22. VERIFY AUTH PARAMETERS
-      # ==========================================================
-
-      - name: Verify Authentication Parameters
-
-        run: |
-
-          echo "=================================================="
-          echo "VERIFYING AUTHENTICATION PARAMETERS"
-          echo "=================================================="
-
-
-          aws ssm get-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/user-token" \
-            --query "Parameter.[Name,Type]" \
-            --output table
-
-
-          aws ssm get-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/admin-token" \
-            --query "Parameter.[Name,Type]" \
-            --output table
-
-
-          echo "Authentication parameters exist."
-
-
-      # ==========================================================
-      # 22. CHECK DATA STACK
+      # PREPARE DATA STACK FOR AUTHORIZER
       #
       # The Data stack already exists in the current environment.
       #
@@ -1099,7 +1090,7 @@ jobs:
 
 
       # ==========================================================
-      # 23. GET LAMBDA ARTIFACT BUCKET
+      # GET LAMBDA ARTIFACT BUCKET
       # ==========================================================
 
       - name: Get Lambda Artifact Bucket
@@ -1133,6 +1124,84 @@ jobs:
 
 
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+
+
+      # ==========================================================
+      # UPLOAD AUTHORIZER
+      # ==========================================================
+
+      - name: Upload Authorizer Lambda
+
+        run: |
+
+          echo "=================================================="
+          echo "UPLOADING AUTHORIZER LAMBDA"
+          echo "=================================================="
+
+
+          aws s3 cp \
+            "build/authorizer-lambda-${{ github.sha }}.zip" \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/auth/authorizer-lambda-${{ github.sha }}.zip"
+
+
+          echo "Authorizer Lambda uploaded."
+
+
+      # ==========================================================
+      # 19. DEPLOY AUTH
+      # ==========================================================
+
+      - name: Deploy Auth Stack
+
+        id: deploy_auth
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING AUTH STACK"
+          echo "=================================================="
+
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-auth-stack \
+            --template-file cloudformation/auth-stack.yaml \
+            --parameter-overrides \
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+              "DBPassword=$DB_PASSWORD" \
+              "CodeVersion=${{ github.sha }}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+
+          echo "Auth stack deployment completed."
+
+
+      # ==========================================================
+      # 20. AUTH ERRORS
+      # ==========================================================
+
+      - name: Show Auth Stack Errors
+
+        if: failure() && steps.deploy_auth.outcome == 'failure'
+
+        run: |
+
+          echo "=================================================="
+          echo "AUTH STACK EVENTS"
+          echo "=================================================="
+
+
+          aws cloudformation describe-stack-events \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-auth-stack \
+            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
 
 
       # ==========================================================

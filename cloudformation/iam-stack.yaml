@@ -56,7 +56,7 @@ Resources:
 
       Policies:
 
-        - PolicyName: AuthorizerSSMPolicy
+        - PolicyName: AuthorizerRDSAndVPCAccess
 
           PolicyDocument:
 
@@ -64,27 +64,30 @@ Resources:
 
             Statement:
 
-              - Sid: ReadUserAuthToken
+              # ==================================================
+              # VPC NETWORK INTERFACES
+              # ==================================================
+
+              - Sid: ManageLambdaNetworkInterfaces
 
                 Effect: Allow
 
                 Action:
-                  - ssm:GetParameter
 
-                Resource:
-                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/user-token
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
 
+                Resource: "*"
 
-              - Sid: ReadAdminAuthToken
+                Condition:
 
-                Effect: Allow
+                  StringEquals:
 
-                Action:
-                  - ssm:GetParameter
-
-                Resource:
-                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/admin-token
-
+                    aws:RequestedRegion:
+                      - !Ref AWS::Region
 
 
   # ==============================================================

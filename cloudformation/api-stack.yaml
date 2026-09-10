@@ -384,12 +384,12 @@ Resources:
               productId: $.detail.product_id
               stockCount: $.detail.stock_count
             InputTemplate: |
-              "LOW STOCK ALERT!
+              LOW STOCK ALERT!
 
               Product <productId> is running low on stock.
               Remaining stock: <stockCount> units.
 
-              Please restock this product soon."
+              Please restock this product soon.
 
 
   # ==============================================================
@@ -501,14 +501,14 @@ Resources:
               status: $.detail.status
               totalAmount: $.detail.total_amount
             InputTemplate: |
-              "ORDER CONFIRMED!
+              ORDER CONFIRMED!
 
               Your order <orderId> has been successfully processed.
               Customer: <customerId>
               Status: <status>
               Total Amount: <totalAmount>
 
-              Thank you for shopping with CloudMart!"
+              Thank you for shopping with CloudMart!
 
 
   # ==============================================================
@@ -620,14 +620,14 @@ Resources:
               status: $.detail.status
               reason: $.detail.reason
             InputTemplate: |
-              "ORDER PROCESSING FAILED
+              ORDER PROCESSING FAILED
 
               Order <orderId> could not be completed.
               Customer: <customerId>
               Status: <status>
               Reason: <reason>
 
-              Please check the order and try again if required."
+              Please check the order and try again if required.
 
 
   # ==============================================================

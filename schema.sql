@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS customers (
 
     phone VARCHAR(20),
 
+    auth_token VARCHAR(255) NOT NULL,
+
     created_at DATETIME NOT NULL
         DEFAULT CURRENT_TIMESTAMP,
 
@@ -61,10 +63,11 @@ CREATE TABLE IF NOT EXISTS customers (
 
     PRIMARY KEY (customer_id),
 
-    UNIQUE KEY uk_customers_email (email)
+    UNIQUE KEY uk_customers_email (email),
+
+    UNIQUE KEY uk_customers_auth_token (auth_token)
 
 ) ENGINE=InnoDB;
-
 
 -- =====================================================
 -- PRODUCTS TABLE
@@ -340,33 +343,38 @@ INSERT INTO customers
     customer_id,
     name,
     email,
-    phone
+    phone,
+    auth_token
 )
 VALUES
 (
     'CUST101',
     'Akshay',
     'akshay@example.com',
-    '9876543210'
+    '9876543210',
+    'akshaytoken123'
 ),
 (
     'CUST102',
     'Rahul',
     'rahul@example.com',
-    '9876543211'
+    '9876543211',
+    'rahultoken123'
 ),
 (
     'CUST103',
     'Priya',
     'priya@example.com',
-    '9876543212'
+    '9876543212',
+    'priyatoken123'
 )
 ON DUPLICATE KEY UPDATE
 
     name = VALUES(name),
 
-    phone = VALUES(phone);
+    phone = VALUES(phone),
 
+    auth_token = VALUES(auth_token);
 
 -- =====================================================
 -- SAMPLE PRODUCTS

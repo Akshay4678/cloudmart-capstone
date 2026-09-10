@@ -7,7 +7,6 @@
 -- Tables:
 -- customers
 -- products
--- inventory
 -- orders
 -- order_items
 -- audit_logs
@@ -19,13 +18,8 @@
 --     | 1 : many
 --     v
 -- orders
---
--- products
---     |
---     | 1 : 1
---     v
--- inventory
---
+
+
 -- orders
 --     |
 --     | 1 : many
@@ -121,41 +115,6 @@ CREATE TABLE IF NOT EXISTS products (
 
 ) ENGINE=InnoDB;
 
-
--- =====================================================
--- INVENTORY TABLE
--- =====================================================
---
--- IMPORTANT:
--- One product can have only ONE inventory row.
---
--- product_id is therefore UNIQUE.
---
--- =====================================================
-
-CREATE TABLE IF NOT EXISTS inventory (
-
-    inventory_id INT NOT NULL AUTO_INCREMENT,
-
-    product_id INT NOT NULL,
-
-    quantity INT NOT NULL DEFAULT 0,
-
-    last_updated TIMESTAMP NOT NULL
-        DEFAULT CURRENT_TIMESTAMP
-        ON UPDATE CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (inventory_id),
-
-    UNIQUE KEY uk_inventory_product (product_id),
-
-    CONSTRAINT fk_inventory_product
-        FOREIGN KEY (product_id)
-        REFERENCES products(product_id)
-        ON DELETE CASCADE
-        ON UPDATE CASCADE
-
-) ENGINE=InnoDB;
 
 
 -- =====================================================
@@ -440,42 +399,6 @@ ON DUPLICATE KEY UPDATE
 
     price = VALUES(price);
 
-
--- =====================================================
--- SAMPLE INVENTORY
--- =====================================================
---
--- IMPORTANT:
--- product_id is UNIQUE.
---
--- Existing inventory quantity is NOT reset.
---
--- This is important because the Order Processor
--- will modify inventory quantity.
---
--- =====================================================
-
-INSERT INTO inventory
-(
-    product_id,
-    quantity
-)
-VALUES
-(
-    1,
-    10
-),
-(
-    2,
-    25
-),
-(
-    3,
-    15
-)
-ON DUPLICATE KEY UPDATE
-
-    product_id = VALUES(product_id);
 
 
 -- =====================================================

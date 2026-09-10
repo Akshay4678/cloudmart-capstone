@@ -777,7 +777,7 @@ def process_order(message):
 
                 if stock_count <= 0:
 
-                    raise InventoryError(
+                    raise InsufficientStockError(
                         product_id=product_id,
                         product_name=product["name"],
                         requested=quantity,
@@ -786,7 +786,7 @@ def process_order(message):
 
                 if quantity > stock_count:
 
-                    raise InventoryError(
+                    raise InsufficientStockError(
                         product_id=product_id,
                         product_name=product["name"],
                         requested=quantity,
@@ -862,29 +862,7 @@ def process_order(message):
                         f"for product {product_id}"
                     )
 
-                # ------------------------------------------------
-                # UPDATE INVENTORY
-                # ------------------------------------------------
-
-                cursor.execute(
-                    """
-                    UPDATE inventory
-                    SET
-                        quantity = %s
-                    WHERE product_id = %s
-                    """,
-                    (
-                        new_stock,
-                        product_id,
-                    ),
-                )
-
-                if cursor.rowcount == 0:
-
-                    raise RuntimeError(
-                        f"Inventory record missing "
-                        f"for product {product_id}"
-                    )
+                
 
                 print(
                     f"Stock updated for product "
@@ -985,7 +963,6 @@ def process_order(message):
         # COMMIT EVERYTHING
         #
         # Product stock
-        # Inventory
         # Product status
         # Stock audit
         # Status audit
@@ -1031,17 +1008,17 @@ def process_order(message):
         }
 
     # ============================================================
-    # BUSINESS FAILURE: INVENTORY
+    # BUSINESS FAILURE: INSUFFICIENT STOCK
     # ============================================================
 
-    except InventoryError as exc:
+    except InsufficientStockError as exc:
 
         if connection:
 
             connection.rollback()
 
         print(
-            f"INSUFFICIENT INVENTORY FOR ORDER "
+            f"INSUFFICIENT STOCK FOR ORDER "
             f"{order_id}: {exc}"
         )
 
@@ -1147,10 +1124,10 @@ def process_order(message):
 
 
 # ================================================================
-# INVENTORY ERROR
+# INSUFFICIENT STOCK ERROR
 # ================================================================
 
-class InventoryError(Exception):
+class InsufficientStockError(Exception):
 
     def __init__(
         self,

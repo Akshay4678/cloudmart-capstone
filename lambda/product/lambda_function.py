@@ -257,10 +257,10 @@ def write_audit_log(
 
 
 # =========================================================
-# PUBLISH INVENTORY CHANGE EVENT
+# PUBLISH PRODUCT STOCK CHANGE EVENT
 # =========================================================
 
-def publish_inventory_event(
+def publish_stock_change_event(
     product_id,
     stock_count
 ):
@@ -277,8 +277,8 @@ def publish_inventory_event(
         result = events_client.put_events(
             Entries=[
                 {
-                    "Source": "cloudmart.inventory",
-                    "DetailType": "InventoryChanged",
+                    "Source": "cloudmart.products",
+                    "DetailType": "ProductStockChanged",
                     "Detail": json.dumps(
                         event_detail
                     )
@@ -575,32 +575,6 @@ def create_product(
             new_product_id
         )
 
-    # ---------------------------------------------------------
-    # CREATE INVENTORY ROW
-    # ---------------------------------------------------------
-
-    with connection.cursor() as cursor:
-
-        cursor.execute(
-            """
-            INSERT INTO inventory
-            (
-                product_id,
-                quantity
-            )
-            VALUES
-            (
-                %s,
-                %s
-            )
-            """,
-            (
-                new_product_id,
-                stock_count
-            )
-        )
-
-    # ---------------------------------------------------------
     # AUDIT CREATE
     # ---------------------------------------------------------
 
@@ -635,7 +609,7 @@ def create_product(
     # PUBLISH EVENT
     # ---------------------------------------------------------
 
-    publish_inventory_event(
+    publish_stock_change_event(
         new_product_id,
         stock_count
     )
@@ -916,51 +890,6 @@ def update_product(
         )
 
     # ---------------------------------------------------------
-    # SYNCHRONIZE INVENTORY
-    # ---------------------------------------------------------
-
-    with connection.cursor() as cursor:
-
-        cursor.execute(
-            """
-            UPDATE inventory
-            SET
-                quantity = %s
-            WHERE product_id = %s
-            """,
-            (
-                stock_count,
-                product_id
-            )
-        )
-
-        inventory_rows = cursor.rowcount
-
-        # If an inventory row does not exist,
-        # create one.
-
-        if inventory_rows == 0:
-
-            cursor.execute(
-                """
-                INSERT INTO inventory
-                (
-                    product_id,
-                    quantity
-                )
-                VALUES
-                (
-                    %s,
-                    %s
-                )
-                """,
-                (
-                    product_id,
-                    stock_count
-                )
-            )
-
-    # ---------------------------------------------------------
     # NEW PRODUCT SNAPSHOT
     # ---------------------------------------------------------
 
@@ -1057,7 +986,7 @@ def update_product(
     # PUBLISH EVENT
     # ---------------------------------------------------------
 
-    publish_inventory_event(
+    publish_stock_change_event(
         product_id,
         stock_count
     )

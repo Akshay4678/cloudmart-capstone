@@ -221,7 +221,7 @@ Resources:
   # ORDER PROCESSING LAMBDA
   #
   # Reads messages from SQS.
-  # Reads and updates Orders, Products and Inventory in RDS.
+  # Reads and updates Orders and Products in RDS.
   # Publishes order events to EventBridge.
   # ==============================================================
 
@@ -344,23 +344,23 @@ Resources:
   # LOW STOCK EVENTBRIDGE RULE
   # ==============================================================
 
-  InventoryLowStockRule:
+  ProductLowStockRule:
     Type: AWS::Events::Rule
 
     Properties:
 
       Name:
-        !Sub cloudmart-inventory-low-stock-rule-${EnvironmentName}
+        !Sub cloudmart-product-low-stock-rule-${EnvironmentName}
 
-      Description: Send notification when inventory becomes low
+      Description: Send notification when product stock becomes low
 
       EventPattern:
 
         source:
-          - cloudmart.inventory
+          - cloudmart.products
 
         detail-type:
-          - InventoryChanged
+          - ProductStockChanged
 
         detail:
 
@@ -418,7 +418,7 @@ Resources:
               ArnEquals:
 
                 aws:SourceArn:
-                  !GetAtt InventoryLowStockRule.Arn
+                  !GetAtt ProductLowStockRule.Arn
 
 
   # ==============================================================
@@ -630,7 +630,7 @@ Resources:
   # ==============================================================
   # REPORT LAMBDA
   #
-  # Reads Orders, Products and Inventory from RDS.
+  # Reads Orders and Products from RDS.
   # Writes daily report to S3.
   # ==============================================================
 
@@ -1526,6 +1526,9 @@ Resources:
 
       RestApiId:
         !Ref CloudMartApi
+
+      Description:
+        !Sub API deployment ${CodeVersion}
 
 
   # ==============================================================

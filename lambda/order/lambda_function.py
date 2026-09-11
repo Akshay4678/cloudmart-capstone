@@ -903,9 +903,8 @@ def get_customer_orders(customer_id):
         if connection:
             connection.close()
 
-
 # ================================================================
-# UPDATE ORDER
+# UPDATE ORDER STATUS
 # ================================================================
 
 def update_order(order_id, body):
@@ -914,26 +913,27 @@ def update_order(order_id, body):
         return response(
             400,
             {
-                "message": "Request body must be a JSON object",
-            },
+                "message": "Request body must be a JSON object"
+            }
         )
 
     status = body.get("status")
 
-    allowed_statuses = [
-        "PROCESSING",
-        "CONFIRMED",
+    # Only these statuses are allowed through PUT
+    allowed_statuses = {
         "FAILED",
-        "CANCELLED",
-    ]
+        "CANCELLED"
+    }
 
     if status not in allowed_statuses:
-
         return response(
             400,
             {
-                "message": "Invalid order status",
-            },
+                "message": (
+                    "Invalid order status. "
+                    "Allowed values: FAILED, CANCELLED"
+                )
+            }
         )
 
     connection = None
@@ -943,6 +943,38 @@ def update_order(order_id, body):
         connection = get_connection()
 
         with connection.cursor() as cursor:
+
+            # ----------------------------------------------------
+            # Check whether order exists
+            # ----------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    order_id,
+                    customer_id,
+                    status
+                FROM orders
+                WHERE order_id = %s
+                """,
+                (order_id,)
+            )
+
+            order = cursor.fetchone()
+
+            if not order:
+
+                return response(
+                    404,
+                    {
+                        "message": "Order not found",
+                        "order_id": order_id
+                    }
+                )
+
+            # ----------------------------------------------------
+            # Update order status
+            # ----------------------------------------------------
 
             cursor.execute(
                 """
@@ -955,30 +987,19 @@ def update_order(order_id, body):
                 (
                     status,
                     datetime.now(timezone.utc).replace(tzinfo=None),
-                    order_id,
-                ),
-            )
-
-            if cursor.rowcount == 0:
-
-                connection.rollback()
-
-                return response(
-                    404,
-                    {
-                        "message": "Order not found",
-                    },
+                    order_id
                 )
+            )
 
         connection.commit()
 
         return response(
             200,
             {
-                "message": "Order updated",
+                "message": "Order status updated successfully",
                 "order_id": order_id,
-                "status": status,
-            },
+                "status": status
+            }
         )
 
     except Exception as exc:
@@ -986,20 +1007,19 @@ def update_order(order_id, body):
         if connection:
             connection.rollback()
 
-        print(f"Update order error: {exc}")
+        print(f"Update order status error: {exc}")
 
         return response(
             500,
             {
-                "message": "Internal server error",
-            },
+                "message": "Internal server error"
+            }
         )
 
     finally:
 
         if connection:
             connection.close()
-
 
 # ================================================================
 # CANCEL ORDER
@@ -1240,16 +1260,27 @@ def lambda_handler(event, context):
     # ============================================================
     # GET /orders
     #
-    # USER: GET /orders — use customer_id from Authorizer.
-    # ADMIN: GET /orders or GET /orders?customer_id=CUST102
+    # USER:
+    #   GET /orders
+    #   The customer ID comes from the Authorizer.
     #
+    # ADMIN:
+    #   GET /orders
+    #   GET /orders?customer_id=CUST101
+    # ============================================================
+
     if method == "GET":
+
         requested_customer_id = query_parameters.get("customer_id")
+
         request_context = event.get("requestContext") or {}
         authorizer = request_context.get("authorizer") or {}
 
-        role = (authorizer.get("role") or "").upper()
-        authenticated_customer_id = authorizer.get("customer_id")
+        role = str(authorizer.get("role") or "").upper()
+        authenticated_customer_id = (
+            authorizer.get("customer_id")
+            or authorizer.get("principalId", "").replace("cloudmart-", "")
+        )
 
         print(
             f"GET /orders requested by role={role}, "
@@ -1258,22 +1289,45 @@ def lambda_handler(event, context):
         )
 
         if role == "ADMIN":
+
             if requested_customer_id:
                 return get_customer_orders(requested_customer_id)
+
             return get_all_orders()
 
         if role == "USER":
+
             if not authenticated_customer_id:
                 return response(
                     500,
-                    {"message": "Authenticated customer ID was not found"}
+                    {
+                        "message": "Customer identity was not found"
+                    }
                 )
 
-            # Never trust a customer_id supplied by a normal user.
+            if (
+                requested_customer_id
+                and requested_customer_id != authenticated_customer_id
+            ):
+                return response(
+                    403,
+                    {
+                        "message": (
+                            "Users can only access their own orders"
+                        )
+                    }
+                )
+
             return get_customer_orders(authenticated_customer_id)
 
-        return response(403, {"message": "Invalid user role"})
+        return response(
+            403,
+            {
+                "message": "Invalid user role"
+            }
+        )
 
+    # ============================================================
     # PUT /orders/{orderId}
     # ============================================================
 

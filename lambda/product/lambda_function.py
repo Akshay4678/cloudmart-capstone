@@ -1,6 +1,7 @@
 import json
 import os
 import math
+from decimal import Decimal, InvalidOperation
 
 import boto3
 
@@ -369,21 +370,27 @@ def validate_price(price):
     if price is None:
         return "price is required"
 
-    # JSON numbers should be actual numbers, not strings or booleans.
-    if isinstance(price, bool) or not isinstance(price, (int, float)):
+    # PATCH may reuse the existing MySQL DECIMAL value, which PyMySQL
+    # returns as Decimal. Accept int, float, and Decimal values.
+    if isinstance(price, bool) or not isinstance(price, (int, float, Decimal)):
         return "price must be a number"
 
-    if not math.isfinite(float(price)):
+    try:
+        numeric_price = Decimal(str(price))
+    except (InvalidOperation, ValueError, TypeError):
         return "price must be a valid number"
 
-    if float(price) <= 0:
+    if not numeric_price.is_finite():
+        return "price must be a valid number"
+
+    if numeric_price <= 0:
         return "price must be greater than 0"
 
     # products.price is DECIMAL(10,2)
-    if round(float(price), 2) != float(price):
+    if numeric_price.as_tuple().exponent < -2:
         return "price can have at most 2 decimal places"
 
-    if float(price) >= 100000000:
+    if numeric_price >= Decimal("100000000"):
         return "price is too large"
 
     return None

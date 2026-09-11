@@ -412,8 +412,6 @@ def mark_order_failed(
 
         connection = get_connection()
 
-        stock_changes = []
-
         with connection.cursor() as cursor:
 
             # ----------------------------------------------------
@@ -595,6 +593,10 @@ def process_order(message):
     try:
 
         connection = get_connection()
+
+        # Collect stock changes during this transaction.
+        # Publish them only after the transaction commits.
+        stock_changes = []
 
         # ========================================================
         # START TRANSACTION

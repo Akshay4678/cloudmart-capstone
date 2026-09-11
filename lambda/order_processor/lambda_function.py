@@ -291,6 +291,45 @@ def publish_order_event(
 
 
 # ================================================================
+# PUBLISH PRODUCT STOCK EVENT
+# ================================================================
+
+def publish_product_stock_event(product_id, stock_count, order_id=None):
+
+    detail = {
+        "product_id": int(product_id),
+        "stock_count": int(stock_count),
+    }
+
+    if order_id is not None:
+        detail["order_id"] = str(order_id)
+
+    print(
+        "Publishing EventBridge event: ProductStockChanged ",
+        json.dumps(detail, default=json_default),
+    )
+
+    result = events.put_events(
+        Entries=[
+            {
+                "Source": "cloudmart.products",
+                "DetailType": "ProductStockChanged",
+                "Detail": json.dumps(detail, default=json_default),
+                "EventBusName": "default",
+            }
+        ]
+    )
+
+    print(
+        "ProductStockChanged EventBridge response:",
+        json.dumps(result, default=json_default),
+    )
+
+    if result.get("FailedEntryCount", 0) > 0:
+        raise RuntimeError("Failed to publish ProductStockChanged event")
+
+
+# ================================================================
 # EXTRACT SQS MESSAGE
 # ================================================================
 
@@ -372,6 +411,8 @@ def mark_order_failed(
     try:
 
         connection = get_connection()
+
+        stock_changes = []
 
         with connection.cursor() as cursor:
 
@@ -870,6 +911,11 @@ def process_order(message):
                     f"{old_stock} -> {new_stock}"
                 )
 
+                stock_changes.append({
+                    "product_id": product_id,
+                    "stock_count": new_stock,
+                })
+
                 # =================================================
                 # STOCK DECREASE AUDIT
                 # =================================================
@@ -981,6 +1027,21 @@ def process_order(message):
         put_metric(
             "OrdersProcessed"
         )
+
+        # Publish product stock events only after the database
+        # transaction has committed successfully.
+        for stock_change in stock_changes:
+            try:
+                publish_product_stock_event(
+                    product_id=stock_change["product_id"],
+                    stock_count=stock_change["stock_count"],
+                    order_id=order_id,
+                )
+            except Exception as exc:
+                print(
+                    "WARNING: Stock updated but ProductStockChanged "
+                    f"event failed: {type(exc).__name__}: {exc}"
+                )
 
         # ========================================================
         # EVENTBRIDGE

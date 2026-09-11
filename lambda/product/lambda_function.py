@@ -1,7 +1,7 @@
 import json
 import os
 import math
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 import boto3
 
@@ -370,27 +370,21 @@ def validate_price(price):
     if price is None:
         return "price is required"
 
-    # PATCH may reuse the existing MySQL DECIMAL value, which PyMySQL
-    # returns as Decimal. Accept int, float, and Decimal values.
-    if isinstance(price, bool) or not isinstance(price, (int, float, Decimal)):
+    # JSON numbers should be actual numbers, not strings or booleans.
+    if isinstance(price, bool) or not isinstance(price, (int, float)):
         return "price must be a number"
 
-    try:
-        numeric_price = Decimal(str(price))
-    except (InvalidOperation, ValueError, TypeError):
+    if not math.isfinite(float(price)):
         return "price must be a valid number"
 
-    if not numeric_price.is_finite():
-        return "price must be a valid number"
-
-    if numeric_price <= 0:
+    if float(price) <= 0:
         return "price must be greater than 0"
 
     # products.price is DECIMAL(10,2)
-    if numeric_price.as_tuple().exponent < -2:
+    if round(float(price), 2) != float(price):
         return "price can have at most 2 decimal places"
 
-    if numeric_price >= Decimal("100000000"):
+    if float(price) >= 100000000:
         return "price is too large"
 
     return None
@@ -786,8 +780,15 @@ def patch_product(event, product_id, connection):
     }
     merged.update(data)
 
+    # PyMySQL returns DECIMAL columns as Decimal objects.
+    # Convert only the existing price to a real JSON number.
+    # Otherwise json.dumps(..., default=str) would turn it into a
+    # string such as "199.00", and validate_price() would reject it.
+    if isinstance(merged.get("price"), Decimal):
+        merged["price"] = float(merged["price"])
+
     patched_event = dict(event)
-    patched_event["body"] = json.dumps(merged, default=str)
+    patched_event["body"] = json.dumps(merged)
     patched_event["isBase64Encoded"] = False
 
     return update_product(patched_event, product_id, connection)

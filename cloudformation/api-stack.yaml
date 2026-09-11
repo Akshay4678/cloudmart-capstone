@@ -1012,6 +1012,44 @@ Resources:
 
 
   # ==============================================================
+  # PATCH /products/{productId}
+  # ==============================================================
+
+  ProductIdPatchMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref ProductIdResource
+
+      HttpMethod: PATCH
+
+      AuthorizationType: CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt ProductLambda.Arn
+
+
+  # ==============================================================
   # DELETE /products/{productId}
   # ==============================================================
 
@@ -1236,44 +1274,6 @@ Resources:
             - LambdaArn:
                 !GetAtt OrderLambda.Arn
 
-
-
-  # ==============================================================
-  # PATCH /orders/{orderId}
-  # ==============================================================
-
-  OrderIdPatchMethod:
-    Type: AWS::ApiGateway::Method
-
-    Properties:
-
-      RestApiId:
-        !Ref CloudMartApi
-
-      ResourceId:
-        !Ref OrderIdResource
-
-      HttpMethod: PATCH
-
-      AuthorizationType: CUSTOM
-
-      AuthorizerId:
-        !Ref CloudMartAuthorizer
-
-      Integration:
-
-        Type: AWS_PROXY
-
-        IntegrationHttpMethod: POST
-
-        Uri:
-
-          Fn::Sub:
-
-            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
-
-            - LambdaArn:
-                !GetAtt OrderLambda.Arn
 
   # ==============================================================
   # DELETE /orders/{orderId}
@@ -1576,11 +1576,11 @@ Resources:
       - ProductIdGetMethod
       - ProductIdPutMethod
       - ProductIdDeleteMethod
+      - ProductIdPatchMethod
       - OrdersPostMethod
       - OrdersGetMethod
       - OrderIdGetMethod
       - OrderIdPutMethod
-      - OrderIdPatchMethod
       - OrderIdDeleteMethod
 
     Properties:

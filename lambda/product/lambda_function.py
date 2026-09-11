@@ -257,10 +257,10 @@ def write_audit_log(
 
 
 # =========================================================
-# PUBLISH PRODUCT STOCK CHANGE EVENT
+# PUBLISH INVENTORY CHANGE EVENT
 # =========================================================
 
-def publish_stock_change_event(
+def publish_inventory_event(
     product_id,
     stock_count
 ):
@@ -575,6 +575,7 @@ def create_product(
             new_product_id
         )
 
+    # ---------------------------------------------------------
     # AUDIT CREATE
     # ---------------------------------------------------------
 
@@ -609,7 +610,7 @@ def create_product(
     # PUBLISH EVENT
     # ---------------------------------------------------------
 
-    publish_stock_change_event(
+    publish_inventory_event(
         new_product_id,
         stock_count
     )
@@ -738,6 +739,51 @@ def get_products(
             "products": products
         }
     )
+
+
+# =========================================================
+# PATCH PRODUCT
+# =========================================================
+
+def patch_product(event, product_id, connection):
+
+    data, error_response = parse_json_body(event)
+    if error_response:
+        return error_response
+
+    allowed_fields = {"name", "description", "price", "stock_count"}
+    if not data or not set(data).issubset(allowed_fields):
+        return response(400, {
+            "message": "PATCH supports only name, description, price and stock_count"
+        })
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT name, description, price, stock_count
+            FROM products
+            WHERE product_id = %s
+            """,
+            (product_id,)
+        )
+        existing = cursor.fetchone()
+
+    if not existing:
+        return response(404, {"message": "Product not found"})
+
+    merged = {
+        "name": existing["name"],
+        "description": existing["description"],
+        "price": existing["price"],
+        "stock_count": existing["stock_count"]
+    }
+    merged.update(data)
+
+    patched_event = dict(event)
+    patched_event["body"] = json.dumps(merged)
+    patched_event["isBase64Encoded"] = False
+
+    return update_product(patched_event, product_id, connection)
 
 
 # =========================================================
@@ -986,7 +1032,7 @@ def update_product(
     # PUBLISH EVENT
     # ---------------------------------------------------------
 
-    publish_stock_change_event(
+    publish_inventory_event(
         product_id,
         stock_count
     )
@@ -1216,7 +1262,7 @@ def lambda_handler(
 
         # Validate productId only when the endpoint uses a product ID.
         # GET /products does not require productId.
-        if http_method in ["PUT", "DELETE"] and product_id is None:
+        if http_method in ["PUT", "PATCH", "DELETE"] and product_id is None:
             return response(
                 400,
                 {
@@ -1294,6 +1340,21 @@ def lambda_handler(
             )
 
         # =====================================================
+        # PATCH /products/{id}
+        # =====================================================
+
+        if (
+            http_method == "PATCH"
+            and product_id
+        ):
+
+            return patch_product(
+                event,
+                product_id,
+                connection
+            )
+
+        # =====================================================
         # DELETE /products/{id}
         # =====================================================
 
@@ -1312,7 +1373,7 @@ def lambda_handler(
         # INVALID REQUEST
         # =====================================================
 
-        if http_method in ["PUT", "DELETE"] and not product_id:
+        if http_method in ["PUT", "PATCH", "DELETE"] and not product_id:
             return response(
                 400,
                 {

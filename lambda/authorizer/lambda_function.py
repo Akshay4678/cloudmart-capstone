@@ -134,9 +134,11 @@ def is_allowed(role, method, path):
         # -------------------------------------------------
 
         if normalized_path == "/products":
+
             return method == "GET"
 
         if normalized_path.startswith("/products/"):
+
             return method == "GET"
 
 
@@ -145,14 +147,21 @@ def is_allowed(role, method, path):
         # -------------------------------------------------
 
         if normalized_path == "/orders":
-            return method in {"GET", "POST"}
 
-        if normalized_path.startswith("/orders/"):
             return method in {
                 "GET",
-                "PUT",
-                "PATCH"
+                "POST"
             }
+
+        if normalized_path.startswith("/orders/"):
+
+            return method in {
+                "GET",
+                "PUT"
+            }
+
+            # PATCH is intentionally not included.
+            # General users cannot update orders using PATCH.
 
         return False
 
@@ -168,12 +177,14 @@ def is_allowed(role, method, path):
         # -------------------------------------------------
 
         if normalized_path == "/products":
+
             return method in {
                 "GET",
                 "POST"
             }
 
         if normalized_path.startswith("/products/"):
+
             return method in {
                 "GET",
                 "PUT",
@@ -187,9 +198,11 @@ def is_allowed(role, method, path):
         # -------------------------------------------------
 
         if normalized_path == "/orders":
+
             return method == "GET"
 
         if normalized_path.startswith("/orders/"):
+
             return method in {
                 "GET",
                 "PUT",

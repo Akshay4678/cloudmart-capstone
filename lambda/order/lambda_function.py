@@ -1331,27 +1331,33 @@ def lambda_handler(event, context):
         )
 
     # ============================================================
-    # PATCH /orders/{orderId}\n\n    if method == "PATCH" and order_id:\n        body = parse_request_body(event)\n        ctx = event.get("requestContext") or {}\n        auth = ctx.get("authorizer") or {}\n        return update_order(order_id, body, auth.get("customer_id"), str(auth.get("role") or "USER").upper())\n\n    # PUT /orders/{orderId}
+    # PATCH /orders/{orderId} - ADMIN ONLY
+    # ============================================================
+
+    if method == "PATCH" and order_id:
+        ctx = event.get("requestContext") or {}
+        auth = ctx.get("authorizer") or {}
+        role = str(auth.get("role") or "").upper()
+        if role != "ADMIN":
+            return response(403, {"message": "Only administrators can use PATCH for orders"})
+        try:
+            body = parse_request_body(event)
+            return update_order(order_id, body, auth.get("customer_id"), role)
+        except ValueError as exc:
+            return response(400, {"message": str(exc)})
+
+    # ============================================================
+    # PUT /orders/{orderId}
     # ============================================================
 
     if method == "PUT" and order_id:
-
         try:
-
             body = parse_request_body(event)
-
             ctx = event.get("requestContext") or {}
             auth = ctx.get("authorizer") or {}
             return update_order(order_id, body, auth.get("customer_id"), str(auth.get("role") or "USER").upper())
-
         except ValueError as exc:
-
-            return response(
-                400,
-                {
-                    "message": str(exc),
-                },
-            )
+            return response(400, {"message": str(exc)})
 
     # ============================================================
     # POST /orders/{orderId}/cancel

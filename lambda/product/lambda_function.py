@@ -1,6 +1,7 @@
 import json
 import os
 import math
+from decimal import Decimal
 
 import boto3
 
@@ -583,7 +584,7 @@ def create_product(
         "product_id": new_product_id,
         "name": name,
         "description": description,
-        "price": price,
+        "price": float(price),
         "stock_count": stock_count,
         "status": status
     }
@@ -779,8 +780,14 @@ def patch_product(event, product_id, connection):
     }
     merged.update(data)
 
+    # MySQL DECIMAL values are returned by PyMySQL as Decimal objects.
+    # Convert price to a JSON number before sending the merged PATCH
+    # payload to the normal product update validation logic.
+    if isinstance(merged.get("price"), Decimal):
+        merged["price"] = float(merged["price"])
+
     patched_event = dict(event)
-    patched_event["body"] = json.dumps(merged, default=str)
+    patched_event["body"] = json.dumps(merged)
     patched_event["isBase64Encoded"] = False
 
     return update_product(patched_event, product_id, connection)
@@ -943,7 +950,7 @@ def update_product(
         "product_id": int(product_id),
         "name": name,
         "description": description,
-        "price": price,
+        "price": float(price),
         "stock_count": stock_count,
         "status": new_status
     }

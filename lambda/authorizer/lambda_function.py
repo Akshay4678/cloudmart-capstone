@@ -155,13 +155,16 @@ def is_allowed(role, method, path):
 
         if normalized_path.startswith("/orders/"):
 
+            # Users can read their own orders and update
+            # their own order using the existing PUT endpoint.
+            #
+            # PATCH is intentionally NOT allowed for users.
+            # Only administrators can use PATCH on orders.
+
             return method in {
                 "GET",
                 "PUT"
             }
-
-            # PATCH is intentionally not included.
-            # General users cannot update orders using PATCH.
 
         return False
 
@@ -202,6 +205,11 @@ def is_allowed(role, method, path):
             return method == "GET"
 
         if normalized_path.startswith("/orders/"):
+
+            # Administrators can read, update and partially
+            # update any order.
+            #
+            # PATCH is allowed only for administrators.
 
             return method in {
                 "GET",

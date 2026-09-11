@@ -1276,6 +1276,45 @@ Resources:
 
 
   # ==============================================================
+  # PATCH /orders/{orderId}
+  # PATCH is ADMIN ONLY. The authorizer rejects USER requests.
+  # ==============================================================
+
+  OrderIdPatchMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref OrderIdResource
+
+      HttpMethod: PATCH
+
+      AuthorizationType: CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt OrderLambda.Arn
+
+
+  # ==============================================================
   # DELETE /orders/{orderId}
   #
   # DELETE is intentionally not allowed.

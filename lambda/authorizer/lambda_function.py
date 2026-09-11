@@ -1,4 +1,5 @@
 import os
+import hashlib
 import pymysql
 
 
@@ -49,32 +50,47 @@ def normalize_token(value):
     return token
 
 
+def hash_token(token):
+    return hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
+
+
 # =========================================================
-# GET CUSTOMER FROM DATABASE USING TOKEN
+# GET CUSTOMER FROM DATABASE USING TOKEN HASH
 # =========================================================
 
 def get_customer_by_token(authorization):
-    provided_token = normalize_token(authorization)
+
+    provided_token = normalize_token(
+        authorization
+    )
 
     if not provided_token:
         return None
 
+    token_hash = hash_token(
+        provided_token
+    )
+
     connection = None
 
     try:
+
         connection = get_connection()
 
         with connection.cursor() as cursor:
+
             cursor.execute(
                 """
                 SELECT
                     customer_id,
                     role
                 FROM customers
-                WHERE auth_token = %s
+                WHERE auth_token_hash = %s
                 LIMIT 1
                 """,
-                (provided_token,)
+                (token_hash,)
             )
 
             customer = cursor.fetchone()
@@ -82,6 +98,7 @@ def get_customer_by_token(authorization):
             return customer
 
     finally:
+
         if connection:
             connection.close()
 
@@ -91,6 +108,7 @@ def get_customer_by_token(authorization):
 # =========================================================
 
 def is_allowed(role, method, path):
+
     role = (role or "").upper()
     method = method.upper()
 
@@ -103,9 +121,7 @@ def is_allowed(role, method, path):
 
     if role == "USER":
 
-        # -------------------------------------------------
         # Products - read only
-        # -------------------------------------------------
 
         if normalized_path == "/products":
             return method == "GET"
@@ -114,9 +130,7 @@ def is_allowed(role, method, path):
             return method == "GET"
 
 
-        # -------------------------------------------------
         # Orders
-        # -------------------------------------------------
 
         if normalized_path == "/orders":
             return method in {"GET", "POST"}
@@ -133,9 +147,7 @@ def is_allowed(role, method, path):
 
     if role == "ADMIN":
 
-        # -------------------------------------------------
         # Products
-        # -------------------------------------------------
 
         if normalized_path == "/products":
             return method in {"GET", "POST"}
@@ -144,9 +156,7 @@ def is_allowed(role, method, path):
             return method in {"GET", "PUT", "DELETE"}
 
 
-        # -------------------------------------------------
         # Orders
-        # -------------------------------------------------
 
         if normalized_path == "/orders":
             return method == "GET"
@@ -158,6 +168,7 @@ def is_allowed(role, method, path):
 
 
     # Unknown role
+
     return False
 
 
@@ -198,13 +209,12 @@ def lambda_handler(event, context):
 
 
         # =================================================
-        # FIND CUSTOMER USING TOKEN
+        # FIND CUSTOMER USING HASHED TOKEN
         # =================================================
 
         customer = get_customer_by_token(
             authorization
         )
-
 
         if not customer:
 
@@ -237,7 +247,6 @@ def lambda_handler(event, context):
 
         arn_parts = method_arn.split("/")
 
-
         if len(arn_parts) < 3:
 
             print("INVALID METHOD ARN")
@@ -246,7 +255,6 @@ def lambda_handler(event, context):
 
 
         method = arn_parts[2].upper()
-
 
         if len(arn_parts) > 3:
 
@@ -307,9 +315,7 @@ def lambda_handler(event, context):
 
                 "Statement": [
                     {
-                        "Action": (
-                            "execute-api:Invoke"
-                        ),
+                        "Action": "execute-api:Invoke",
 
                         "Effect": "Allow",
 
@@ -329,9 +335,7 @@ def lambda_handler(event, context):
                     customer_id
                 ),
 
-                "environment": (
-                    APP_ENVIRONMENT
-                )
+                "environment": APP_ENVIRONMENT
             }
         }
 

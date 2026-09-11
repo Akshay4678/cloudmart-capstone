@@ -11,24 +11,6 @@
 -- order_items
 -- audit_logs
 --
--- Relationships:
---
--- customers
---     |
---     | 1 : many
---     v
--- orders
-
-
--- orders
---     |
---     | 1 : many
---     v
--- order_items
---     ^
---     |
--- products
---
 -- =====================================================
 
 
@@ -46,7 +28,19 @@ CREATE TABLE IF NOT EXISTS customers (
 
     phone VARCHAR(20),
 
-    auth_token VARCHAR(255) NOT NULL,
+    /*
+    SHA-256 hexadecimal hash contains 64 characters.
+    The original token is never stored.
+    */
+
+    auth_token_hash VARCHAR(64) NOT NULL,
+
+    /*
+    USER  = normal customer
+    ADMIN = administrator
+    */
+
+    role VARCHAR(20) NOT NULL DEFAULT 'USER',
 
     created_at DATETIME NOT NULL
         DEFAULT CURRENT_TIMESTAMP,
@@ -59,9 +53,13 @@ CREATE TABLE IF NOT EXISTS customers (
 
     UNIQUE KEY uk_customers_email (email),
 
-    UNIQUE KEY uk_customers_auth_token (auth_token)
+    UNIQUE KEY uk_customers_auth_token (auth_token_hash),
+
+    CONSTRAINT chk_customers_role
+        CHECK (role IN ('USER', 'ADMIN'))
 
 ) ENGINE=InnoDB;
+
 
 -- =====================================================
 -- PRODUCTS TABLE
@@ -75,8 +73,8 @@ CREATE TABLE IF NOT EXISTS customers (
 -- INACTIVE
 --     Product is hidden from normal product listings.
 --
--- A product is NOT physically deleted.
--- DELETE operations will be handled as soft deletes
+-- Products are not physically deleted.
+-- DELETE operations are handled as soft deletes
 -- by the Product Lambda.
 --
 -- When stock reaches 0:
@@ -85,6 +83,7 @@ CREATE TABLE IF NOT EXISTS customers (
 -- When stock becomes greater than 0:
 --     status = ACTIVE
 --
+-- stock_count is the only source of product stock.
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS products (
@@ -111,10 +110,15 @@ CREATE TABLE IF NOT EXISTS products (
     PRIMARY KEY (product_id),
 
     CONSTRAINT chk_products_status
-        CHECK (status IN ('ACTIVE', 'INACTIVE'))
+        CHECK (status IN ('ACTIVE', 'INACTIVE')),
+
+    CONSTRAINT chk_products_stock
+        CHECK (stock_count >= 0),
+
+    CONSTRAINT chk_products_price
+        CHECK (price >= 0)
 
 ) ENGINE=InnoDB;
-
 
 
 -- =====================================================
@@ -144,7 +148,10 @@ CREATE TABLE IF NOT EXISTS orders (
         FOREIGN KEY (customer_id)
         REFERENCES customers(customer_id)
         ON DELETE RESTRICT
-        ON UPDATE CASCADE
+        ON UPDATE CASCADE,
+
+    CONSTRAINT chk_orders_total_amount
+        CHECK (total_amount >= 0)
 
 ) ENGINE=InnoDB;
 
@@ -157,9 +164,8 @@ CREATE TABLE IF NOT EXISTS orders (
 --
 -- (order_id, product_id)
 --
--- This means the same product cannot appear twice
+-- The same product cannot appear twice
 -- inside the same order.
---
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS order_items (
@@ -187,7 +193,13 @@ CREATE TABLE IF NOT EXISTS order_items (
         FOREIGN KEY (product_id)
         REFERENCES products(product_id)
         ON DELETE RESTRICT
-        ON UPDATE CASCADE
+        ON UPDATE CASCADE,
+
+    CONSTRAINT chk_order_items_quantity
+        CHECK (quantity > 0),
+
+    CONSTRAINT chk_order_items_price
+        CHECK (price >= 0)
 
 ) ENGINE=InnoDB;
 
@@ -198,31 +210,6 @@ CREATE TABLE IF NOT EXISTS order_items (
 --
 -- This table maintains the history of important
 -- product and order operations.
---
--- Examples:
---
--- Product:
---     CREATE_PRODUCT
---     UPDATE_PRODUCT
---     SOFT_DELETE_PRODUCT
---     STOCK_INCREASED
---     STOCK_DECREASED
---
--- Order:
---     ORDER_CREATED
---     ORDER_CONFIRMED
---     ORDER_FAILED
---     ORDER_CANCELLED
---
--- old_value:
---     State before the operation.
---
--- new_value:
---     State after the operation.
---
--- performed_by:
---     User/system responsible for the operation.
---
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -253,16 +240,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- INDEXES
 -- =====================================================
 --
--- IMPORTANT:
 -- MySQL does not support:
 --
 -- CREATE INDEX IF NOT EXISTS
 --
--- Therefore IF NOT EXISTS has been removed.
+-- These indexes should be created during the first
+-- database initialization.
 --
--- The Order Lambda initialization code handles
--- MySQL error 1061 when these indexes already exist.
---
+-- Your Lambda initialization code should handle
+-- MySQL error 1061 if an index already exists.
 -- =====================================================
 
 CREATE INDEX idx_product_name
@@ -296,6 +282,21 @@ ON audit_logs(created_at);
 -- =====================================================
 -- SAMPLE CUSTOMERS
 -- =====================================================
+--
+-- The actual tokens are hashed before being stored.
+--
+-- Admin token:
+--     cloudmartadmin123
+--
+-- Akshay token:
+--     akshaytoken123
+--
+-- Rahul token:
+--     rahultoken123
+--
+-- Priya token:
+--     priyatoken123
+-- =====================================================
 
 INSERT INTO customers
 (
@@ -303,58 +304,68 @@ INSERT INTO customers
     name,
     email,
     phone,
-    auth_token
+    auth_token_hash,
+    role
 )
 VALUES
+(
+    'ADMIN001',
+    'Admin',
+    'admin@cloudmart.com',
+    '9999999999',
+    SHA2('cloudmartadmin123', 256),
+    'ADMIN'
+),
 (
     'CUST101',
     'Akshay',
     'akshay@example.com',
     '9876543210',
-    'akshaytoken123'
+    SHA2('akshaytoken123', 256),
+    'USER'
 ),
 (
     'CUST102',
     'Rahul',
     'rahul@example.com',
     '9876543211',
-    'rahultoken123'
+    SHA2('rahultoken123', 256),
+    'USER'
 ),
 (
     'CUST103',
     'Priya',
     'priya@example.com',
     '9876543212',
-    'priyatoken123'
+    SHA2('priyatoken123', 256),
+    'USER'
 )
 ON DUPLICATE KEY UPDATE
 
     name = VALUES(name),
 
+    email = VALUES(email),
+
     phone = VALUES(phone),
 
-    auth_token = VALUES(auth_token);
+    auth_token_hash = VALUES(auth_token_hash),
+
+    role = VALUES(role);
+
 
 -- =====================================================
 -- SAMPLE PRODUCTS
 -- =====================================================
 --
--- IMPORTANT:
 -- Explicit product IDs are used.
 --
 -- First run:
--- Laptop   = 1
--- Mouse    = 2
--- Keyboard = 3
+--     Laptop   = 1
+--     Mouse    = 2
+--     Keyboard = 3
 --
--- Re-running the schema will NOT create:
--- Laptop   = 4
--- Mouse    = 5
--- Keyboard = 6
---
--- Existing stock_count is NOT overwritten.
--- Existing status is NOT overwritten.
---
+-- Existing stock_count is not overwritten.
+-- Existing status is not overwritten.
 -- =====================================================
 
 INSERT INTO products
@@ -400,7 +411,6 @@ ON DUPLICATE KEY UPDATE
     price = VALUES(price);
 
 
-
 -- =====================================================
 -- SAMPLE ORDER
 -- =====================================================
@@ -408,8 +418,7 @@ ON DUPLICATE KEY UPDATE
 -- This sample order is inserted only if it does not
 -- already exist.
 --
--- Existing order status is NOT reset.
---
+-- Existing order status is not reset.
 -- =====================================================
 
 INSERT INTO orders

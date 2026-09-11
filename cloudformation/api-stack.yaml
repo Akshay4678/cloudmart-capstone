@@ -1669,7 +1669,6 @@ Outputs:
     Export:
       Name: cloudmart-order-queue-arn
 
-
   # ==============================================================
   # ORDER DLQ ARN
   # ==============================================================
@@ -1681,7 +1680,6 @@ Outputs:
 
     Export:
       Name: cloudmart-order-dlq-arn
-
 
   # ==============================================================
   # ORDER CONFIRMATION SNS ARN
@@ -1695,7 +1693,6 @@ Outputs:
     Export:
       Name: cloudmart-order-confirmation-topic-arn
 
-
   # ==============================================================
   # LOW STOCK SNS ARN
   # ==============================================================
@@ -1707,7 +1704,6 @@ Outputs:
 
     Export:
       Name: cloudmart-low-stock-topic-arn
-
 
   # ==============================================================
   # ORDER FAILURE SNS ARN
@@ -1721,7 +1717,6 @@ Outputs:
     Export:
       Name: cloudmart-order-failure-topic-arn
 
-
   # ==============================================================
   # REPORT LAMBDA ARN
   # ==============================================================
@@ -1733,7 +1728,6 @@ Outputs:
 
     Export:
       Name: cloudmart-report-lambda-arn
-
 
   # ==============================================================
   # REPORTS BUCKET

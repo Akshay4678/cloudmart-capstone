@@ -42,6 +42,10 @@ def get_connection():
 # =========================================================
 
 def normalize_token(value):
+    """
+    Removes leading/trailing spaces and the Bearer prefix.
+    """
+
     token = (value or "").strip()
 
     if token.lower().startswith("bearer "):
@@ -51,13 +55,17 @@ def normalize_token(value):
 
 
 def hash_token(token):
+    """
+    Creates a SHA-256 hash of the supplied token.
+    """
+
     return hashlib.sha256(
         token.encode("utf-8")
     ).hexdigest()
 
 
 # =========================================================
-# GET CUSTOMER FROM DATABASE USING TOKEN HASH
+# GET CUSTOMER USING HASHED TOKEN
 # =========================================================
 
 def get_customer_by_token(authorization):
@@ -110,18 +118,20 @@ def get_customer_by_token(authorization):
 def is_allowed(role, method, path):
 
     role = (role or "").upper()
-    method = method.upper()
+    method = (method or "").upper()
 
     normalized_path = path.rstrip("/") or "/"
 
 
     # =====================================================
-    # USER
+    # USER PERMISSIONS
     # =====================================================
 
     if role == "USER":
 
+        # -------------------------------------------------
         # Products - read only
+        # -------------------------------------------------
 
         if normalized_path == "/products":
             return method == "GET"
@@ -130,44 +140,68 @@ def is_allowed(role, method, path):
             return method == "GET"
 
 
+        # -------------------------------------------------
         # Orders
+        # -------------------------------------------------
 
         if normalized_path == "/orders":
             return method in {"GET", "POST"}
 
         if normalized_path.startswith("/orders/"):
-            return method in {"GET", "PUT"}
+            return method in {
+                "GET",
+                "PUT",
+                "PATCH"
+            }
 
         return False
 
 
     # =====================================================
-    # ADMIN
+    # ADMIN PERMISSIONS
     # =====================================================
 
     if role == "ADMIN":
 
+        # -------------------------------------------------
         # Products
+        # -------------------------------------------------
 
         if normalized_path == "/products":
-            return method in {"GET", "POST"}
+            return method in {
+                "GET",
+                "POST"
+            }
 
         if normalized_path.startswith("/products/"):
-            return method in {"GET", "PUT", "DELETE"}
+            return method in {
+                "GET",
+                "PUT",
+                "PATCH",
+                "DELETE"
+            }
 
 
+        # -------------------------------------------------
         # Orders
+        # -------------------------------------------------
 
         if normalized_path == "/orders":
             return method == "GET"
 
         if normalized_path.startswith("/orders/"):
-            return method in {"GET", "PUT"}
+            return method in {
+                "GET",
+                "PUT",
+                "PATCH"
+            }
 
         return False
 
 
-    # Unknown role
+    # =====================================================
+    # UNKNOWN ROLE
+    # =====================================================
 
     return False
 
@@ -198,7 +232,7 @@ def lambda_handler(event, context):
 
 
         # =================================================
-        # CHECK TOKEN EXISTS
+        # CHECK AUTHORIZATION HEADER
         # =================================================
 
         if not authorization:
@@ -209,7 +243,7 @@ def lambda_handler(event, context):
 
 
         # =================================================
-        # FIND CUSTOMER USING HASHED TOKEN
+        # FIND CUSTOMER USING TOKEN HASH
         # =================================================
 
         customer = get_customer_by_token(
@@ -256,6 +290,7 @@ def lambda_handler(event, context):
 
         method = arn_parts[2].upper()
 
+
         if len(arn_parts) > 3:
 
             path = "/" + "/".join(
@@ -268,7 +303,7 @@ def lambda_handler(event, context):
 
 
         # =================================================
-        # CHECK PERMISSION
+        # CHECK ROLE PERMISSION
         # =================================================
 
         if not is_allowed(

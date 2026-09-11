@@ -907,7 +907,7 @@ def get_customer_orders(customer_id):
 # UPDATE ORDER STATUS
 # ================================================================
 
-def update_order(order_id, body):
+def update_order(order_id, body, authenticated_customer_id=None, role="USER"):
 
     if not isinstance(body, dict):
         return response(
@@ -971,6 +971,9 @@ def update_order(order_id, body):
                         "order_id": order_id
                     }
                 )
+            
+            if role != "ADMIN" and order["customer_id"] != authenticated_customer_id:
+                return response(403, {"message": "Users can only update their own orders"})
 
             # ----------------------------------------------------
             # Update order status
@@ -1328,7 +1331,7 @@ def lambda_handler(event, context):
         )
 
     # ============================================================
-    # PUT /orders/{orderId}
+    # PATCH /orders/{orderId}\n\n    if method == "PATCH" and order_id:\n        body = parse_request_body(event)\n        ctx = event.get("requestContext") or {}\n        auth = ctx.get("authorizer") or {}\n        return update_order(order_id, body, auth.get("customer_id"), str(auth.get("role") or "USER").upper())\n\n    # PUT /orders/{orderId}
     # ============================================================
 
     if method == "PUT" and order_id:
@@ -1337,7 +1340,9 @@ def lambda_handler(event, context):
 
             body = parse_request_body(event)
 
-            return update_order(order_id, body)
+            ctx = event.get("requestContext") or {}
+            auth = ctx.get("authorizer") or {}
+            return update_order(order_id, body, auth.get("customer_id"), str(auth.get("role") or "USER").upper())
 
         except ValueError as exc:
 

@@ -780,7 +780,7 @@ def patch_product(event, product_id, connection):
     merged.update(data)
 
     patched_event = dict(event)
-    patched_event["body"] = json.dumps(merged)
+    patched_event["body"] = json.dumps(merged, default=str)
     patched_event["isBase64Encoded"] = False
 
     return update_product(patched_event, product_id, connection)

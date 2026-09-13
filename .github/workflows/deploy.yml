@@ -1480,46 +1480,42 @@ jobs:
       # ==========================================================
 
       - name: Smoke Test - GET Products
-
-        env:
-
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-
         run: |
+          set -e
 
-          echo "=================================================="
+          echo "================================================"
           echo "SMOKE TEST - GET /products"
-          echo "=================================================="
+          echo "================================================"
 
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name cloudmart-api-dev \
+            --region ap-south-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
 
-          HTTP_STATUS=$(curl \
-            --silent \
-            --show-error \
-            --output /tmp/products-response.json \
-            --write-out "%{http_code}" \
-            --request GET \
-            --header "Authorization: Bearer $AUTH_TOKEN" \
-            "${{ steps.api_url.outputs.url }}/products")
-
-
-          echo "HTTP STATUS: $HTTP_STATUS"
-
-
-          echo "RESPONSE:"
-          cat /tmp/products-response.json
-
-
-          echo ""
-
-
-          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
-
-            echo "ERROR: GET /products smoke test failed."
-
+          if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
+            echo "ERROR: API URL was not returned by CloudFormation."
             exit 1
-
           fi
 
+          echo "API URL: $API_URL"
+
+          RESPONSE=$(curl -sS \
+            -w "\nHTTP_STATUS:%{http_code}" \
+            -X GET \
+            "${API_URL%/}/products" \
+            -H "Authorization: Bearer akshaytoken123" \
+            -H "Content-Type: application/json")
+
+          echo "GET /products response:"
+          echo "$RESPONSE"
+
+          HTTP_STATUS=$(echo "$RESPONSE" | sed -n 's/.*HTTP_STATUS:\([0-9][0-9][0-9]\).*/\1/p')
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: GET /products failed with HTTP status $HTTP_STATUS."
+            exit 1
+          fi
 
           echo "GET /products smoke test passed."
 

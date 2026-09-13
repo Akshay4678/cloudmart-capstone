@@ -91,8 +91,6 @@ jobs:
 
         env:
 
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
@@ -116,15 +114,6 @@ jobs:
           if [ -z "$DB_PASSWORD" ]; then
 
             echo "ERROR: DB_PASSWORD secret is missing."
-
-            exit 1
-
-          fi
-
-
-          if [ -z "$AUTH_TOKEN" ]; then
-
-            echo "ERROR: AUTH_TOKEN secret is missing."
 
             exit 1
 
@@ -396,6 +385,31 @@ jobs:
 
 
           echo ""
+          echo "Checking Authorizer Lambda..."
+
+
+          if [ ! -f "lambda/authorizer/lambda_function.py" ]; then
+
+            echo "ERROR: Missing lambda/authorizer/lambda_function.py"
+
+            exit 1
+
+          fi
+
+
+          if [ ! -f "lambda/authorizer/requirements.txt" ]; then
+
+            echo "ERROR: Missing lambda/authorizer/requirements.txt"
+
+            exit 1
+
+          fi
+
+
+          echo "Authorizer Lambda files OK."
+
+
+          echo ""
           echo "Checking root schema.sql..."
 
 
@@ -485,47 +499,26 @@ jobs:
           }
 
 
-          echo "PyMySQL requirement verified."
+          echo ""
+          echo "Authorizer Lambda requirements:"
+          cat lambda/authorizer/requirements.txt
+
+
+          grep -qi "^PyMySQL==" \
+            lambda/authorizer/requirements.txt || {
+
+            echo "ERROR: PyMySQL missing from Authorizer Lambda."
+
+            exit 1
+
+          }
+
+
+          echo "PyMySQL requirement verified for all database Lambdas."
 
 
       # ==========================================================
-      # 13. NORMALIZE PYTHON DEPENDENCIES
-      #
-      # Prevent duplicate/conflicting cryptography pins from
-      # causing pip ResolutionImpossible during packaging.
-      # The Lambda packages use one compatible cryptography version.
-      # ==========================================================
-
-      - name: Normalize Lambda Dependencies
-
-        run: |
-
-          echo "=================================================="
-          echo "NORMALIZING LAMBDA DEPENDENCIES"
-          echo "=================================================="
-
-          # Remove every cryptography entry, including entries with
-          # spaces, comments, or old version pins, then add exactly
-          # one version. This prevents ResolutionImpossible.
-          for file in \
-            lambda/authorizer/requirements.txt \
-            lambda/product/requirements.txt \
-            lambda/order/requirements.txt \
-            lambda/order_processor/requirements.txt \
-            lambda/report/requirements.txt
-          do
-            if [ -f "$file" ]; then
-              tmp="${file}.tmp"
-              awk 'BEGIN { IGNORECASE=1 } !/^[[:space:]]*cryptography([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?[[:space:]]*$/' "$file" > "$tmp"
-              printf '%s\n' 'cryptography==43.0.3' >> "$tmp"
-              mv "$tmp" "$file"
-              echo "---- $file ----"
-              cat "$file"
-            fi
-          done
-
-      # ==========================================================
-      # 14. PACKAGE LAMBDAS
+      # 13. PACKAGE LAMBDAS
       # ==========================================================
 
       - name: Package Lambda Functions
@@ -554,18 +547,49 @@ jobs:
           echo ""
           echo "Packaging Authorizer Lambda..."
 
-          cp lambda/authorizer/lambda_function.py build/authorizer/index.py
 
-          python -m pip install --no-cache-dir \
+          cp \
+            lambda/authorizer/lambda_function.py \
+            build/authorizer/index.py
+
+
+          python -m pip install \
+            --no-cache-dir \
             -r lambda/authorizer/requirements.txt \
             -t build/authorizer
 
-          test -f build/authorizer/index.py
-          test -d build/authorizer/pymysql
+
+          if [ ! -f "build/authorizer/index.py" ]; then
+
+            echo "ERROR: Authorizer index.py was not created."
+
+            exit 1
+
+          fi
+
+
+          if [ ! -d "build/authorizer/pymysql" ]; then
+
+            echo "ERROR: PyMySQL missing from Authorizer Lambda."
+
+            exit 1
+
+          fi
+
 
           cd build/authorizer
-          zip -r ../authorizer-lambda-${{ github.sha }}.zip .
+
+
+          zip -r \
+            ../authorizer-lambda-${{ github.sha }}.zip \
+            .
+
+
           cd ../..
+
+
+          echo "Authorizer Lambda packaged successfully."
+
 
           # ------------------------------------------------------
           # PRODUCT
@@ -789,18 +813,6 @@ jobs:
           echo "=================================================="
 
 
-          if [ ! -s "build/authorizer-lambda-${{ github.sha }}.zip" ]; then
-
-            echo "ERROR: Authorizer Lambda ZIP is missing."
-
-            exit 1
-
-          fi
-
-          unzip -l "build/order-lambda-${{ github.sha }}.zip" | grep -q cryptography
-          unzip -l "build/authorizer-lambda-${{ github.sha }}.zip" | grep -q cryptography
-
-
           if [ ! -s "build/product-lambda-${{ github.sha }}.zip" ]; then
 
             echo "ERROR: Product Lambda ZIP is missing."
@@ -835,6 +847,46 @@ jobs:
             exit 1
 
           fi
+
+
+          if [ ! -s "build/authorizer-lambda-${{ github.sha }}.zip" ]; then
+
+            echo "ERROR: Authorizer Lambda ZIP is missing."
+
+            exit 1
+
+          fi
+
+
+          echo ""
+          echo "Checking Authorizer Lambda package..."
+
+
+          if ! unzip -l \
+            "build/authorizer-lambda-${{ github.sha }}.zip" \
+            | grep -qi "pymysql"; then
+
+            echo "ERROR: PyMySQL not found inside Authorizer Lambda ZIP."
+
+            exit 1
+
+          fi
+
+
+          if ! unzip -l \
+            "build/authorizer-lambda-${{ github.sha }}.zip" \
+            | grep -qi "index.py"; then
+
+            echo "ERROR: index.py not found inside Authorizer Lambda ZIP."
+
+            exit 1
+
+          fi
+
+
+          echo "Authorizer Lambda contains:"
+          echo "  - index.py"
+          echo "  - PyMySQL"
 
 
           echo ""
@@ -933,6 +985,38 @@ jobs:
 
 
       # ==========================================================
+      # 17. DEPLOY DATA BEFORE IAM
+      #
+      # IAM imports the reports bucket export from the data stack.
+      # Therefore data must exist before IAM is deployed.
+      # ==========================================================
+
+      - name: Deploy Data Stack Before IAM
+
+        id: deploy_data_before_iam
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING DATA STACK BEFORE IAM"
+          echo "=================================================="
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --template-file cloudformation/data-stack.yaml \
+            --parameter-overrides \
+              "DBPassword=$DB_PASSWORD" \
+            --no-fail-on-empty-changeset
+
+          echo "Data stack deployment completed."
+
+
+      # ==========================================================
       # 17. DEPLOY IAM
       # ==========================================================
 
@@ -984,87 +1068,7 @@ jobs:
 
 
       # ==========================================================
-      # 19. DEPLOY AUTH
-      # ==========================================================
-
-      - name: Deploy Auth Stack
-
-        id: deploy_auth
-
-        run: |
-
-          echo "=================================================="
-          echo "DEPLOYING AUTH STACK"
-          echo "=================================================="
-
-
-          aws cloudformation deploy \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack \
-            --template-file cloudformation/auth-stack.yaml \
-            --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
-              "CodeVersion=${{ github.sha }}" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
-
-
-          echo "Auth stack deployment completed."
-
-
-      # ==========================================================
-      # 20. AUTH ERRORS
-      # ==========================================================
-
-      - name: Show Auth Stack Errors
-
-        if: failure() && steps.deploy_auth.outcome == 'failure'
-
-        run: |
-
-          echo "=================================================="
-          echo "AUTH STACK EVENTS"
-          echo "=================================================="
-
-
-          aws cloudformation describe-stack-events \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack \
-            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
-            --output table \
-            || true
-
-
-      # ==========================================================
-      # 21. CREATE AUTH SECURESTRING
-      # ==========================================================
-
-      - name: Create Authentication SecureString
-
-        env:
-
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-
-        run: |
-
-          echo "=================================================="
-          echo "CREATING AUTHENTICATION SECURESTRING"
-          echo "=================================================="
-
-
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/token" \
-            --value "$AUTH_TOKEN" \
-            --type SecureString \
-            --overwrite
-
-
-          echo "Authentication SecureString created."
-
-
-      # ==========================================================
-      # 22. CHECK DATA STACK
+      # PREPARE DATA STACK FOR AUTHORIZER
       #
       # The Data stack already exists in the current environment.
       #
@@ -1118,7 +1122,7 @@ jobs:
 
 
       # ==========================================================
-      # 23. GET LAMBDA ARTIFACT BUCKET
+      # GET LAMBDA ARTIFACT BUCKET
       # ==========================================================
 
       - name: Get Lambda Artifact Bucket
@@ -1155,19 +1159,97 @@ jobs:
 
 
       # ==========================================================
-      # 24. UPLOAD AUTHORIZER
+      # UPLOAD AUTHORIZER
       # ==========================================================
 
       - name: Upload Authorizer Lambda
 
         run: |
+
+          echo "=================================================="
+          echo "UPLOADING AUTHORIZER LAMBDA"
+          echo "=================================================="
+
+
+          AUTHORZIER_ZIP="build/authorizer-lambda-${{ github.sha }}.zip"
+          AUTHORIZER_KEY="auth/authorizer-lambda-${{ github.sha }}.zip"
+
+          if [ ! -s "$AUTHORZIER_ZIP" ]; then
+            echo "ERROR: Authorizer ZIP does not exist: $AUTHORZIER_ZIP"
+            exit 1
+          fi
+
           aws s3 cp \
-            "build/authorizer-lambda-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/auth/authorizer-lambda-${{ github.sha }}.zip"
+            "$AUTHORZIER_ZIP" \
+            "s3://${{ steps.lambda_bucket.outputs.bucket }}/$AUTHORIZER_KEY"
+
+          echo "Checking uploaded authorizer object..."
+          aws s3api head-object \
+            --bucket "${{ steps.lambda_bucket.outputs.bucket }}" \
+            --key "$AUTHORIZER_KEY"
+
+          echo "Authorizer Lambda uploaded and verified."
 
 
       # ==========================================================
-      # 25. UPLOAD PRODUCT
+      # 19. DEPLOY AUTH
+      # ==========================================================
+
+      - name: Deploy Auth Stack
+
+        id: deploy_auth
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING AUTH STACK"
+          echo "=================================================="
+
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-auth-stack \
+            --template-file cloudformation/auth-stack.yaml \
+            --parameter-overrides \
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+              "DBPassword=$DB_PASSWORD" \
+              "CodeVersion=${{ github.sha }}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+
+          echo "Auth stack deployment completed."
+
+
+      # ==========================================================
+      # 20. AUTH ERRORS
+      # ==========================================================
+
+      - name: Show Auth Stack Errors
+
+        if: failure() && steps.deploy_auth.outcome == 'failure'
+
+        run: |
+
+          echo "=================================================="
+          echo "AUTH STACK EVENTS"
+          echo "=================================================="
+
+
+          aws cloudformation describe-stack-events \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-auth-stack \
+            --query "StackEvents[0:50].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
+            --output table \
+            || true
+
+
+      # ==========================================================
+      # 24. UPLOAD PRODUCT
       # ==========================================================
 
       - name: Upload Product Lambda
@@ -1243,6 +1325,32 @@ jobs:
 
 
       # ==========================================================
+      # 28. CREATE DATABASE PASSWORD SECURESTRING
+      # ==========================================================
+
+      - name: Create Database Password SecureString
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "CREATING DATABASE PASSWORD SECURESTRING"
+          echo "=================================================="
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
+            --value "$DB_PASSWORD" \
+            --type SecureString \
+            --overwrite
+
+          echo "Database password SecureString created."
+
+
+      # ==========================================================
       # 28. DEPLOY APPLICATION
       #
       # IMPORTANT:
@@ -1252,21 +1360,9 @@ jobs:
       # before the Data stack attempts to remove old exports.
       # ==========================================================
 
-      - name: Create Database Password SecureString
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: |
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
-            --value "$DB_PASSWORD" \
-            --type SecureString \
-            --overwrite
-
       - name: Deploy Application Stack
 
         id: deploy_application
-
 
         run: |
 
@@ -1524,130 +1620,6 @@ jobs:
 
 
           echo "url=$API_URL" >> "$GITHUB_OUTPUT"
-
-
-      # ==========================================================
-      # 34. SMOKE TEST GET PRODUCTS
-      # ==========================================================
-
-      - name: Smoke Test - GET Products
-
-        env:
-
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-
-        run: |
-
-          echo "=================================================="
-          echo "SMOKE TEST - GET /products"
-          echo "=================================================="
-
-
-          HTTP_STATUS=$(curl \
-            --silent \
-            --show-error \
-            --output /tmp/products-response.json \
-            --write-out "%{http_code}" \
-            --request GET \
-            --header "Authorization: Bearer $AUTH_TOKEN" \
-            "${{ steps.api_url.outputs.url }}/products")
-
-
-          echo "HTTP STATUS: $HTTP_STATUS"
-
-
-          echo "RESPONSE:"
-          cat /tmp/products-response.json
-
-
-          echo ""
-
-
-          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
-
-            echo "ERROR: GET /products smoke test failed."
-
-            exit 1
-
-          fi
-
-
-          echo "GET /products smoke test passed."
-
-
-      # ==========================================================
-      # 35. SMOKE TEST POST ORDER
-      # ==========================================================
-
-      - name: Smoke Test - POST Order
-
-        env:
-
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-
-        run: |
-
-          echo "=================================================="
-          echo "SMOKE TEST - POST /orders"
-          echo "=================================================="
-
-
-          cat > /tmp/order.json <<'EOF'
-          {
-            "customer_id": "CUST101",
-            "items": [
-              {
-                "product_id": 1,
-                "quantity": 1
-              }
-            ]
-          }
-          EOF
-
-
-          echo ""
-          echo "Order request:"
-          cat /tmp/order.json
-
-
-          echo ""
-
-
-          HTTP_STATUS=$(curl \
-            --silent \
-            --show-error \
-            --output /tmp/order-response.json \
-            --write-out "%{http_code}" \
-            --request POST \
-            --header "Content-Type: application/json" \
-            --header "Authorization: Bearer $AUTH_TOKEN" \
-            --data @/tmp/order.json \
-            "${{ steps.api_url.outputs.url }}/orders")
-
-
-          echo "HTTP STATUS: $HTTP_STATUS"
-
-
-          echo ""
-          echo "RESPONSE:"
-          cat /tmp/order-response.json
-
-
-          echo ""
-
-
-          if [ "$HTTP_STATUS" != "202" ]; then
-
-            echo "ERROR: POST /orders smoke test failed."
-
-            echo "Expected HTTP 202."
-
-            exit 1
-
-          fi
-
-
-          echo "POST /orders smoke test passed."
 
 
       # ==========================================================

@@ -427,105 +427,78 @@ jobs:
 
         run: |
 
+          set -e
+
           echo "=================================================="
           echo "VERIFYING LAMBDA REQUIREMENTS"
           echo "=================================================="
-
 
           echo ""
           echo "Product Lambda requirements:"
           cat lambda/product/requirements.txt
 
-
           echo ""
           echo "Order Lambda requirements:"
           cat lambda/order/requirements.txt
-
 
           echo ""
           echo "Order Processor Lambda requirements:"
           cat lambda/order_processor/requirements.txt
 
-
           echo ""
           echo "Report Lambda requirements:"
           cat lambda/report/requirements.txt
 
-
           echo ""
+          echo "Checking required dependencies..."
 
-
-          grep -qi "^PyMySQL==" \
+          grep -Eiq '^[[:space:]]*PyMySQL([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
             lambda/order/requirements.txt || {
-
             echo "ERROR: PyMySQL missing from Order Lambda."
-
             exit 1
-
           }
 
+          grep -Eiq '^[[:space:]]*cryptography([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
+            lambda/order/requirements.txt || {
+            echo "ERROR: cryptography missing from Order Lambda."
+            exit 1
+          }
 
-          grep -qi "^PyMySQL==" \
+          grep -Eiq '^[[:space:]]*cffi([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
+            lambda/order/requirements.txt || {
+            echo "ERROR: cffi missing from Order Lambda."
+            exit 1
+          }
+
+          grep -Eiq '^[[:space:]]*PyMySQL([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
             lambda/order_processor/requirements.txt || {
-
             echo "ERROR: PyMySQL missing from Order Processor Lambda."
-
             exit 1
-
           }
 
-
-          grep -qi "^PyMySQL==" \
-            lambda/report/requirements.txt || {
-
-            echo "ERROR: PyMySQL missing from Report Lambda."
-
+          grep -Eiq '^[[:space:]]*cryptography([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
+            lambda/order_processor/requirements.txt || {
+            echo "ERROR: cryptography missing from Order Processor Lambda."
             exit 1
-
           }
 
+          grep -Eiq '^[[:space:]]*cffi([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
+            lambda/order_processor/requirements.txt || {
+            echo "ERROR: cffi missing from Order Processor Lambda."
+            exit 1
+          }
 
-          echo "PyMySQL requirement verified."
+          grep -Eiq '^[[:space:]]*cryptography([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
+            lambda/product/requirements.txt || {
+            echo "ERROR: cryptography missing from Product Lambda."
+            exit 1
+          }
 
+          echo "All required Lambda dependencies are present."
 
-      # ==========================================================
-      # 13. NORMALIZE PYTHON DEPENDENCIES
-      #
-      # Prevent duplicate/conflicting cryptography pins from
-      # causing pip ResolutionImpossible during packaging.
-      # The Lambda packages use one compatible cryptography version.
-      # ==========================================================
-
-      - name: Normalize Lambda Dependencies
-
-        run: |
-
-          echo "=================================================="
-          echo "NORMALIZING LAMBDA DEPENDENCIES"
-          echo "=================================================="
-
-          # Remove every cryptography entry, including entries with
-          # spaces, comments, or old version pins, then add exactly
-          # one version. This prevents ResolutionImpossible.
-          for file in \
-            lambda/authorizer/requirements.txt \
-            lambda/product/requirements.txt \
-            lambda/order/requirements.txt \
-            lambda/order_processor/requirements.txt \
-            lambda/report/requirements.txt
-          do
-            if [ -f "$file" ]; then
-              tmp="${file}.tmp"
-              awk 'BEGIN { IGNORECASE=1 } !/^[[:space:]]*cryptography([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?[[:space:]]*$/' "$file" > "$tmp"
-              printf '%s\n' 'cryptography==43.0.3' >> "$tmp"
-              mv "$tmp" "$file"
-              echo "---- $file ----"
-              cat "$file"
-            fi
-          done
 
       # ==========================================================
-      # 14. PACKAGE LAMBDAS
+      # 13. PACKAGE LAMBDAS
       # ==========================================================
 
       - name: Package Lambda Functions
@@ -540,38 +513,11 @@ jobs:
           rm -rf build
 
 
-          mkdir -p build/authorizer
           mkdir -p build/product
           mkdir -p build/order
           mkdir -p build/order_processor
           mkdir -p build/report
 
-
-          # ------------------------------------------------------
-          # AUTHORIZER
-          # ------------------------------------------------------
-
-          echo ""
-          echo "Packaging Authorizer Lambda..."
-
-          cp lambda/authorizer/lambda_function.py build/authorizer/index.py
-
-          python -m pip install \
-            --upgrade \
-            --no-cache-dir \
-            --target build/authorizer \
-            --platform manylinux2014_x86_64 \
-            --implementation cp \
-            --python-version 3.13 \
-            --only-binary=:all: \
-            -r lambda/authorizer/requirements.txt
-
-          test -f build/authorizer/index.py
-          test -d build/authorizer/pymysql
-
-          cd build/authorizer
-          zip -r ../authorizer-lambda-${{ github.sha }}.zip .
-          cd ../..
 
           # ------------------------------------------------------
           # PRODUCT
@@ -586,15 +532,16 @@ jobs:
             build/product/index.py
 
 
+          PRODUCT_REQUIREMENTS=/tmp/cloudmart-product-requirements.txt
+          awk 'BEGIN{IGNORECASE=1} !/^[[:space:]]*(cryptography|cffi)([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$/' \
+            lambda/product/requirements.txt > "$PRODUCT_REQUIREMENTS"
+          printf '%s\n' 'cryptography==43.0.3' >> "$PRODUCT_REQUIREMENTS"
+
           python -m pip install \
-            --upgrade \
             --no-cache-dir \
-            --target build/product \
-            --platform manylinux2014_x86_64 \
-            --implementation cp \
-            --python-version 3.13 \
-            --only-binary=:all: \
-            -r lambda/product/requirements.txt
+            --upgrade \
+            -r "$PRODUCT_REQUIREMENTS" \
+            -t build/product
 
 
           if [ ! -f "build/product/index.py" ]; then
@@ -624,12 +571,6 @@ jobs:
           echo ""
           echo "Packaging Order Lambda..."
 
-          echo "Order requirements used by CI:"
-          cat lambda/order/requirements.txt
-
-          echo "Python version used by CI:"
-          python --version
-
 
           cp \
             lambda/order/lambda_function.py \
@@ -645,6 +586,14 @@ jobs:
             build/order/schema.sql
 
 
+          ORDER_REQUIREMENTS=/tmp/cloudmart-order-requirements.txt
+          awk 'BEGIN{IGNORECASE=1} !/^[[:space:]]*(PyMySQL|cryptography|cffi)([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$/' \
+            lambda/order/requirements.txt > "$ORDER_REQUIREMENTS"
+          printf '%s\n' 'PyMySQL==1.1.1' 'cryptography==43.0.3' 'cffi==1.17.1' >> "$ORDER_REQUIREMENTS"
+
+          echo "Order package requirements used by CI:"
+          cat "$ORDER_REQUIREMENTS"
+
           python -m pip install \
             --upgrade \
             --no-cache-dir \
@@ -653,7 +602,7 @@ jobs:
             --implementation cp \
             --python-version 3.13 \
             --only-binary=:all: \
-            -r lambda/order/requirements.txt
+            -r "$ORDER_REQUIREMENTS"
 
 
           if [ ! -f "build/order/index.py" ]; then
@@ -684,10 +633,10 @@ jobs:
 
 
           test -d build/order/cryptography
-          test -f build/order/_cffi_backend*.so
           test -d build/order/cffi
+          test -f build/order/_cffi_backend*.so
 
-          echo "Order Lambda cryptography and cffi native backend verified."
+          echo "Order Lambda contains cryptography, cffi, and _cffi_backend."
 
 
           echo "Order Lambda package contents:"
@@ -704,6 +653,12 @@ jobs:
 
           cd ../..
 
+          unzip -l "build/order-lambda-${{ github.sha }}.zip" | grep -q "cryptography/"
+          unzip -l "build/order-lambda-${{ github.sha }}.zip" | grep -q "cffi/"
+          unzip -l "build/order-lambda-${{ github.sha }}.zip" | grep -q "_cffi_backend"
+
+          echo "Verified cryptography and cffi inside Order Lambda ZIP."
+
 
           # ------------------------------------------------------
           # ORDER PROCESSOR
@@ -718,6 +673,14 @@ jobs:
             build/order_processor/index.py
 
 
+          PROCESSOR_REQUIREMENTS=/tmp/cloudmart-order-processor-requirements.txt
+          awk 'BEGIN{IGNORECASE=1} !/^[[:space:]]*(PyMySQL|cryptography|cffi)([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$/' \
+            lambda/order_processor/requirements.txt > "$PROCESSOR_REQUIREMENTS"
+          printf '%s\n' 'PyMySQL==1.1.1' 'cryptography==43.0.3' 'cffi==1.17.1' >> "$PROCESSOR_REQUIREMENTS"
+
+          echo "Order Processor package requirements used by CI:"
+          cat "$PROCESSOR_REQUIREMENTS"
+
           python -m pip install \
             --upgrade \
             --no-cache-dir \
@@ -726,7 +689,7 @@ jobs:
             --implementation cp \
             --python-version 3.13 \
             --only-binary=:all: \
-            -r lambda/order_processor/requirements.txt
+            -r "$PROCESSOR_REQUIREMENTS"
 
 
           if [ ! -f "build/order_processor/index.py" ]; then
@@ -821,18 +784,6 @@ jobs:
           echo "=================================================="
           echo "VERIFYING LAMBDA PACKAGES"
           echo "=================================================="
-
-
-          if [ ! -s "build/authorizer-lambda-${{ github.sha }}.zip" ]; then
-
-            echo "ERROR: Authorizer Lambda ZIP is missing."
-
-            exit 1
-
-          fi
-
-          unzip -l "build/order-lambda-${{ github.sha }}.zip" | grep -q cryptography
-          unzip -l "build/authorizer-lambda-${{ github.sha }}.zip" | grep -q cryptography
 
 
           if [ ! -s "build/product-lambda-${{ github.sha }}.zip" ]; then
@@ -1038,7 +989,6 @@ jobs:
             --template-file cloudformation/auth-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
-              "CodeVersion=${{ github.sha }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -1189,19 +1139,7 @@ jobs:
 
 
       # ==========================================================
-      # 24. UPLOAD AUTHORIZER
-      # ==========================================================
-
-      - name: Upload Authorizer Lambda
-
-        run: |
-          aws s3 cp \
-            "build/authorizer-lambda-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/auth/authorizer-lambda-${{ github.sha }}.zip"
-
-
-      # ==========================================================
-      # 25. UPLOAD PRODUCT
+      # 24. UPLOAD PRODUCT
       # ==========================================================
 
       - name: Upload Product Lambda
@@ -1286,21 +1224,13 @@ jobs:
       # before the Data stack attempts to remove old exports.
       # ==========================================================
 
-      - name: Create Database Password SecureString
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: |
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
-            --value "$DB_PASSWORD" \
-            --type SecureString \
-            --overwrite
-
       - name: Deploy Application Stack
 
         id: deploy_application
 
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
         run: |
 
@@ -1315,6 +1245,7 @@ jobs:
             --template-file cloudformation/api-stack.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
+              "DBPassword=$DB_PASSWORD" \
               "CodeVersion=${{ github.sha }}" \
               "EnvironmentName=$ENVIRONMENT_NAME" \
             --no-fail-on-empty-changeset

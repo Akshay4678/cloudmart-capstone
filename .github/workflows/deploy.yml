@@ -985,6 +985,38 @@ jobs:
 
 
       # ==========================================================
+      # 17. DEPLOY DATA BEFORE IAM
+      #
+      # IAM imports the reports bucket export from the data stack.
+      # Therefore data must exist before IAM is deployed.
+      # ==========================================================
+
+      - name: Deploy Data Stack Before IAM
+
+        id: deploy_data_before_iam
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING DATA STACK BEFORE IAM"
+          echo "=================================================="
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --template-file cloudformation/data-stack.yaml \
+            --parameter-overrides \
+              "DBPassword=$DB_PASSWORD" \
+            --no-fail-on-empty-changeset
+
+          echo "Data stack deployment completed."
+
+
+      # ==========================================================
       # 17. DEPLOY IAM
       # ==========================================================
 

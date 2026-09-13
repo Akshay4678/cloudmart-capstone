@@ -519,45 +519,53 @@ jobs:
 
       # ==========================================================
       # 13. NORMALIZE PYTHON DEPENDENCIES
-      #
-      # Prevent pip resolver failures when a requirements file contains
-      # more than one cryptography version. All Lambda packages use one
-      # compatible version during this deployment.
       # ==========================================================
 
-      - name: Normalize Lambda Requirements
-        run: |
-          set -e
+      - name: Normalize Lambda Dependencies
 
-          for FILE in \
+        run: |
+
+          echo "=================================================="
+          echo "NORMALIZING LAMBDA DEPENDENCIES"
+          echo "=================================================="
+
+          # Keep every existing requirement except cryptography.
+          # Then add exactly one compatible cryptography version.
+          # This prevents ResolutionImpossible when an old and a new
+          # cryptography pin are both present in requirements.txt.
+
+          for file in \
             lambda/authorizer/requirements.txt \
             lambda/product/requirements.txt \
             lambda/order/requirements.txt \
             lambda/order_processor/requirements.txt \
-            lambda/report/requirements.txt; do
-
-            if [ -f "$FILE" ]; then
-              TMP_FILE="${FILE}.tmp"
+            lambda/report/requirements.txt
+          do
+            if [ -f "$file" ]; then
+              tmp="${file}.tmp"
 
               awk '
-                BEGIN { cryptography_seen = 0 }
-                /^[[:space:]]*cryptography([<=>!~]|$)/ {
-                  if (cryptography_seen == 0) {
-                    print "cryptography==43.0.3"
-                    cryptography_seen = 1
-                  }
-                  next
-                }
+                BEGIN { IGNORECASE=1 }
+                /^[[:space:]]*cryptography[[:space:]]*([<>=!~].*)?[[:space:]]*$/ { found=1; next }
                 { print }
-              ' "$FILE" > "$TMP_FILE"
+                END { if (found) print "cryptography==43.0.3" }
+              ' "$file" > "$tmp"
 
-              mv "$TMP_FILE" "$FILE"
+              mv "$tmp" "$file"
             fi
           done
 
-          echo "Normalized cryptography dependency versions:"
-          grep -Hin "^[[:space:]]*cryptography" \
-            lambda/*/requirements.txt || true
+          echo "Authorizer requirements after normalization:"
+          cat lambda/authorizer/requirements.txt
+
+          CRYPTO_COUNT=$(grep -iE '^[[:space:]]*cryptography[[:space:]]*([<>=!~].*)?[[:space:]]*$' lambda/authorizer/requirements.txt | wc -l)
+
+          if [ "$CRYPTO_COUNT" -gt 1 ]; then
+            echo "ERROR: Multiple cryptography requirements remain."
+            cat lambda/authorizer/requirements.txt
+            exit 1
+          fi
+
 
       # ==========================================================
       # 14. PACKAGE LAMBDAS
@@ -1027,39 +1035,7 @@ jobs:
 
 
       # ==========================================================
-      # 18. DEPLOY DATA BEFORE IAM
-      #
-      # IAM imports the reports bucket export from the data stack.
-      # Therefore data must exist before IAM is deployed.
-      # ==========================================================
-
-      - name: Deploy Data Stack Before IAM
-
-        id: deploy_data_before_iam
-
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
-        run: |
-
-          echo "=================================================="
-          echo "DEPLOYING DATA STACK BEFORE IAM"
-          echo "=================================================="
-
-          aws cloudformation deploy \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --template-file cloudformation/data-stack.yaml \
-            --parameter-overrides \
-              "DBPassword=$DB_PASSWORD" \
-            --no-fail-on-empty-changeset
-
-          echo "Data stack deployment completed."
-
-
-      # ==========================================================
-      # 19. DEPLOY IAM
+      # 18. DEPLOY IAM
       # ==========================================================
 
       - name: Deploy IAM Stack
@@ -1087,7 +1063,7 @@ jobs:
 
 
       # ==========================================================
-      # 20. IAM ERRORS
+      # 19. IAM ERRORS
       # ==========================================================
 
       - name: Show IAM Stack Errors
@@ -1222,7 +1198,7 @@ jobs:
 
 
       # ==========================================================
-      # 19. DEPLOY AUTH
+      # 21. DEPLOY AUTH
       # ==========================================================
 
       - name: Deploy Auth Stack
@@ -1279,7 +1255,7 @@ jobs:
 
 
       # ==========================================================
-      # 25. UPLOAD PRODUCT
+      # 26. UPLOAD PRODUCT
       # ==========================================================
 
       - name: Upload Product Lambda
@@ -1298,7 +1274,7 @@ jobs:
 
 
       # ==========================================================
-      # 25. UPLOAD ORDER
+      # 27. UPLOAD ORDER
       # ==========================================================
 
       - name: Upload Order Lambda
@@ -1317,7 +1293,7 @@ jobs:
 
 
       # ==========================================================
-      # 26. UPLOAD ORDER PROCESSOR
+      # 28. UPLOAD ORDER PROCESSOR
       # ==========================================================
 
       - name: Upload Order Processor Lambda
@@ -1336,7 +1312,7 @@ jobs:
 
 
       # ==========================================================
-      # 27. UPLOAD REPORT
+      # 29. UPLOAD REPORT
       # ==========================================================
 
       - name: Upload Report Lambda
@@ -1355,7 +1331,7 @@ jobs:
 
 
       # ==========================================================
-      # 28. CREATE DATABASE PASSWORD SECURESTRING
+      # 30. CREATE DATABASE PASSWORD SECURESTRING
       # ==========================================================
 
       - name: Create Database Password SecureString

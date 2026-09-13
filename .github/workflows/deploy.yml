@@ -556,9 +556,15 @@ jobs:
 
           cp lambda/authorizer/lambda_function.py build/authorizer/index.py
 
-          python -m pip install --no-cache-dir \
-            -r lambda/authorizer/requirements.txt \
-            -t build/authorizer
+          python -m pip install \
+            --upgrade \
+            --no-cache-dir \
+            --target build/authorizer \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.13 \
+            --only-binary=:all: \
+            -r lambda/authorizer/requirements.txt
 
           test -f build/authorizer/index.py
           test -d build/authorizer/pymysql
@@ -581,9 +587,14 @@ jobs:
 
 
           python -m pip install \
+            --upgrade \
             --no-cache-dir \
-            -r lambda/product/requirements.txt \
-            -t build/product
+            --target build/product \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.13 \
+            --only-binary=:all: \
+            -r lambda/product/requirements.txt
 
 
           if [ ! -f "build/product/index.py" ]; then
@@ -613,6 +624,12 @@ jobs:
           echo ""
           echo "Packaging Order Lambda..."
 
+          echo "Order requirements used by CI:"
+          cat lambda/order/requirements.txt
+
+          echo "Python version used by CI:"
+          python --version
+
 
           cp \
             lambda/order/lambda_function.py \
@@ -629,9 +646,14 @@ jobs:
 
 
           python -m pip install \
+            --upgrade \
             --no-cache-dir \
-            -r lambda/order/requirements.txt \
-            -t build/order
+            --target build/order \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.13 \
+            --only-binary=:all: \
+            -r lambda/order/requirements.txt
 
 
           if [ ! -f "build/order/index.py" ]; then
@@ -659,6 +681,13 @@ jobs:
             exit 1
 
           fi
+
+
+          test -d build/order/cryptography
+          test -f build/order/_cffi_backend*.so
+          test -d build/order/cffi
+
+          echo "Order Lambda cryptography and cffi native backend verified."
 
 
           echo "Order Lambda package contents:"
@@ -690,9 +719,14 @@ jobs:
 
 
           python -m pip install \
+            --upgrade \
             --no-cache-dir \
-            -r lambda/order_processor/requirements.txt \
-            -t build/order_processor
+            --target build/order_processor \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.13 \
+            --only-binary=:all: \
+            -r lambda/order_processor/requirements.txt
 
 
           if [ ! -f "build/order_processor/index.py" ]; then
@@ -984,6 +1018,35 @@ jobs:
 
 
       # ==========================================================
+      # 19. DEPLOY AUTH
+      # ==========================================================
+
+      - name: Deploy Auth Stack
+
+        id: deploy_auth
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING AUTH STACK"
+          echo "=================================================="
+
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-auth-stack \
+            --template-file cloudformation/auth-stack.yaml \
+            --parameter-overrides \
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+              "CodeVersion=${{ github.sha }}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+
+          echo "Auth stack deployment completed."
+
+
+      # ==========================================================
       # 20. AUTH ERRORS
       # ==========================================================
 
@@ -1135,41 +1198,6 @@ jobs:
           aws s3 cp \
             "build/authorizer-lambda-${{ github.sha }}.zip" \
             "s3://${{ steps.lambda_bucket.outputs.bucket }}/auth/authorizer-lambda-${{ github.sha }}.zip"
-
-
-      # ==========================================================
-      # 19. DEPLOY AUTH
-      # ==========================================================
-
-      - name: Deploy Auth Stack
-
-        id: deploy_auth
-
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
-        run: |
-
-          echo "=================================================="
-          echo "DEPLOYING AUTH STACK"
-          echo "=================================================="
-
-
-          aws cloudformation deploy \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack \
-            --template-file cloudformation/auth-stack.yaml \
-            --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
-              "DBPassword=$DB_PASSWORD" \
-              "CodeVersion=${{ github.sha }}" \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
-
-
-          echo "Auth stack deployment completed."
-
 
 
       # ==========================================================

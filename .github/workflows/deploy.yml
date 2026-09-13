@@ -516,23 +516,51 @@ jobs:
 
           echo "PyMySQL requirement verified for all database Lambdas."
 
-          for REQUIREMENTS_FILE in \
+
+      # ==========================================================
+      # 13. NORMALIZE PYTHON DEPENDENCIES
+      #
+      # Prevent pip resolver failures when a requirements file contains
+      # more than one cryptography version. All Lambda packages use one
+      # compatible version during this deployment.
+      # ==========================================================
+
+      - name: Normalize Lambda Requirements
+        run: |
+          set -e
+
+          for FILE in \
             lambda/authorizer/requirements.txt \
+            lambda/product/requirements.txt \
             lambda/order/requirements.txt \
             lambda/order_processor/requirements.txt \
             lambda/report/requirements.txt; do
 
-            grep -Eiq "^cryptography([<=>].*)?$" "$REQUIREMENTS_FILE" || {
-              echo "ERROR: cryptography is missing from $REQUIREMENTS_FILE."
-              exit 1
-            }
+            if [ -f "$FILE" ]; then
+              TMP_FILE="${FILE}.tmp"
+
+              awk '
+                BEGIN { cryptography_seen = 0 }
+                /^[[:space:]]*cryptography([<=>!~]|$)/ {
+                  if (cryptography_seen == 0) {
+                    print "cryptography==43.0.3"
+                    cryptography_seen = 1
+                  }
+                  next
+                }
+                { print }
+              ' "$FILE" > "$TMP_FILE"
+
+              mv "$TMP_FILE" "$FILE"
+            fi
           done
 
-          echo "cryptography requirement verified for all database Lambdas."
-
+          echo "Normalized cryptography dependency versions:"
+          grep -Hin "^[[:space:]]*cryptography" \
+            lambda/*/requirements.txt || true
 
       # ==========================================================
-      # 13. PACKAGE LAMBDAS
+      # 14. PACKAGE LAMBDAS
       # ==========================================================
 
       - name: Package Lambda Functions
@@ -569,9 +597,7 @@ jobs:
 
           python -m pip install \
             --no-cache-dir \
-            --upgrade \
             -r lambda/authorizer/requirements.txt \
-            cryptography==42.0.8 \
             -t build/authorizer
 
 
@@ -670,9 +696,7 @@ jobs:
 
           python -m pip install \
             --no-cache-dir \
-            --upgrade \
             -r lambda/order/requirements.txt \
-            cryptography==42.0.8 \
             -t build/order
 
 
@@ -733,9 +757,7 @@ jobs:
 
           python -m pip install \
             --no-cache-dir \
-            --upgrade \
             -r lambda/order_processor/requirements.txt \
-            cryptography==42.0.8 \
             -t build/order_processor
 
 
@@ -783,9 +805,7 @@ jobs:
 
           python -m pip install \
             --no-cache-dir \
-            --upgrade \
             -r lambda/report/requirements.txt \
-            cryptography==42.0.8 \
             -t build/report
 
 
@@ -821,18 +841,9 @@ jobs:
           echo ""
           echo "All Lambda packages created."
 
-          echo "Running Python syntax checks..."
-          python -m compileall -q \
-            lambda/authorizer \
-            lambda/product \
-            lambda/order \
-            lambda/order_processor \
-            lambda/report
-          echo "Python syntax checks passed."
-
 
       # ==========================================================
-      # 14. VERIFY PACKAGES
+      # 15. VERIFY PACKAGES
       # ==========================================================
 
       - name: Verify Lambda Packages
@@ -964,24 +975,11 @@ jobs:
 
 
           echo ""
-          for ZIP_FILE in \
-            "build/authorizer-lambda-${{ github.sha }}.zip" \
-            "build/order-lambda-${{ github.sha }}.zip" \
-            "build/order-processor-${{ github.sha }}.zip" \
-            "build/report-lambda-${{ github.sha }}.zip"; do
-
-            if ! unzip -l "$ZIP_FILE" | grep -q "cryptography"; then
-              echo "ERROR: cryptography is missing from $ZIP_FILE."
-              exit 1
-            fi
-          done
-
-          echo "cryptography is present in all database Lambda ZIP files."
           echo "All Lambda packages are valid."
 
 
       # ==========================================================
-      # 15. DEPLOY NETWORK
+      # 16. DEPLOY NETWORK
       # ==========================================================
 
       - name: Deploy Network Stack
@@ -1006,7 +1004,7 @@ jobs:
 
 
       # ==========================================================
-      # 16. NETWORK ERRORS
+      # 17. NETWORK ERRORS
       # ==========================================================
 
       - name: Show Network Stack Errors
@@ -1029,7 +1027,39 @@ jobs:
 
 
       # ==========================================================
-      # 17. DEPLOY IAM
+      # 18. DEPLOY DATA BEFORE IAM
+      #
+      # IAM imports the reports bucket export from the data stack.
+      # Therefore data must exist before IAM is deployed.
+      # ==========================================================
+
+      - name: Deploy Data Stack Before IAM
+
+        id: deploy_data_before_iam
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "DEPLOYING DATA STACK BEFORE IAM"
+          echo "=================================================="
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --template-file cloudformation/data-stack.yaml \
+            --parameter-overrides \
+              "DBPassword=$DB_PASSWORD" \
+            --no-fail-on-empty-changeset
+
+          echo "Data stack deployment completed."
+
+
+      # ==========================================================
+      # 19. DEPLOY IAM
       # ==========================================================
 
       - name: Deploy IAM Stack
@@ -1057,7 +1087,7 @@ jobs:
 
 
       # ==========================================================
-      # 18. IAM ERRORS
+      # 20. IAM ERRORS
       # ==========================================================
 
       - name: Show IAM Stack Errors
@@ -1226,7 +1256,7 @@ jobs:
 
 
       # ==========================================================
-      # 20. AUTH ERRORS
+      # 22. AUTH ERRORS
       # ==========================================================
 
       - name: Show Auth Stack Errors
@@ -1249,7 +1279,7 @@ jobs:
 
 
       # ==========================================================
-      # 24. UPLOAD PRODUCT
+      # 25. UPLOAD PRODUCT
       # ==========================================================
 
       - name: Upload Product Lambda

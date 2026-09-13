@@ -8,7 +8,34 @@ from decimal import Decimal
 import boto3
 
 ssm = boto3.client("ssm")
+
 import pymysql
+
+# ================================================================
+# CRYPTOGRAPHY DEPENDENCY DIAGNOSTIC
+# ================================================================
+
+try:
+    import cryptography
+    from cryptography.hazmat.backends import default_backend
+
+    print(
+        "Cryptography import successful:",
+        cryptography.__version__,
+    )
+
+    print(
+        "Cryptography backend:",
+        default_backend(),
+    )
+
+except Exception as exc:
+    print(
+        "Cryptography import failed:",
+        repr(exc),
+    )
+
+    raise
 
 
 # ================================================================

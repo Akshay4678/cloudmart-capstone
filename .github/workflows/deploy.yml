@@ -1472,6 +1472,7 @@ jobs:
           fi
 
 
+          echo "API_URL=$API_URL" >> "$GITHUB_ENV"
           echo "url=$API_URL" >> "$GITHUB_OUTPUT"
 
 

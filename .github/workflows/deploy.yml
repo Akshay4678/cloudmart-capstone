@@ -1488,7 +1488,7 @@ jobs:
           echo "================================================"
 
           API_URL=$(aws cloudformation describe-stacks \
-            --stack-name cloudmart-api-dev \
+            --stack-name cloudmart-api-stack \
             --region ap-south-1 \
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
             --output text)

@@ -1530,7 +1530,7 @@ jobs:
         env:
           USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
 
-          run: |
+        run: |
 
             echo "=================================================="
             echo "SMOKE TEST - POST /orders"

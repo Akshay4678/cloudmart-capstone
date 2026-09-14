@@ -1528,72 +1528,66 @@ jobs:
       - name: Smoke Test - POST Order
 
         env:
+          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
 
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          run: |
 
-        run: |
+            echo "=================================================="
+            echo "SMOKE TEST - POST /orders"
+            echo "=================================================="
 
-          echo "=================================================="
-          echo "SMOKE TEST - POST /orders"
-          echo "=================================================="
+            if [ -z "$USER_AUTH_TOKEN" ]; then
+              echo "ERROR: USER_AUTH_TOKEN GitHub secret is empty or missing."
+              exit 1
+            fi
 
+            echo "USER_AUTH_TOKEN is available."
+            echo "Token length: ${#USER_AUTH_TOKEN}"
 
-          cat > /tmp/order.json <<'EOF'
-          {
-            "customer_id": "CUST101",
-            "items": [
-              {
-                "product_id": 1,
-                "quantity": 1
-              }
-            ]
-          }
-          EOF
+            cat > /tmp/order.json <<'EOF'
+            {
+              "customer_id": "CUST101",
+              "items": [
+                {
+                  "product_id": 1,
+                  "quantity": 1
+                }
+              ]
+            }
+            EOF
 
+            echo ""
+            echo "Order request:"
+            cat /tmp/order.json
 
-          echo ""
-          echo "Order request:"
-          cat /tmp/order.json
+            echo ""
 
+            HTTP_STATUS=$(curl \
+              --silent \
+              --show-error \
+              --output /tmp/order-response.json \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --header "Authorization: Bearer $USER_AUTH_TOKEN" \
+              --data @/tmp/order.json \
+              "${{ steps.api_url.outputs.url }}/orders")
 
-          echo ""
+            echo "HTTP STATUS: $HTTP_STATUS"
 
+            echo ""
+            echo "RESPONSE:"
+            cat /tmp/order-response.json
 
-          HTTP_STATUS=$(curl \
-            --silent \
-            --show-error \
-            --output /tmp/order-response.json \
-            --write-out "%{http_code}" \
-            --request POST \
-            --header "Content-Type: application/json" \
-            --header "Authorization: Bearer $AUTH_TOKEN" \
-            --data @/tmp/order.json \
-            "${{ steps.api_url.outputs.url }}/orders")
+            echo ""
 
+            if [ "$HTTP_STATUS" != "202" ]; then
+              echo "ERROR: POST /orders smoke test failed."
+              echo "Expected HTTP 202."
+              exit 1
+            fi
 
-          echo "HTTP STATUS: $HTTP_STATUS"
-
-
-          echo ""
-          echo "RESPONSE:"
-          cat /tmp/order-response.json
-
-
-          echo ""
-
-
-          if [ "$HTTP_STATUS" != "202" ]; then
-
-            echo "ERROR: POST /orders smoke test failed."
-
-            echo "Expected HTTP 202."
-
-            exit 1
-
-          fi
-
-
-          echo "POST /orders smoke test passed."
+            echo "POST /orders smoke test passed."
 
 
       # ==========================================================

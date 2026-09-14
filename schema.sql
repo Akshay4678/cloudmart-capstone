@@ -2,16 +2,25 @@
 -- CLOUDMART DATABASE SCHEMA
 -- =====================================================
 -- Database:
--- cloudmart
+--     cloudmart
 --
 -- Tables:
--- customers
--- products
--- orders
--- order_items
--- audit_logs
+--     customers
+--     products
+--     orders
+--     order_items
+--     audit_logs
 --
 -- =====================================================
+
+
+-- =====================================================
+-- DATABASE
+-- =====================================================
+
+CREATE DATABASE IF NOT EXISTS cloudmart;
+
+USE cloudmart;
 
 
 -- =====================================================
@@ -162,7 +171,7 @@ CREATE TABLE IF NOT EXISTS orders (
 --
 -- Composite primary key:
 --
--- (order_id, product_id)
+--     (order_id, product_id)
 --
 -- The same product cannot appear twice
 -- inside the same order.
@@ -242,41 +251,55 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 --
 -- MySQL does not support:
 --
--- CREATE INDEX IF NOT EXISTS
+--     CREATE INDEX IF NOT EXISTS
 --
--- These indexes should be created during the first
--- database initialization.
---
--- Your Lambda initialization code should handle
--- MySQL error 1061 if an index already exists.
+-- Therefore, the indexes are created using a procedure.
+-- Existing indexes are ignored.
 -- =====================================================
 
-CREATE INDEX idx_product_name
-ON products(name);
+DELIMITER $$
 
-CREATE INDEX idx_products_status
-ON products(status);
+DROP PROCEDURE IF EXISTS create_cloudmart_indexes$$
 
-CREATE INDEX idx_orders_customer
-ON orders(customer_id);
+CREATE PROCEDURE create_cloudmart_indexes()
+BEGIN
 
-CREATE INDEX idx_orders_status
-ON orders(status);
+    DECLARE CONTINUE HANDLER FOR SQLSTATE '42000' BEGIN END;
 
-CREATE INDEX idx_orders_created_at
-ON orders(created_at);
+    CREATE INDEX idx_product_name
+        ON products(name);
 
-CREATE INDEX idx_order_items_product
-ON order_items(product_id);
+    CREATE INDEX idx_products_status
+        ON products(status);
 
-CREATE INDEX idx_audit_entity
-ON audit_logs(entity_type, entity_id);
+    CREATE INDEX idx_orders_customer
+        ON orders(customer_id);
 
-CREATE INDEX idx_audit_action
-ON audit_logs(action);
+    CREATE INDEX idx_orders_status
+        ON orders(status);
 
-CREATE INDEX idx_audit_created_at
-ON audit_logs(created_at);
+    CREATE INDEX idx_orders_created_at
+        ON orders(created_at);
+
+    CREATE INDEX idx_order_items_product
+        ON order_items(product_id);
+
+    CREATE INDEX idx_audit_entity
+        ON audit_logs(entity_type, entity_id);
+
+    CREATE INDEX idx_audit_action
+        ON audit_logs(action);
+
+    CREATE INDEX idx_audit_created_at
+        ON audit_logs(created_at);
+
+END$$
+
+CALL create_cloudmart_indexes()$$
+
+DROP PROCEDURE create_cloudmart_indexes$$
+
+DELIMITER ;
 
 
 -- =====================================================
@@ -415,8 +438,8 @@ ON DUPLICATE KEY UPDATE
 -- SAMPLE ORDER
 -- =====================================================
 --
--- This sample order is inserted only if it does not
--- already exist.
+-- This sample order is inserted only if it does
+-- not already exist.
 --
 -- Existing order status is not reset.
 -- =====================================================
@@ -465,6 +488,50 @@ ON DUPLICATE KEY UPDATE
     quantity = VALUES(quantity),
 
     price = VALUES(price);
+
+
+-- =====================================================
+-- VERIFICATION QUERIES
+-- =====================================================
+
+SELECT
+    customer_id,
+    name,
+    email,
+    role,
+    auth_token_hash
+FROM customers;
+
+SELECT
+    product_id,
+    name,
+    price,
+    stock_count,
+    status
+FROM products;
+
+SELECT
+    order_id,
+    customer_id,
+    status,
+    total_amount
+FROM orders;
+
+SELECT
+    order_id,
+    product_id,
+    quantity,
+    price
+FROM order_items;
+
+SELECT
+    log_id,
+    entity_type,
+    entity_id,
+    action,
+    performed_by,
+    created_at
+FROM audit_logs;
 
 
 -- =====================================================

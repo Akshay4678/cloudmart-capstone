@@ -10,7 +10,6 @@
 --     orders
 --     order_items
 --     audit_logs
---
 -- =====================================================
 
 
@@ -72,27 +71,6 @@ CREATE TABLE IF NOT EXISTS customers (
 
 -- =====================================================
 -- PRODUCTS TABLE
--- =====================================================
---
--- status:
---
--- ACTIVE
---     Product is available and can be displayed.
---
--- INACTIVE
---     Product is hidden from normal product listings.
---
--- Products are not physically deleted.
--- DELETE operations are handled as soft deletes
--- by the Product Lambda.
---
--- When stock reaches 0:
---     status = INACTIVE
---
--- When stock becomes greater than 0:
---     status = ACTIVE
---
--- stock_count is the only source of product stock.
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS products (
@@ -168,14 +146,6 @@ CREATE TABLE IF NOT EXISTS orders (
 -- =====================================================
 -- ORDER ITEMS TABLE
 -- =====================================================
---
--- Composite primary key:
---
---     (order_id, product_id)
---
--- The same product cannot appear twice
--- inside the same order.
--- =====================================================
 
 CREATE TABLE IF NOT EXISTS order_items (
 
@@ -216,10 +186,6 @@ CREATE TABLE IF NOT EXISTS order_items (
 -- =====================================================
 -- AUDIT LOGS TABLE
 -- =====================================================
---
--- This table maintains the history of important
--- product and order operations.
--- =====================================================
 
 CREATE TABLE IF NOT EXISTS audit_logs (
 
@@ -249,76 +215,43 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- INDEXES
 -- =====================================================
 --
--- MySQL does not support:
+-- These are normal SQL statements.
+-- Do not add DELIMITER or CREATE PROCEDURE here.
 --
---     CREATE INDEX IF NOT EXISTS
---
--- Therefore, the indexes are created using a procedure.
--- Existing indexes are ignored.
+-- If an index already exists, the Lambda schema
+-- initialization code must ignore MySQL error 1061.
 -- =====================================================
 
-DELIMITER $$
+CREATE INDEX idx_product_name
+ON products(name);
 
-DROP PROCEDURE IF EXISTS create_cloudmart_indexes$$
+CREATE INDEX idx_products_status
+ON products(status);
 
-CREATE PROCEDURE create_cloudmart_indexes()
-BEGIN
+CREATE INDEX idx_orders_customer
+ON orders(customer_id);
 
-    DECLARE CONTINUE HANDLER FOR SQLSTATE '42000' BEGIN END;
+CREATE INDEX idx_orders_status
+ON orders(status);
 
-    CREATE INDEX idx_product_name
-        ON products(name);
+CREATE INDEX idx_orders_created_at
+ON orders(created_at);
 
-    CREATE INDEX idx_products_status
-        ON products(status);
+CREATE INDEX idx_order_items_product
+ON order_items(product_id);
 
-    CREATE INDEX idx_orders_customer
-        ON orders(customer_id);
+CREATE INDEX idx_audit_entity
+ON audit_logs(entity_type, entity_id);
 
-    CREATE INDEX idx_orders_status
-        ON orders(status);
+CREATE INDEX idx_audit_action
+ON audit_logs(action);
 
-    CREATE INDEX idx_orders_created_at
-        ON orders(created_at);
-
-    CREATE INDEX idx_order_items_product
-        ON order_items(product_id);
-
-    CREATE INDEX idx_audit_entity
-        ON audit_logs(entity_type, entity_id);
-
-    CREATE INDEX idx_audit_action
-        ON audit_logs(action);
-
-    CREATE INDEX idx_audit_created_at
-        ON audit_logs(created_at);
-
-END$$
-
-CALL create_cloudmart_indexes()$$
-
-DROP PROCEDURE create_cloudmart_indexes$$
-
-DELIMITER ;
+CREATE INDEX idx_audit_created_at
+ON audit_logs(created_at);
 
 
 -- =====================================================
 -- SAMPLE CUSTOMERS
--- =====================================================
---
--- The actual tokens are hashed before being stored.
---
--- Admin token:
---     cloudmartadmin123
---
--- Akshay token:
---     akshaytoken123
---
--- Rahul token:
---     rahultoken123
---
--- Priya token:
---     priyatoken123
 -- =====================================================
 
 INSERT INTO customers
@@ -379,17 +312,6 @@ ON DUPLICATE KEY UPDATE
 -- =====================================================
 -- SAMPLE PRODUCTS
 -- =====================================================
---
--- Explicit product IDs are used.
---
--- First run:
---     Laptop   = 1
---     Mouse    = 2
---     Keyboard = 3
---
--- Existing stock_count is not overwritten.
--- Existing status is not overwritten.
--- =====================================================
 
 INSERT INTO products
 (
@@ -436,12 +358,6 @@ ON DUPLICATE KEY UPDATE
 
 -- =====================================================
 -- SAMPLE ORDER
--- =====================================================
---
--- This sample order is inserted only if it does
--- not already exist.
---
--- Existing order status is not reset.
 -- =====================================================
 
 INSERT INTO orders
@@ -505,6 +421,7 @@ FROM customers;
 SELECT
     product_id,
     name,
+    description,
     price,
     stock_count,
     status
@@ -529,6 +446,8 @@ SELECT
     entity_type,
     entity_id,
     action,
+    old_value,
+    new_value,
     performed_by,
     created_at
 FROM audit_logs;

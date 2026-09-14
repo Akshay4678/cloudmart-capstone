@@ -1491,7 +1491,7 @@ jobs:
           API_URL=$(aws cloudformation describe-stacks \
             --stack-name cloudmart-api-stack \
             --region ap-south-1 \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiInvokeUrl'].OutputValue" \
             --output text)
 
           if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then

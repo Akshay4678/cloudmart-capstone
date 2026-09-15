@@ -15,6 +15,7 @@ import pymysql
 
 sqs = boto3.client("sqs")
 cloudwatch = boto3.client("cloudwatch")
+ssm = boto3.client("ssm")
 
 
 # ================================================================
@@ -26,7 +27,10 @@ QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
-DB_PASSWORD = os.environ["DB_PASSWORD"]
+DB_PASSWORD_PARAMETER = os.environ.get(
+    "DB_PASSWORD_PARAMETER",
+    "/cloudmart/dev/rds/password",
+)
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
@@ -46,11 +50,20 @@ SCHEMA_FILE = os.path.join(
 # DATABASE CONNECTION
 # ================================================================
 
+def get_db_password():
+    """Read the encrypted RDS password from SSM Parameter Store."""
+    result = ssm.get_parameter(
+        Name=DB_PASSWORD_PARAMETER,
+        WithDecryption=True,
+    )
+    return result["Parameter"]["Value"]
+
+
 def get_connection():
     return pymysql.connect(
         host=DB_HOST,
         user=DB_USER,
-        password=DB_PASSWORD,
+        password=get_db_password(),
         database=DB_NAME,
         port=DB_PORT,
         connect_timeout=5,
@@ -815,9 +828,9 @@ def initialize_schema():
 
 def create_order(
     body,
-    performed_by=None,
     authenticated_customer_id=None,
     role="USER",
+    performed_by=None,
 ):
 
     if not isinstance(body, dict):
@@ -828,34 +841,30 @@ def create_order(
     body_customer_id = body.get("customer_id")
     items = body.get("items")
 
+    role = str(role or "USER").upper().strip()
+    authenticated_customer_id = (
+        str(authenticated_customer_id).strip()
+        if authenticated_customer_id
+        else None
+    )
+
     # ------------------------------------------------------------
     # CUSTOMER VALIDATION
     # ------------------------------------------------------------
 
-    role = str(role or "USER").upper()
-
-    if authenticated_customer_id:
-        authenticated_customer_id = str(
-            authenticated_customer_id
-        ).strip()
-
     if role == "USER":
-
         if not authenticated_customer_id:
             return response(
                 401,
                 {
                     "message": (
                         "Authenticated customer identity was not found"
-                    ),
+                    )
                 },
             )
 
         if body_customer_id is not None:
-            body_customer_id = str(
-                body_customer_id
-            ).strip()
-
+            body_customer_id = str(body_customer_id).strip()
             if body_customer_id != authenticated_customer_id:
                 return response(
                     403,
@@ -872,26 +881,20 @@ def create_order(
         customer_id = authenticated_customer_id
 
     elif role == "ADMIN":
-
         if not body_customer_id:
             raise ValueError(
                 "customer_id is required for administrator orders"
             )
-
         customer_id = str(body_customer_id).strip()
 
     else:
         return response(
             403,
-            {
-                "message": "Invalid user role",
-            },
+            {"message": "Invalid user role"},
         )
 
     if not customer_id:
-        raise ValueError(
-            "customer_id cannot be empty"
-        )
+        raise ValueError("customer_id cannot be empty")
 
     # ------------------------------------------------------------
     # ITEM VALIDATION
@@ -2178,22 +2181,8 @@ def lambda_handler(
                 event
             )
 
-            performed_by = (
-                get_performed_by(
-                    event,
-                    body,
-                )
-            )
-
-            request_context = (
-                event.get("requestContext")
-                or {}
-            )
-
-            authorizer = (
-                request_context.get("authorizer")
-                or {}
-            )
+            request_context = event.get("requestContext") or {}
+            authorizer = request_context.get("authorizer") or {}
 
             authenticated_customer_id = (
                 authorizer.get("customer_id")
@@ -2201,15 +2190,16 @@ def lambda_handler(
             )
 
             role = str(
-                authorizer.get("role")
-                or "USER"
+                authorizer.get("role") or "USER"
             ).upper()
+
+            performed_by = get_performed_by(event, body)
 
             return create_order(
                 body,
-                performed_by,
-                authenticated_customer_id,
-                role,
+                authenticated_customer_id=authenticated_customer_id,
+                role=role,
+                performed_by=performed_by,
             )
 
         except ValueError as exc:

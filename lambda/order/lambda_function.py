@@ -940,22 +940,29 @@ def create_order(
                 "quantity is required"
             )
 
-        try:
+        raw_product_id = item["product_id"]
+        raw_quantity = item["quantity"]
 
-            product_id = int(
-                item["product_id"]
-            )
-
-            quantity = int(
-                item["quantity"]
-            )
-
-        except (TypeError, ValueError):
-
+        # JSON strings such as "3" are rejected.
+        # bool is rejected because bool is a subclass of int in Python.
+        if (
+            isinstance(raw_product_id, bool)
+            or not isinstance(raw_product_id, int)
+        ):
             raise ValueError(
-                "product_id and quantity "
-                "must be numbers"
+                "product_id must be an integer"
             )
+
+        if (
+            isinstance(raw_quantity, bool)
+            or not isinstance(raw_quantity, int)
+        ):
+            raise ValueError(
+                "quantity must be an integer"
+            )
+
+        product_id = raw_product_id
+        quantity = raw_quantity
 
         if product_id <= 0:
             raise ValueError(
@@ -1524,34 +1531,36 @@ def get_customer_orders(customer_id):
         # GET CUSTOMER
         # --------------------------------------------------------
 
-        with connection.cursor() as cursor:
+        if customer_id is not None:
 
-            cursor.execute(
-                """
-                SELECT
-                    customer_id,
-                    name,
-                    email,
-                    phone
-                FROM customers
-                WHERE customer_id = %s
-                """,
-                (customer_id,),
-            )
+            with connection.cursor() as cursor:
 
-            customer = cursor.fetchone()
+                cursor.execute(
+                    """
+                    SELECT
+                        customer_id,
+                        name,
+                        email,
+                        phone
+                    FROM customers
+                    WHERE customer_id = %s
+                    """,
+                    (customer_id,),
+                )
 
-        if not customer:
+                customer = cursor.fetchone()
 
-            return response(
-                404,
-                {
-                    "message": (
-                        "Customer not found"
-                    ),
-                    "customer_id": customer_id,
-                },
-            )
+            if not customer:
+
+                return response(
+                    404,
+                    {
+                        "message": (
+                            "Customer not found"
+                        ),
+                        "customer_id": customer_id,
+                    },
+                )
 
         # --------------------------------------------------------
         # GET ORDERS + PRODUCTS
@@ -1559,8 +1568,7 @@ def get_customer_orders(customer_id):
 
         with connection.cursor() as cursor:
 
-            cursor.execute(
-                """
+            order_query = """
                 SELECT
                     o.order_id,
                     o.customer_id,
@@ -1583,14 +1591,15 @@ def get_customer_orders(customer_id):
                 INNER JOIN products p
                     ON oi.product_id = p.product_id
 
-                WHERE o.customer_id = %s
+            """
 
-                ORDER BY
-                    o.created_at DESC,
-                    oi.product_id
-                """,
-                (customer_id,),
-            )
+            if customer_id is not None:
+                order_query += "WHERE o.customer_id = %s "
+                order_query += "ORDER BY o.created_at DESC, oi.product_id"
+                cursor.execute(order_query, (customer_id,))
+            else:
+                order_query += "ORDER BY o.created_at DESC, oi.product_id"
+                cursor.execute(order_query)
 
             rows = cursor.fetchall()
 
@@ -2265,6 +2274,10 @@ def lambda_handler(
             )
         )
 
+        # ADMIN can retrieve all orders without supplying customer_id.
+        if role == "ADMIN" and not customer_id:
+            return get_customer_orders(None)
+
         if not customer_id:
 
             return response(
@@ -2272,7 +2285,7 @@ def lambda_handler(
                 {
                     "message": (
                         "customer_id query "
-                        "parameter is required"
+                        "parameter is required for USER requests"
                     ),
                 },
             )

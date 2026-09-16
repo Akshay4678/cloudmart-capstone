@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
-
-ssm = boto3.client("ssm")
 import pymysql
 
 
@@ -28,14 +26,10 @@ QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
+DB_PASSWORD = os.environ["DB_PASSWORD"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
-
-DB_PASSWORD_PARAMETER = os.environ.get(
-    "DB_PASSWORD_PARAMETER",
-    f"/cloudmart/{ENVIRONMENT}/database/password"
-)
 
 
 # ================================================================
@@ -52,26 +46,11 @@ SCHEMA_FILE = os.path.join(
 # DATABASE CONNECTION
 # ================================================================
 
-_db_password = None
-
-def get_db_password():
-    global _db_password
-
-    if _db_password is None:
-        parameter = ssm.get_parameter(
-            Name=DB_PASSWORD_PARAMETER,
-            WithDecryption=True
-        )
-        _db_password = parameter["Parameter"]["Value"]
-
-    return _db_password
-
-
 def get_connection():
     return pymysql.connect(
         host=DB_HOST,
         user=DB_USER,
-        password=get_db_password(),
+        password=DB_PASSWORD,
         database=DB_NAME,
         port=DB_PORT,
         connect_timeout=5,
@@ -834,7 +813,12 @@ def initialize_schema():
 # CREATE ORDER
 # ================================================================
 
-def create_order(body, performed_by=None):
+def create_order(
+    body,
+    performed_by=None,
+    authenticated_customer_id=None,
+    role="USER",
+):
 
     if not isinstance(body, dict):
         raise ValueError(
@@ -845,7 +829,7 @@ def create_order(body, performed_by=None):
         "customer_id"
     )
 
-    items = body.get("items")
+    role = str(role or "USER").strip().upper()
 
     # ------------------------------------------------------------
     # CUSTOMER VALIDATION
@@ -864,6 +848,25 @@ def create_order(body, performed_by=None):
         raise ValueError(
             "customer_id cannot be empty"
         )
+
+    # ------------------------------------------------------------
+    # AUTHENTICATED CUSTOMER VALIDATION
+    # ------------------------------------------------------------
+
+    if authenticated_customer_id:
+        authenticated_customer_id = str(
+            authenticated_customer_id
+        ).strip()
+
+        if (
+            role != "ADMIN"
+            and customer_id != authenticated_customer_id
+        ):
+            raise ValueError(
+                "You can place orders only for your own customer_id"
+            )
+
+    items = body.get("items")
 
     # ------------------------------------------------------------
     # ITEM VALIDATION
@@ -1651,97 +1654,6 @@ def get_customer_orders(customer_id):
 
 
 # ================================================================
-# GET ALL ORDERS - ADMIN ONLY
-# ================================================================
-
-def get_all_orders():
-    connection = None
-
-    try:
-        connection = get_connection()
-
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    o.order_id,
-                    o.customer_id,
-                    c.name AS customer_name,
-                    c.email AS customer_email,
-                    o.status,
-                    o.total_amount,
-                    o.created_at,
-                    o.updated_at
-                FROM orders o
-                INNER JOIN customers c
-                    ON o.customer_id = c.customer_id
-                ORDER BY o.created_at DESC
-                """
-            )
-
-            orders = cursor.fetchall()
-
-        for order in orders:
-            order["items"] = []
-
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    oi.order_id,
-                    oi.product_id,
-                    p.name AS product_name,
-                    p.description AS product_description,
-                    oi.quantity,
-                    oi.price
-                FROM order_items oi
-                INNER JOIN products p
-                    ON oi.product_id = p.product_id
-                ORDER BY oi.order_id, oi.product_id
-                """
-            )
-
-            items = cursor.fetchall()
-
-        orders_by_id = {
-            order["order_id"]: order
-            for order in orders
-        }
-
-        for item in items:
-            order = orders_by_id.get(item["order_id"])
-            if order is not None:
-                order["items"].append({
-                    "product_id": item["product_id"],
-                    "product_name": item["product_name"],
-                    "product_description": item["product_description"],
-                    "quantity": item["quantity"],
-                    "price": item["price"],
-                })
-
-        return response(
-            200,
-            {
-                "count": len(orders),
-                "orders": orders,
-            },
-        )
-
-    except Exception as exc:
-        print(f"Get all orders error: {type(exc).__name__}: {exc}")
-        return response(
-            500,
-            {
-                "message": "Internal server error",
-            },
-        )
-
-    finally:
-        if connection:
-            connection.close()
-
-
-# ================================================================
 # UPDATE ORDER
 # ================================================================
 
@@ -1749,6 +1661,7 @@ def update_order(
     order_id,
     body,
     performed_by=None,
+    role="USER",
 ):
 
     if not isinstance(body, dict):
@@ -1763,30 +1676,27 @@ def update_order(
             },
         )
 
-    status = body.get(
-        "status"
-    )
+    status = body.get("status")
+    status = str(status).strip().upper() if status is not None else None
+    role = str(role or "USER").strip().upper()
 
-    allowed_statuses = [
-        "PROCESSING",
-        "CONFIRMED",
-        "FAILED",
-        "CANCELLED",
-    ]
+    if not status:
+        return response(400, {"message": "status is required"})
 
-    if status not in allowed_statuses:
-
-        return response(
-            400,
-            {
-                "message": (
-                    "Invalid order status"
-                ),
-                "allowed_statuses": (
-                    allowed_statuses
-                ),
-            },
-        )
+    if role == "USER":
+        if status != "CANCELLED":
+            return response(403, {
+                "message": "Users can only change order status to CANCELLED"
+            })
+    elif role == "ADMIN":
+        allowed_statuses = ["PROCESSING", "CONFIRMED", "FAILED", "CANCELLED"]
+        if status not in allowed_statuses:
+            return response(400, {
+                "message": "Invalid order status",
+                "allowed_statuses": allowed_statuses,
+            })
+    else:
+        return response(403, {"message": "Valid user role is required"})
 
     connection = None
 
@@ -2222,6 +2132,10 @@ def lambda_handler(
         or {}
     )
 
+    request_context = event.get("requestContext") or {}
+    authorizer = request_context.get("authorizer") or {}
+    role = str(authorizer.get("role") or "USER").upper()
+
     order_id = path_parameters.get(
         "orderId"
     )
@@ -2241,38 +2155,6 @@ def lambda_handler(
                 event
             )
 
-            # --------------------------------------------------------
-            # AUTHENTICATED CUSTOMER VALIDATION
-            # --------------------------------------------------------
-            # A normal user can create an order only for the customer
-            # ID associated with the bearer token. Admins may create
-            # an order for any valid customer ID.
-            request_context = event.get("requestContext") or {}
-            authorizer = request_context.get("authorizer") or {}
-            authenticated_customer_id = str(
-                authorizer.get("customer_id") or ""
-            ).strip()
-            authenticated_role = str(
-                authorizer.get("role") or "USER"
-            ).upper().strip()
-            requested_customer_id = str(
-                body.get("customer_id") or ""
-            ).strip()
-
-            if (
-                authenticated_role != "ADMIN"
-                and requested_customer_id != authenticated_customer_id
-            ):
-                return response(
-                    403,
-                    {
-                        "message": (
-                            "Token customer_id does not match "
-                            "the customer_id in the request"
-                        ),
-                    },
-                )
-
             performed_by = (
                 get_performed_by(
                     event,
@@ -2280,9 +2162,19 @@ def lambda_handler(
                 )
             )
 
+            authenticated_customer_id = (
+                authorizer.get("customer_id")
+                or authorizer.get("user")
+                or authorizer.get("principalId")
+            )
+
             return create_order(
-                body,
-                performed_by,
+                body=body,
+                performed_by=performed_by,
+                authenticated_customer_id=(
+                    authenticated_customer_id
+                ),
+                role=role,
             )
 
         except ValueError as exc:
@@ -2332,67 +2224,65 @@ def lambda_handler(
         )
 
     # ============================================================
-    # GET /orders
-    # ADMIN -> all orders; customer_id is optional/ignored
-    # USER  -> only own orders; customer_id must match token
+    # GET /orders?customer_id=CUST101
     # ============================================================
 
     if method == "GET":
 
-        request_context = event.get("requestContext") or {}
-        authorizer = request_context.get("authorizer") or {}
-        authenticated_customer_id = str(
-            authorizer.get("customer_id") or ""
-        ).strip()
-        authenticated_role = str(
-            authorizer.get("role") or "USER"
-        ).upper().strip()
-
-        requested_customer_id = query_parameters.get(
-            "customer_id"
+        customer_id = (
+            query_parameters.get(
+                "customer_id"
+            )
         )
 
-        # ADMIN can view every order without a query parameter.
-        if authenticated_role == "ADMIN":
-            return get_all_orders()
+        if not customer_id:
 
-        # USER must provide customer_id.
-        if not requested_customer_id:
             return response(
                 400,
                 {
                     "message": (
-                        "customer_id query parameter is required"
+                        "customer_id query "
+                        "parameter is required"
                     ),
                 },
             )
 
-        requested_customer_id = str(
-            requested_customer_id
+        customer_id = str(
+            customer_id
         ).strip()
 
-        if not requested_customer_id:
+        if not customer_id:
+
             return response(
                 400,
                 {
-                    "message": "customer_id cannot be empty",
-                },
-            )
-
-        if requested_customer_id != authenticated_customer_id:
-            return response(
-                403,
-                {
                     "message": (
-                        "You are not authorized to view orders "
-                        "for this customer_id"
+                        "customer_id cannot "
+                        "be empty"
                     ),
                 },
             )
 
         return get_customer_orders(
-            requested_customer_id
+            customer_id
         )
+
+    # ============================================================
+    # PATCH /orders/{orderId} - ADMIN ONLY
+    # ============================================================
+
+    if method == "PATCH" and order_id:
+        if role != "ADMIN":
+            return response(403, {
+                "message": "Only administrators can use PATCH for orders"
+            })
+
+        try:
+            body = parse_request_body(event)
+            performed_by = get_performed_by(event, body)
+            return update_order(order_id, body, performed_by, role)
+        except ValueError as exc:
+            return response(400, {"message": str(exc)})
 
     # ============================================================
     # PUT /orders/{orderId}
@@ -2420,6 +2310,7 @@ def lambda_handler(
                 order_id,
                 body,
                 performed_by,
+                role,
             )
 
         except ValueError as exc:

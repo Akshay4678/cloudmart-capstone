@@ -143,7 +143,7 @@ def create_customer(body):
         phone
     )
 
-    token_hash = hash_token(token)
+    token_hash = hash_token(token) 
 
     customer_id = (
         f"CUST{secrets.randbelow(900000) + 100000}"

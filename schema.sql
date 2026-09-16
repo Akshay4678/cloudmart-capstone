@@ -21,141 +21,239 @@
 --     The original token is not stored in the database.
 -- =====================================================
 
-
--- =====================================================
--- DATABASE
--- =====================================================
+-- ============================================================
+-- CLOUDMART DATABASE SCHEMA
+-- Environment: dev
+-- Database: cloudmart
+-- ============================================================
 
 CREATE DATABASE IF NOT EXISTS cloudmart;
 
 USE cloudmart;
 
 
--- =====================================================
+
+-- ============================================================
 -- CUSTOMERS TABLE
--- =====================================================
+-- ============================================================
 
-CREATE TABLE IF NOT EXISTS customers (
-
-    customer_id VARCHAR(100) NOT NULL,
+CREATE TABLE customers (
+    customer_id INT AUTO_INCREMENT PRIMARY KEY,
 
     name VARCHAR(100) NOT NULL,
 
-    email VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL UNIQUE,
 
     phone VARCHAR(20) NOT NULL,
 
-    /*
-    SHA-256 hexadecimal hash contains 64 characters.
-
-    The original token is never stored.
-
-    The Customer Lambda generates the token and stores
-    only its SHA-256 hash in this column.
-    */
-
     auth_token_hash VARCHAR(64) NOT NULL,
-
-    /*
-    USER  = normal customer
-    ADMIN = administrator
-    */
 
     role VARCHAR(20) NOT NULL DEFAULT 'USER',
 
-    created_at DATETIME NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    updated_at DATETIME NOT NULL
-        DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
 
-    PRIMARY KEY (customer_id),
-
-    /*
-    Prevent duplicate email addresses.
-    This automatically creates a unique index.
-    */
-
-    UNIQUE KEY uk_customers_email (email),
-
-    /*
-    Used by the Lambda Authorizer to find a customer
-    using the SHA-256 hash of the received token.
-
-    This automatically creates a unique index.
-    It also prevents duplicate token hashes.
-    */
-
-    UNIQUE KEY uk_customers_auth_token (auth_token_hash),
-
-    CONSTRAINT chk_customers_role
+    CONSTRAINT chk_customer_role
         CHECK (role IN ('USER', 'ADMIN'))
+);
 
-) ENGINE=InnoDB;
+
+-- ============================================================
+-- CUSTOMER INDEXES
+-- ============================================================
+
+-- customer_id is automatically indexed because it is the
+-- PRIMARY KEY.
+
+-- This is a normal index, not a UNIQUE index.
+CREATE INDEX idx_customers_auth_token
+ON customers(auth_token_hash);
+
+CREATE INDEX idx_customers_role
+ON customers(role);
 
 
--- =====================================================
+-- ============================================================
+-- INSERT ADMIN CUSTOMER
+-- ============================================================
+
+INSERT INTO customers
+(
+    name,
+    email,
+    phone,
+    auth_token_hash,
+    role
+)
+VALUES
+(
+    'sultanAdmin',
+    'sultanadmin123@admin.com',
+    '9666666904',
+    SHA2(CONCAT('sultanadmin123@admin.com', '9666666904'), 256),
+    'ADMIN'
+);
+
+
+-- ============================================================
+-- INSERT USER CUSTOMERS
+-- ============================================================
+
+INSERT INTO customers
+(
+    name,
+    email,
+    phone,
+    auth_token_hash,
+    role
+)
+VALUES
+(
+    'akshay',
+    'uppu4678@gmail.com',
+    '8891222333',
+    SHA2(CONCAT('uppu4678@gmail.com', '8891222333'), 256),
+    'USER'
+),
+(
+    'rahul',
+    'rahuldhoni07@gmail.com',
+    '7791222344',
+    SHA2(CONCAT('rahuldhoni07@gmail.com', '7791222344'), 256),
+    'USER'
+),
+(
+    'Karthik',
+    'karthikpadi09@gmail.com',
+    '9848909333',
+    SHA2(CONCAT('karthikpadi09@gmail.com', '9848909333'), 256),
+    'USER'
+);
+
+
+-- ============================================================
 -- PRODUCTS TABLE
--- =====================================================
+-- ============================================================
 
-CREATE TABLE IF NOT EXISTS products (
+CREATE TABLE products (
+    product_id INT AUTO_INCREMENT PRIMARY KEY,
 
-    product_id INT NOT NULL AUTO_INCREMENT,
-
-    name VARCHAR(255) NOT NULL,
+    product_name VARCHAR(150) NOT NULL,
 
     description TEXT,
 
+    category VARCHAR(100),
+
     price DECIMAL(10,2) NOT NULL,
 
-    stock_count INT NOT NULL DEFAULT 0,
+    stock_quantity INT NOT NULL DEFAULT 0,
 
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    low_stock_threshold INT NOT NULL DEFAULT 5,
 
-    created_at TIMESTAMP NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    updated_at TIMESTAMP NOT NULL
-        DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
 
-    PRIMARY KEY (product_id),
+    CONSTRAINT chk_product_price
+        CHECK (price >= 0),
 
-    CONSTRAINT chk_products_status
-        CHECK (status IN ('ACTIVE', 'INACTIVE')),
+    CONSTRAINT chk_product_stock
+        CHECK (stock_quantity >= 0),
 
-    CONSTRAINT chk_products_stock
-        CHECK (stock_count >= 0),
-
-    CONSTRAINT chk_products_price
-        CHECK (price >= 0)
-
-) ENGINE=InnoDB;
+    CONSTRAINT chk_product_threshold
+        CHECK (low_stock_threshold >= 0)
+);
 
 
--- =====================================================
+-- ============================================================
+-- PRODUCT INDEXES
+-- ============================================================
+
+CREATE INDEX idx_products_category
+ON products(category);
+
+CREATE INDEX idx_products_stock
+ON products(stock_quantity);
+
+
+-- ============================================================
+-- SAMPLE PRODUCTS
+-- ============================================================
+
+INSERT INTO products
+(
+    product_name,
+    description,
+    category,
+    price,
+    stock_quantity,
+    low_stock_threshold
+)
+VALUES
+(
+    'Laptop',
+    'Business laptop',
+    'Electronics',
+    65000.00,
+    20,
+    5
+),
+(
+    'Wireless Mouse',
+    'Wireless optical mouse',
+    'Accessories',
+    1200.00,
+    50,
+    10
+),
+(
+    'Mechanical Keyboard',
+    'Mechanical RGB keyboard',
+    'Accessories',
+    4500.00,
+    30,
+    5
+),
+(
+    'Monitor',
+    '24 inch Full HD monitor',
+    'Electronics',
+    12000.00,
+    15,
+    5
+),
+(
+    'USB-C Cable',
+    'High-speed USB-C cable',
+    'Accessories',
+    800.00,
+    100,
+    20
+);
+
+
+-- ============================================================
 -- ORDERS TABLE
--- =====================================================
+-- ============================================================
 
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE orders (
+    order_id INT AUTO_INCREMENT PRIMARY KEY,
 
-    order_id VARCHAR(50) NOT NULL,
+    customer_id INT NOT NULL,
 
-    customer_id VARCHAR(100) NOT NULL,
+    total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 
-    status VARCHAR(30) NOT NULL DEFAULT 'PROCESSING',
+    order_status VARCHAR(30) NOT NULL DEFAULT 'PROCESSING',
 
-    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    payment_status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
 
-    created_at DATETIME NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    updated_at DATETIME NOT NULL
-        DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (order_id),
 
     CONSTRAINT fk_orders_customer
         FOREIGN KEY (customer_id)
@@ -163,30 +261,65 @@ CREATE TABLE IF NOT EXISTS orders (
         ON DELETE RESTRICT
         ON UPDATE CASCADE,
 
-    CONSTRAINT chk_orders_total_amount
-        CHECK (total_amount >= 0)
+    CONSTRAINT chk_order_total
+        CHECK (total_amount >= 0),
 
-) ENGINE=InnoDB;
+    CONSTRAINT chk_order_status
+        CHECK (
+            order_status IN (
+                'PROCESSING',
+                'CONFIRMED',
+                'SHIPPED',
+                'DELIVERED',
+                'CANCELLED',
+                'FAILED'
+            )
+        ),
+
+    CONSTRAINT chk_payment_status
+        CHECK (
+            payment_status IN (
+                'PENDING',
+                'PAID',
+                'FAILED',
+                'REFUNDED'
+            )
+        )
+);
 
 
--- =====================================================
+-- ============================================================
+-- ORDER INDEXES
+-- ============================================================
+
+CREATE INDEX idx_orders_customer_id
+ON orders(customer_id);
+
+CREATE INDEX idx_orders_status
+ON orders(order_status);
+
+CREATE INDEX idx_orders_created_at
+ON orders(created_at);
+
+
+-- ============================================================
 -- ORDER ITEMS TABLE
--- =====================================================
+-- ============================================================
 
-CREATE TABLE IF NOT EXISTS order_items (
+CREATE TABLE order_items (
+    order_item_id INT AUTO_INCREMENT PRIMARY KEY,
 
-    order_id VARCHAR(50) NOT NULL,
+    order_id INT NOT NULL,
 
     product_id INT NOT NULL,
 
     quantity INT NOT NULL,
 
-    price DECIMAL(10,2) NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
 
-    created_at DATETIME NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
+    subtotal DECIMAL(10,2) NOT NULL,
 
-    PRIMARY KEY (order_id, product_id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_order_items_order
         FOREIGN KEY (order_id)
@@ -200,75 +333,61 @@ CREATE TABLE IF NOT EXISTS order_items (
         ON DELETE RESTRICT
         ON UPDATE CASCADE,
 
-    CONSTRAINT chk_order_items_quantity
+    CONSTRAINT chk_order_item_quantity
         CHECK (quantity > 0),
 
-    CONSTRAINT chk_order_items_price
-        CHECK (price >= 0)
+    CONSTRAINT chk_order_item_unit_price
+        CHECK (unit_price >= 0),
 
-) ENGINE=InnoDB;
-
-
--- =====================================================
--- AUDIT LOGS TABLE
--- =====================================================
-
-CREATE TABLE IF NOT EXISTS audit_logs (
-
-    log_id BIGINT NOT NULL AUTO_INCREMENT,
-
-    entity_type VARCHAR(30) NOT NULL,
-
-    entity_id VARCHAR(100) NOT NULL,
-
-    action VARCHAR(50) NOT NULL,
-
-    old_value JSON NULL,
-
-    new_value JSON NULL,
-
-    performed_by VARCHAR(100) NULL,
-
-    created_at DATETIME NOT NULL
-        DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (log_id)
-
-) ENGINE=InnoDB;
+    CONSTRAINT chk_order_item_subtotal
+        CHECK (subtotal >= 0)
+);
 
 
--- =====================================================
--- ADDITIONAL INDEXES
--- =====================================================
---
--- The following statements create normal indexes.
---
--- The customer email and auth_token_hash indexes are
--- already created automatically by their UNIQUE KEY
--- definitions above. Do not create duplicate indexes
--- for those columns.
--- =====================================================
+-- ============================================================
+-- ORDER ITEM INDEXES
+-- ============================================================
 
-CREATE INDEX idx_product_name
-ON products(name);
+CREATE INDEX idx_order_items_order_id
+ON order_items(order_id);
 
-CREATE INDEX idx_products_status
-ON products(status);
-
-CREATE INDEX idx_orders_customer
-ON orders(customer_id);
-
-CREATE INDEX idx_orders_status
-ON orders(status);
-
-CREATE INDEX idx_orders_created_at
-ON orders(created_at);
-
-CREATE INDEX idx_order_items_product
+CREATE INDEX idx_order_items_product_id
 ON order_items(product_id);
 
-CREATE INDEX idx_audit_entity
-ON audit_logs(entity_type, entity_id);
+
+-- ============================================================
+-- AUDIT LOGS TABLE
+-- ============================================================
+
+CREATE TABLE audit_logs (
+    audit_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+
+    customer_id INT NULL,
+
+    action VARCHAR(100) NOT NULL,
+
+    entity_type VARCHAR(100),
+
+    entity_id VARCHAR(100),
+
+    details TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_audit_customer
+        FOREIGN KEY (customer_id)
+        REFERENCES customers(customer_id)
+        ON DELETE SET NULL
+        ON UPDATE CASCADE
+);
+
+
+-- ============================================================
+-- AUDIT LOG INDEXES
+-- ============================================================
+
+CREATE INDEX idx_audit_customer_id
+ON audit_logs(customer_id);
 
 CREATE INDEX idx_audit_action
 ON audit_logs(action);
@@ -277,64 +396,9 @@ CREATE INDEX idx_audit_created_at
 ON audit_logs(created_at);
 
 
--- =====================================================
--- SAMPLE PRODUCTS
--- =====================================================
---
--- These are optional sample products.
--- No customer tokens are inserted here.
--- =====================================================
-
-INSERT INTO products
-(
-    product_id,
-    name,
-    description,
-    price,
-    stock_count,
-    status
-)
-VALUES
-(
-    1,
-    'Laptop',
-    'Gaming Laptop',
-    75000.00,
-    10,
-    'ACTIVE'
-),
-(
-    2,
-    'Mouse',
-    'Wireless Mouse',
-    1500.00,
-    25,
-    'ACTIVE'
-),
-(
-    3,
-    'Keyboard',
-    'Mechanical Keyboard',
-    3500.00,
-    15,
-    'ACTIVE'
-)
-ON DUPLICATE KEY UPDATE
-
-    name = VALUES(name),
-
-    description = VALUES(description),
-
-    price = VALUES(price),
-
-    stock_count = VALUES(stock_count),
-
-    status = VALUES(status);
-
-
--- =====================================================
+-- ============================================================
 -- VERIFICATION QUERIES
--- =====================================================
+-- ============================================================
 
 SELECT
     customer_id,
@@ -342,62 +406,37 @@ SELECT
     email,
     phone,
     role,
-    auth_token_hash,
-    created_at,
-    updated_at
+    auth_token_hash
 FROM customers;
 
-
 SELECT
     product_id,
-    name,
-    description,
+    product_name,
+    category,
     price,
-    stock_count,
-    status,
-    created_at,
-    updated_at
+    stock_quantity,
+    low_stock_threshold
 FROM products;
 
-
 SELECT
-    order_id,
-    customer_id,
-    status,
-    total_amount,
-    created_at,
-    updated_at
-FROM orders;
+    TABLE_NAME,
+    TABLE_ROWS
+FROM information_schema.tables
+WHERE table_schema = 'cloudmart';
 
 
-SELECT
-    order_id,
-    product_id,
-    quantity,
-    price,
-    created_at
-FROM order_items;
+-- ============================================================
+-- TEST TOKENS
+-- ============================================================
 
+-- Admin token:
+-- sultanadmin123@admin.com9666666904
 
-SELECT
-    log_id,
-    entity_type,
-    entity_id,
-    action,
-    old_value,
-    new_value,
-    performed_by,
-    created_at
-FROM audit_logs;
+-- Akshay token:
+-- uppu4678@gmail.com8891222333
 
+-- Rahul token:
+-- rahuldhoni07@gmail.com7791222344
 
--- =====================================================
--- INDEX VERIFICATION
--- =====================================================
-
-SHOW INDEX FROM customers;
-
-
--- =====================================================
--- END OF CLOUDMART DATABASE SCHEMA
--- =====================================================
+-- Karthik token:
+-- karthikpadi09@gmail.com9848909333

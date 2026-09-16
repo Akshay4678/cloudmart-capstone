@@ -2,19 +2,13 @@
 -- CLOUDMART DATABASE SCHEMA
 -- ============================================================
 --
--- Database:
---     cloudmart
---
--- Tables:
---     customers
---     products
---     orders
---     order_items
---     audit_logs
+-- Database: cloudmart
+-- Environment: dev
 --
 -- Important:
---     No DROP TABLE commands are used.
---     Existing tables and data are preserved.
+-- 1. No DROP TABLE commands are used.
+-- 2. Existing tables and data are preserved.
+-- 3. Column names match the existing RDS tables.
 -- ============================================================
 
 
@@ -52,18 +46,6 @@ CREATE TABLE IF NOT EXISTS customers (
     CONSTRAINT chk_customer_role
         CHECK (role IN ('USER', 'ADMIN'))
 );
-
-
--- ============================================================
--- CUSTOMER INDEXES
--- ============================================================
-
--- Do not create the auth_token_hash index again if it already
--- exists in your current database.
-
--- The role index already exists according to your screenshot.
--- CREATE INDEX idx_customers_role
--- ON customers(role);
 
 
 -- ============================================================
@@ -134,8 +116,7 @@ VALUES
 -- PRODUCTS TABLE
 -- ============================================================
 --
--- This matches your existing products table:
---
+-- Existing columns:
 -- product_id
 -- name
 -- description
@@ -173,7 +154,7 @@ CREATE TABLE IF NOT EXISTS products (
 
 
 -- ============================================================
--- SAMPLE PRODUCTS
+-- INSERT SAMPLE PRODUCTS
 -- ============================================================
 
 INSERT INTO products
@@ -197,6 +178,7 @@ WHERE NOT EXISTS
     WHERE name = 'Laptop'
 );
 
+
 INSERT INTO products
 (
     name,
@@ -217,6 +199,7 @@ WHERE NOT EXISTS
     FROM products
     WHERE name = 'Wireless Mouse'
 );
+
 
 INSERT INTO products
 (
@@ -239,6 +222,7 @@ WHERE NOT EXISTS
     WHERE name = 'Mechanical Keyboard'
 );
 
+
 INSERT INTO products
 (
     name,
@@ -259,6 +243,7 @@ WHERE NOT EXISTS
     FROM products
     WHERE name = 'Monitor'
 );
+
 
 INSERT INTO products
 (
@@ -285,35 +270,33 @@ WHERE NOT EXISTS
 -- ============================================================
 -- ORDERS TABLE
 -- ============================================================
+--
+-- Existing columns confirmed from your screenshot:
+-- order_id
+-- customer_id
+-- status
+-- total_amount
+-- created_at
+-- updated_at
+-- ============================================================
 
 CREATE TABLE IF NOT EXISTS orders (
-    order_id VARCHAR(100) PRIMARY KEY,
+    order_id VARCHAR(50) PRIMARY KEY,
 
     customer_id VARCHAR(100) NOT NULL,
 
-    total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    status VARCHAR(30) NOT NULL DEFAULT 'PROCESSING',
 
-    order_status VARCHAR(30) NOT NULL DEFAULT 'PROCESSING',
+    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
 
-    payment_status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
-
-    CONSTRAINT fk_orders_customer
-        FOREIGN KEY (customer_id)
-        REFERENCES customers(customer_id)
-        ON DELETE RESTRICT
-        ON UPDATE CASCADE,
-
-    CONSTRAINT chk_order_total
-        CHECK (total_amount >= 0),
 
     CONSTRAINT chk_order_status
         CHECK (
-            order_status IN (
+            status IN (
                 'PROCESSING',
                 'CONFIRMED',
                 'SHIPPED',
@@ -323,15 +306,14 @@ CREATE TABLE IF NOT EXISTS orders (
             )
         ),
 
-    CONSTRAINT chk_payment_status
-        CHECK (
-            payment_status IN (
-                'PENDING',
-                'PAID',
-                'FAILED',
-                'REFUNDED'
-            )
-        )
+    CONSTRAINT chk_order_total
+        CHECK (total_amount >= 0),
+
+    CONSTRAINT fk_orders_customer
+        FOREIGN KEY (customer_id)
+        REFERENCES customers(customer_id)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
 );
 
 
@@ -342,17 +324,17 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE TABLE IF NOT EXISTS order_items (
     order_item_id INT AUTO_INCREMENT PRIMARY KEY,
 
-    order_id VARCHAR(100) NOT NULL,
+    order_id VARCHAR(50) NOT NULL,
 
     product_id INT NOT NULL,
 
     quantity INT NOT NULL,
 
-    unit_price DECIMAL(10,2) NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
 
-    subtotal DECIMAL(10,2) NOT NULL,
+    subtotal DECIMAL(12,2) NOT NULL,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_order_items_order
         FOREIGN KEY (order_id)
@@ -394,7 +376,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
     details TEXT,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_audit_customer
         FOREIGN KEY (customer_id)
@@ -430,9 +412,10 @@ FROM products;
 SELECT
     order_id,
     customer_id,
+    status,
     total_amount,
-    order_status,
-    payment_status
+    created_at,
+    updated_at
 FROM orders;
 
 

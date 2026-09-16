@@ -8,6 +8,8 @@ from decimal import Decimal
 import boto3
 import pymysql
 
+ssm = boto3.client("ssm")
+
 
 # ================================================================
 # AWS CLIENTS
@@ -26,7 +28,10 @@ QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
-DB_PASSWORD = os.environ["DB_PASSWORD"]
+DB_PASSWORD_PARAMETER = os.environ.get(
+    "DB_PASSWORD_PARAMETER",
+    "/cloudmart/dev/database/password"
+)
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
@@ -46,14 +51,39 @@ SCHEMA_FILE = os.path.join(
 # DATABASE CONNECTION
 # ================================================================
 
+_db_password = None
+
+
+def get_db_password():
+    global _db_password
+
+    if _db_password is not None:
+        return _db_password
+
+    parameter_response = ssm.get_parameter(
+        Name=DB_PASSWORD_PARAMETER,
+        WithDecryption=True,
+    )
+
+    password = parameter_response.get("Parameter", {}).get("Value")
+
+    if password is None or not str(password).strip():
+        raise RuntimeError(
+            f"SSM parameter {DB_PASSWORD_PARAMETER} has an empty password"
+        )
+
+    _db_password = str(password).strip()
+    return _db_password
+
+
 def get_connection():
     return pymysql.connect(
         host=DB_HOST,
         user=DB_USER,
-        password=DB_PASSWORD,
+        password=get_db_password(),
         database=DB_NAME,
         port=DB_PORT,
-        connect_timeout=5,
+        connect_timeout=10,
         read_timeout=10,
         write_timeout=10,
         cursorclass=pymysql.cursors.DictCursor,

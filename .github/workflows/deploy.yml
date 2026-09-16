@@ -1003,33 +1003,6 @@ jobs:
             || true
 
 
-      # ==========================================================
-      # 21. CREATE AUTH SECURESTRING
-      # ==========================================================
-
-      - name: Create Authentication SecureString
-
-        env:
-
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-
-        run: |
-
-          echo "=================================================="
-          echo "CREATING AUTHENTICATION SECURESTRING"
-          echo "=================================================="
-
-
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/auth/token" \
-            --value "$AUTH_TOKEN" \
-            --type SecureString \
-            --overwrite
-
-
-          echo "Authentication SecureString created."
-
 
       # ==========================================================
       # 22. CHECK DATA STACK

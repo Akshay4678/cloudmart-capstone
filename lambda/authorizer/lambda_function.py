@@ -64,31 +64,36 @@ def get_connection():
 # TOKEN HELPERS
 # =========================================================
 
-def normalize_token(value):
-
+def normalize_token(token):
     """
-    Removes leading/trailing spaces and the Bearer prefix.
+    Extract the token from the Authorization header.
 
-    Examples:
+    Expected format:
+        Bearer <token>
 
-        akshaytoken123
-
-        Bearer akshaytoken123
-
-        bearer akshaytoken123
+    The token is extracted using split() instead of a
+    hardcoded character position.
     """
 
-    token = (
-        value or ""
-    ).strip()
+    if not token:
+        return None
 
-    if token.lower().startswith(
-        "bearer "
-    ):
+    token = str(token).strip()
 
-        token = token[7:].strip()
+    parts = token.split()
 
-    return token
+    if len(parts) != 2:
+        return None
+
+    scheme, actual_token = parts
+
+    if scheme.lower() != "bearer":
+        return None
+
+    if not actual_token:
+        return None
+
+    return actual_token.strip()
 
 
 def hash_token(token):

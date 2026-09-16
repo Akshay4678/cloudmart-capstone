@@ -1764,6 +1764,8 @@ def update_order(
     body,
     performed_by=None,
     role="USER",
+    authenticated_customer_id=None,
+    patch_only=False,
 ):
 
     if not isinstance(body, dict):
@@ -1785,20 +1787,28 @@ def update_order(
     if not status:
         return response(400, {"message": "status is required"})
 
-    if role == "USER":
-        if status != "CANCELLED":
-            return response(403, {
-                "message": "Users can only change order status to CANCELLED"
-            })
-    elif role == "ADMIN":
+    if role not in ("USER", "ADMIN"):
+        return response(403, {"message": "Valid user role is required"})
+
+    # PATCH is reserved for cancellation only.
+    # FAILED is set by the Order Processor, not by API clients.
+    if patch_only and status != "CANCELLED":
+        return response(400, {
+            "message": "Only CANCELLED is allowed for PATCH /orders/{orderId}"
+        })
+
+    if role == "USER" and status != "CANCELLED":
+        return response(403, {
+            "message": "Users can only change order status to CANCELLED"
+        })
+
+    if role == "ADMIN" and not patch_only:
         allowed_statuses = ["PROCESSING", "CONFIRMED", "FAILED", "CANCELLED"]
         if status not in allowed_statuses:
             return response(400, {
                 "message": "Invalid order status",
                 "allowed_statuses": allowed_statuses,
             })
-    else:
-        return response(403, {"message": "Valid user role is required"})
 
     connection = None
 
@@ -1849,6 +1859,17 @@ def update_order(
                         ),
                     },
                 )
+
+            if (
+                role == "USER"
+                and authenticated_customer_id
+                and str(old_order["customer_id"]).strip()
+                != str(authenticated_customer_id).strip()
+            ):
+                connection.rollback()
+                return response(403, {
+                    "message": "You can cancel only your own orders"
+                })
 
         # --------------------------------------------------------
         # UPDATE ORDER
@@ -2365,19 +2386,26 @@ def lambda_handler(
 
         return get_customer_orders(customer_id)
 
-    # PATCH /orders/{orderId} - ADMIN ONLY
+    # PATCH /orders/{orderId} - USER AND ADMIN CAN CANCEL
     # ============================================================
 
     if method == "PATCH" and order_id:
-        if role != "ADMIN":
-            return response(403, {
-                "message": "Only administrators can use PATCH for orders"
-            })
-
         try:
             body = parse_request_body(event)
             performed_by = get_performed_by(event, body)
-            return update_order(order_id, body, performed_by, role)
+            authenticated_customer_id = (
+                authorizer.get("customer_id")
+                or authorizer.get("user")
+                or authorizer.get("principalId")
+            )
+            return update_order(
+                order_id,
+                body,
+                performed_by,
+                role,
+                authenticated_customer_id,
+                patch_only=True,
+            )
         except ValueError as exc:
             return response(400, {"message": str(exc)})
 

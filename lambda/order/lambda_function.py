@@ -8,8 +8,6 @@ from decimal import Decimal
 import boto3
 import pymysql
 
-ssm = boto3.client("ssm")
-
 
 # ================================================================
 # AWS CLIENTS
@@ -17,6 +15,7 @@ ssm = boto3.client("ssm")
 
 sqs = boto3.client("sqs")
 cloudwatch = boto3.client("cloudwatch")
+ssm = boto3.client("ssm")
 
 
 # ================================================================
@@ -30,8 +29,9 @@ DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
 DB_PASSWORD_PARAMETER = os.environ.get(
     "DB_PASSWORD_PARAMETER",
-    "/cloudmart/dev/database/password"
+    "/cloudmart/dev/database/password",
 )
+DB_PASSWORD = None
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
@@ -48,33 +48,28 @@ SCHEMA_FILE = os.path.join(
 
 
 # ================================================================
-# DATABASE CONNECTION
+# DATABASE PASSWORD
 # ================================================================
 
-_db_password = None
-
-
 def get_db_password():
-    global _db_password
+    global DB_PASSWORD
 
-    if _db_password is not None:
-        return _db_password
-
-    parameter_response = ssm.get_parameter(
-        Name=DB_PASSWORD_PARAMETER,
-        WithDecryption=True,
-    )
-
-    password = parameter_response.get("Parameter", {}).get("Value")
-
-    if password is None or not str(password).strip():
-        raise RuntimeError(
-            f"SSM parameter {DB_PASSWORD_PARAMETER} has an empty password"
+    if DB_PASSWORD is None:
+        result = ssm.get_parameter(
+            Name=DB_PASSWORD_PARAMETER,
+            WithDecryption=True,
         )
+        DB_PASSWORD = result["Parameter"]["Value"]
 
-    _db_password = str(password).strip()
-    return _db_password
+        if not DB_PASSWORD:
+            raise RuntimeError("Database password parameter is empty")
 
+    return DB_PASSWORD
+
+
+# ================================================================
+# DATABASE CONNECTION
+# ================================================================
 
 def get_connection():
     return pymysql.connect(
@@ -83,7 +78,7 @@ def get_connection():
         password=get_db_password(),
         database=DB_NAME,
         port=DB_PORT,
-        connect_timeout=10,
+        connect_timeout=5,
         read_timeout=10,
         write_timeout=10,
         cursorclass=pymysql.cursors.DictCursor,
@@ -940,29 +935,20 @@ def create_order(
                 "quantity is required"
             )
 
-        raw_product_id = item["product_id"]
-        raw_quantity = item["quantity"]
-
-        # JSON strings such as "3" are rejected.
-        # bool is rejected because bool is a subclass of int in Python.
         if (
-            isinstance(raw_product_id, bool)
-            or not isinstance(raw_product_id, int)
+            isinstance(item["product_id"], bool)
+            or not isinstance(item["product_id"], int)
         ):
-            raise ValueError(
-                "product_id must be an integer"
-            )
+            raise ValueError("product_id must be an integer")
 
         if (
-            isinstance(raw_quantity, bool)
-            or not isinstance(raw_quantity, int)
+            isinstance(item["quantity"], bool)
+            or not isinstance(item["quantity"], int)
         ):
-            raise ValueError(
-                "quantity must be an integer"
-            )
+            raise ValueError("quantity must be an integer")
 
-        product_id = raw_product_id
-        quantity = raw_quantity
+        product_id = item["product_id"]
+        quantity = item["quantity"]
 
         if product_id <= 0:
             raise ValueError(
@@ -1531,36 +1517,34 @@ def get_customer_orders(customer_id):
         # GET CUSTOMER
         # --------------------------------------------------------
 
-        if customer_id is not None:
+        with connection.cursor() as cursor:
 
-            with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    customer_id,
+                    name,
+                    email,
+                    phone
+                FROM customers
+                WHERE customer_id = %s
+                """,
+                (customer_id,),
+            )
 
-                cursor.execute(
-                    """
-                    SELECT
-                        customer_id,
-                        name,
-                        email,
-                        phone
-                    FROM customers
-                    WHERE customer_id = %s
-                    """,
-                    (customer_id,),
-                )
+            customer = cursor.fetchone()
 
-                customer = cursor.fetchone()
+        if not customer:
 
-            if not customer:
-
-                return response(
-                    404,
-                    {
-                        "message": (
-                            "Customer not found"
-                        ),
-                        "customer_id": customer_id,
-                    },
-                )
+            return response(
+                404,
+                {
+                    "message": (
+                        "Customer not found"
+                    ),
+                    "customer_id": customer_id,
+                },
+            )
 
         # --------------------------------------------------------
         # GET ORDERS + PRODUCTS
@@ -1568,7 +1552,8 @@ def get_customer_orders(customer_id):
 
         with connection.cursor() as cursor:
 
-            order_query = """
+            cursor.execute(
+                """
                 SELECT
                     o.order_id,
                     o.customer_id,
@@ -1591,15 +1576,14 @@ def get_customer_orders(customer_id):
                 INNER JOIN products p
                     ON oi.product_id = p.product_id
 
-            """
+                WHERE o.customer_id = %s
 
-            if customer_id is not None:
-                order_query += "WHERE o.customer_id = %s "
-                order_query += "ORDER BY o.created_at DESC, oi.product_id"
-                cursor.execute(order_query, (customer_id,))
-            else:
-                order_query += "ORDER BY o.created_at DESC, oi.product_id"
-                cursor.execute(order_query)
+                ORDER BY
+                    o.created_at DESC,
+                    oi.product_id
+                """,
+                (customer_id,),
+            )
 
             rows = cursor.fetchall()
 
@@ -1688,6 +1672,85 @@ def get_customer_orders(customer_id):
 
     finally:
 
+        if connection:
+            connection.close()
+
+
+# ================================================================
+# GET ALL ORDERS - ADMIN ONLY
+# ================================================================
+
+def get_all_orders():
+
+    connection = None
+
+    try:
+        connection = get_connection()
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    o.order_id,
+                    o.customer_id,
+                    o.status,
+                    o.total_amount,
+                    o.created_at,
+                    o.updated_at,
+                    oi.product_id,
+                    p.name AS product_name,
+                    p.description AS product_description,
+                    oi.quantity,
+                    oi.price AS item_price
+                FROM orders o
+                INNER JOIN order_items oi
+                    ON o.order_id = oi.order_id
+                INNER JOIN products p
+                    ON oi.product_id = p.product_id
+                ORDER BY o.created_at DESC, o.order_id, oi.product_id
+                """
+            )
+            rows = cursor.fetchall()
+
+        orders = {}
+
+        for row in rows:
+            order_id = row["order_id"]
+
+            if order_id not in orders:
+                orders[order_id] = {
+                    "order_id": order_id,
+                    "customer_id": row["customer_id"],
+                    "status": row["status"],
+                    "total_amount": row["total_amount"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "items": [],
+                }
+
+            orders[order_id]["items"].append(
+                {
+                    "product_id": row["product_id"],
+                    "product_name": row["product_name"],
+                    "product_description": row["product_description"],
+                    "quantity": row["quantity"],
+                    "price": row["item_price"],
+                }
+            )
+
+        return response(
+            200,
+            {
+                "count": len(orders),
+                "orders": list(orders.values()),
+            },
+        )
+
+    except Exception as exc:
+        print(f"Get all orders error: {exc}")
+        return response(500, {"message": "Internal server error"})
+
+    finally:
         if connection:
             connection.close()
 
@@ -2263,54 +2326,45 @@ def lambda_handler(
         )
 
     # ============================================================
-    # GET /orders?customer_id=CUST101
-    # ============================================================
+    # GET /orders
+    # ADMIN -> all orders
+    # USER  -> own customer orders
 
     if method == "GET":
 
-        customer_id = (
-            query_parameters.get(
-                "customer_id"
-            )
-        )
+        if role == "ADMIN":
+            return get_all_orders()
 
-        # ADMIN can retrieve all orders without supplying customer_id.
-        if role == "ADMIN" and not customer_id:
-            return get_customer_orders(None)
+        customer_id = query_parameters.get("customer_id")
 
         if not customer_id:
+            return response(400, {
+                "message": "customer_id query parameter is required"
+            })
 
-            return response(
-                400,
-                {
-                    "message": (
-                        "customer_id query "
-                        "parameter is required for USER requests"
-                    ),
-                },
-            )
-
-        customer_id = str(
-            customer_id
-        ).strip()
+        customer_id = str(customer_id).strip()
 
         if not customer_id:
+            return response(400, {
+                "message": "customer_id cannot be empty"
+            })
 
-            return response(
-                400,
-                {
-                    "message": (
-                        "customer_id cannot "
-                        "be empty"
-                    ),
-                },
-            )
-
-        return get_customer_orders(
-            customer_id
+        authenticated_customer_id = (
+            authorizer.get("customer_id")
+            or authorizer.get("user")
+            or authorizer.get("principalId")
         )
 
-    # ============================================================
+        if (
+            authenticated_customer_id
+            and customer_id != str(authenticated_customer_id).strip()
+        ):
+            return response(403, {
+                "message": "You can view only your own orders"
+            })
+
+        return get_customer_orders(customer_id)
+
     # PATCH /orders/{orderId} - ADMIN ONLY
     # ============================================================
 

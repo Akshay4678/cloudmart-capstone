@@ -95,6 +95,8 @@ jobs:
 
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
+          KEY_PAIR_NAME: ${{ secrets.KEY_PAIR_NAME }}
+
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
         run: |
@@ -116,6 +118,15 @@ jobs:
           if [ -z "$DB_PASSWORD" ]; then
 
             echo "ERROR: DB_PASSWORD secret is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$KEY_PAIR_NAME" ]; then
+
+            echo "ERROR: KEY_PAIR_NAME secret is missing."
 
             exit 1
 
@@ -872,6 +883,10 @@ jobs:
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
+            --parameter-overrides \
+              "KeyPairName=$KEY_PAIR_NAME" \
+              "SSHIngressCidr=0.0.0.0/0" \
+            --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
 
@@ -1002,6 +1017,9 @@ jobs:
             --output table \
             || true
 
+
+      # Authentication token is stored in the customers table.
+      # No authentication token is created in SSM.
 
 
       # ==========================================================
@@ -1413,6 +1431,167 @@ jobs:
 
       # ==========================================================
       # 33. GET API URL
+      # ==========================================================
+
+      - name: Get API URL
+
+        id: api_url
+
+        run: |
+
+          echo "=================================================="
+          echo "GETTING API URL"
+          echo "=================================================="
+
+
+          API_URL=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-api-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiInvokeUrl'].OutputValue" \
+            --output text)
+
+
+          echo "API URL: $API_URL"
+
+
+          if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
+
+            echo "ERROR: API URL not found."
+
+            exit 1
+
+          fi
+
+
+          echo "url=$API_URL" >> "$GITHUB_OUTPUT"
+
+
+      # ==========================================================
+      # 34. SMOKE TEST GET PRODUCTS
+      # ==========================================================
+
+      - name: Smoke Test - GET Products
+
+        env:
+
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+
+        run: |
+
+          echo "=================================================="
+          echo "SMOKE TEST - GET /products"
+          echo "=================================================="
+
+
+          HTTP_STATUS=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/products-response.json \
+            --write-out "%{http_code}" \
+            --request GET \
+            --header "Authorization: Bearer $AUTH_TOKEN" \
+            "${{ steps.api_url.outputs.url }}/products")
+
+
+          echo "HTTP STATUS: $HTTP_STATUS"
+
+
+          echo "RESPONSE:"
+          cat /tmp/products-response.json
+
+
+          echo ""
+
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+
+            echo "ERROR: GET /products smoke test failed."
+
+            exit 1
+
+          fi
+
+
+          echo "GET /products smoke test passed."
+
+
+      # ==========================================================
+      # 35. SMOKE TEST POST ORDER
+      # ==========================================================
+
+      - name: Smoke Test - POST Order
+
+        env:
+
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+
+        run: |
+
+          echo "=================================================="
+          echo "SMOKE TEST - POST /orders"
+          echo "=================================================="
+
+
+          cat > /tmp/order.json <<'EOF'
+          {
+            "customer_id": "CUST101",
+            "items": [
+              {
+                "product_id": 1,
+                "quantity": 1
+              }
+            ]
+          }
+          EOF
+
+
+          echo ""
+          echo "Order request:"
+          cat /tmp/order.json
+
+
+          echo ""
+
+
+          HTTP_STATUS=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/order-response.json \
+            --write-out "%{http_code}" \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "Authorization: Bearer $AUTH_TOKEN" \
+            --data @/tmp/order.json \
+            "${{ steps.api_url.outputs.url }}/orders")
+
+
+          echo "HTTP STATUS: $HTTP_STATUS"
+
+
+          echo ""
+          echo "RESPONSE:"
+          cat /tmp/order-response.json
+
+
+          echo ""
+
+
+          if [ "$HTTP_STATUS" != "202" ]; then
+
+            echo "ERROR: POST /orders smoke test failed."
+
+            echo "Expected HTTP 202."
+
+            exit 1
+
+          fi
+
+
+          echo "POST /orders smoke test passed."
+
+
+      # ==========================================================
+      # 36. FINAL STACK STATUS
       # ==========================================================
 
       - name: Final CloudFormation Status

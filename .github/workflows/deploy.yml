@@ -124,15 +124,6 @@ jobs:
           fi
 
 
-          if [ -z "$KEY_PAIR_NAME" ]; then
-
-            echo "ERROR: KEY_PAIR_NAME secret is missing."
-
-            exit 1
-
-          fi
-
-
           if [ -z "$AUTH_TOKEN" ]; then
 
             echo "ERROR: AUTH_TOKEN secret is missing."
@@ -872,12 +863,39 @@ jobs:
 
         id: deploy_network
 
+        env:
+
+          KEY_PAIR_NAME: ${{ secrets.KEY_PAIR_NAME }}
+
         run: |
 
           echo "=================================================="
           echo "DEPLOYING NETWORK STACK"
           echo "=================================================="
 
+          # Use the GitHub secret when it is configured.
+          # Otherwise, automatically use the first EC2 key pair in this region.
+          if [ -z "$KEY_PAIR_NAME" ]; then
+
+            echo "KEY_PAIR_NAME secret is not configured."
+            echo "Searching for an existing EC2 key pair in $AWS_REGION..."
+
+            KEY_PAIR_NAME=$(aws ec2 describe-key-pairs \
+              --region "$AWS_REGION" \
+              --query 'KeyPairs[0].KeyName' \
+              --output text)
+
+          fi
+
+          if [ -z "$KEY_PAIR_NAME" ] || [ "$KEY_PAIR_NAME" = "None" ]; then
+
+            echo "ERROR: No EC2 key pair exists in $AWS_REGION."
+            echo "Create an EC2 key pair in this region or add KEY_PAIR_NAME as a GitHub secret."
+            exit 1
+
+          fi
+
+          echo "Using EC2 key pair: $KEY_PAIR_NAME"
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
@@ -888,7 +906,6 @@ jobs:
               "SSHIngressCidr=0.0.0.0/0" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
-
 
           echo "Network stack deployment completed."
 
@@ -937,7 +954,6 @@ jobs:
             --template-file cloudformation/iam-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
-              "DBPassword=$DB_PASSWORD" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -976,10 +992,6 @@ jobs:
 
         id: deploy_auth
 
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
         run: |
 
           echo "=================================================="
@@ -993,7 +1005,6 @@ jobs:
             --template-file cloudformation/auth-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
-              "DBPassword=$DB_PASSWORD" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -1205,28 +1216,6 @@ jobs:
       # before the Data stack attempts to remove old exports.
       # ==========================================================
 
-      - name: Create Database Password SecureString
-
-        env:
-
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-
-        run: |
-
-          echo "=================================================="
-          echo "CREATING DATABASE PASSWORD SECURESTRING"
-          echo "=================================================="
-
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
-            --value "$DB_PASSWORD" \
-            --type SecureString \
-            --overwrite
-
-          echo "Database password SecureString created."
-
-
       - name: Deploy Application Stack
 
         id: deploy_application
@@ -1248,6 +1237,7 @@ jobs:
             --template-file cloudformation/api-stack.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
+              "DBPassword=$DB_PASSWORD" \
               "CodeVersion=${{ github.sha }}" \
               "EnvironmentName=$ENVIRONMENT_NAME" \
             --no-fail-on-empty-changeset

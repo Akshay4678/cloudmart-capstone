@@ -343,9 +343,6 @@ Resources:
   # ==============================================================
   # LOW STOCK EVENTBRIDGE RULE
   # ==============================================================
-    # ==============================================================
-  # LOW STOCK EVENTBRIDGE RULE
-  # ==============================================================
 
   ProductLowStockRule:
     Type: AWS::Events::Rule
@@ -386,31 +383,22 @@ Resources:
             InputPathsMap:
               productId: $.detail.product_id
               stockCount: $.detail.stock_count
+            InputTemplate: |
+              ==============================
+              CLOUDMART - LOW STOCK ALERT
+              ==============================
 
-            InputTemplate: !Join
-              - "\n"
-              - - '"=================================================="'
-                - '"CLOUDMART - LOW STOCK ALERT"'
-                - '"=================================================="'
-                - '"'
-                - '"Hello Admin,"'
-                - '"'
-                - '"The inventory level of the following product has reached the low-stock threshold."'
-                - '"'
-                - '"PRODUCT INVENTORY DETAILS"'
-                - '"--------------------------------------------------"'
-                - '"Product ID      : <productId>"'
-                - '"Remaining Stock: <stockCount> units"'
-                - '"Stock Status    : LOW STOCK"'
-                - '"--------------------------------------------------"'
-                - '"'
-                - '"ACTION REQUIRED"'
-                - '"Please restock this product as soon as possible to avoid order processing issues."'
-                - '"'
-                - '"This is an automated notification from the CloudMart inventory system."'
-                - '"'
-                - '"CloudMart Inventory Team"'
-                - '"=================================================="'
+              Hello,
+
+              Product <productId> is running low on stock.
+
+              Remaining Stock: <stockCount> units
+
+              Please restock this product soon to avoid order delays.
+
+              Regards,
+              CloudMart Team
+
 
   # ==============================================================
   # LOW STOCK SNS POLICY
@@ -487,10 +475,6 @@ Resources:
   # ORDER PROCESSED EVENTBRIDGE RULE
   # ==============================================================
 
-  # ==============================================================
-  # ORDER PROCESSED EVENTBRIDGE RULE
-  # ==============================================================
-
   OrderProcessedRule:
     Type: AWS::Events::Rule
 
@@ -524,32 +508,30 @@ Resources:
               customerId: $.detail.customer_id
               status: $.detail.status
               totalAmount: $.detail.total_amount
+            InputTemplate: |
+              ==================================
+              CLOUDMART - ORDER CONFIRMED
+              ==================================
 
-            InputTemplate: !Join
-              - "\n"
-              - - '"=================================================="'
-                - '"CLOUDMART - ORDER CONFIRMED"'
-                - '"=================================================="'
-                - '"'
-                - '"Hello,"'
-                - '"'
-                - '"Your order has been successfully processed."'
-                - '"Thank you for shopping with CloudMart."'
-                - '"'
-                - '"ORDER DETAILS"'
-                - '"--------------------------------------------------"'
-                - '"Order ID      : <orderId>"'
-                - '"Customer ID   : <customerId>"'
-                - '"Order Status  : <status>"'
-                - '"Total Amount  : <totalAmount>"'
-                - '"--------------------------------------------------"'
-                - '"'
-                - '"Your order is now confirmed."'
-                - '"'
-                - '"Thank you for choosing CloudMart."'
-                - '"'
-                - '"CloudMart Team"'
-                - '"=================================================="'
+              Hello,
+
+              Your order has been successfully processed.
+
+              ORDER DETAILS
+              ----------------------------------
+              Order ID     : <orderId>
+              Customer ID  : <customerId>
+              Order Status : <status>
+              Total Amount : <totalAmount>
+              ----------------------------------
+
+              Your order is now confirmed.
+
+              Thank you for choosing CloudMart!
+
+              Regards,
+              CloudMart Team
+
 
   # ==============================================================
   # ORDER CONFIRMATION SNS POLICY
@@ -626,10 +608,6 @@ Resources:
   # ORDER FAILED EVENTBRIDGE RULE
   # ==============================================================
 
-  # ==============================================================
-  # ORDER FAILED EVENTBRIDGE RULE
-  # ==============================================================
-
   OrderFailedRule:
     Type: AWS::Events::Rule
 
@@ -663,34 +641,30 @@ Resources:
               customerId: $.detail.customer_id
               status: $.detail.status
               reason: $.detail.reason
+            InputTemplate: |
+              ==================================
+              CLOUDMART - ORDER PROCESSING FAILED
+              ==================================
 
-            InputTemplate: !Join
-              - "\n"
-              - - '"=================================================="'
-                - '"CLOUDMART - ORDER PROCESSING FAILED"'
-                - '"=================================================="'
-                - '"'
-                - '"Hello,"'
-                - '"'
-                - '"Unfortunately, your order could not be completed."'
-                - '"'
-                - '"ORDER DETAILS"'
-                - '"--------------------------------------------------"'
-                - '"Order ID       : <orderId>"'
-                - '"Customer ID    : <customerId>"'
-                - '"Order Status   : <status>"'
-                - '"Failure Reason : <reason>"'
-                - '"--------------------------------------------------"'
-                - '"'
-                - '"ACTION REQUIRED"'
-                - '"Please review the order details and try placing the order again if required."'
-                - '"'
-                - '"If the problem continues, please contact CloudMart support."'
-                - '"'
-                - '"Thank you for using CloudMart."'
-                - '"'
-                - '"CloudMart Team"'
-                - '"=================================================="'
+              Hello,
+
+              We could not complete your order.
+
+              ORDER DETAILS
+              ----------------------------------
+              Order ID     : <orderId>
+              Customer ID  : <customerId>
+              Order Status : <status>
+              Reason       : <reason>
+              ----------------------------------
+
+              Please check the order details and try again if required.
+
+              If you need assistance, please contact CloudMart Support.
+
+              Regards,
+              CloudMart Team
+
 
   # ==============================================================
   # ORDER FAILURE SNS POLICY

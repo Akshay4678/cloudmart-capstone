@@ -24,7 +24,6 @@ Parameters:
 
 Resources:
 
-
   # ==============================================================
   # AUTHORIZER LAMBDA ROLE
   # ==============================================================
@@ -65,99 +64,6 @@ Resources:
 
             Statement:
 
-              - Sid: ManageLambdaNetworkInterfaces
-
-                Effect: Allow
-
-                Action:
-
-                  - ec2:CreateNetworkInterface
-                  - ec2:DescribeNetworkInterfaces
-                  - ec2:DeleteNetworkInterface
-                  - ec2:AssignPrivateIpAddresses
-                  - ec2:UnassignPrivateIpAddresses
-
-                Resource: "*"
-
-                Condition:
-
-                  StringEquals:
-
-                    aws:RequestedRegion:
-                      - !Ref AWS::Region
-
-
-  # ==============================================================
-  # CUSTOMER LAMBDA ROLE
-  # ==============================================================
-
-  CustomerLambdaRole:
-    Type: AWS::IAM::Role
-
-    Properties:
-
-      RoleName:
-        !Sub cloudmart-customer-role-${EnvironmentName}
-
-      AssumeRolePolicyDocument:
-
-        Version: '2012-10-17'
-
-        Statement:
-
-          - Effect: Allow
-
-            Principal:
-              Service: lambda.amazonaws.com
-
-            Action:
-              - sts:AssumeRole
-
-      ManagedPolicyArns:
-
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-
-      Policies:
-
-        - PolicyName: CustomerPolicy
-
-          PolicyDocument:
-
-            Version: '2012-10-17'
-
-            Statement:
-
-              # ==================================================
-              # READ DATABASE PASSWORD FROM SSM
-              # ==================================================
-
-              - Sid: ReadDatabasePassword
-
-                Effect: Allow
-
-                Action:
-
-                  - ssm:GetParameter
-
-                Resource:
-                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
-
-
-              # ==================================================
-              # CONNECT TO RDS
-              # ==================================================
-
-              - Sid: ConnectToRDS
-
-                Effect: Allow
-
-                Action:
-
-                  - rds-db:connect
-
-                Resource: "*"
-
-
               # ==================================================
               # VPC NETWORK INTERFACES
               # ==================================================
@@ -175,13 +81,6 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
 
                 Resource: "*"
-
-                Condition:
-
-                  StringEquals:
-
-                    aws:RequestedRegion:
-                      - !Ref AWS::Region
 
 
   # ==============================================================
@@ -223,17 +122,16 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
 
                 Action:
-
                   - ssm:GetParameter
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -245,7 +143,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - rds-db:connect
 
                 Resource: "*"
@@ -260,7 +157,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - events:PutEvents
 
                 Resource:
@@ -285,13 +181,6 @@ Resources:
 
                 Resource: "*"
 
-                Condition:
-
-                  StringEquals:
-
-                    aws:RequestedRegion:
-                      - !Ref AWS::Region
-
 
               # ==================================================
               # CLOUDWATCH CUSTOM METRICS
@@ -302,7 +191,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - cloudwatch:PutMetricData
 
                 Resource: "*"
@@ -354,17 +242,16 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
 
                 Action:
-
                   - ssm:GetParameter
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -376,7 +263,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - rds-db:connect
 
                 Resource: "*"
@@ -384,14 +270,13 @@ Resources:
 
               # ==================================================
               # SQS
-              # ==================================================
+              # ==============================================================
 
               - Sid: SendOrdersToQueue
 
                 Effect: Allow
 
                 Action:
-
                   - sqs:SendMessage
 
                 Resource:
@@ -400,14 +285,13 @@ Resources:
 
               # ==================================================
               # CLOUDWATCH METRICS
-              # ==================================================
+              # ==============================================================
 
               - Sid: PublishOrderMetrics
 
                 Effect: Allow
 
                 Action:
-
                   - cloudwatch:PutMetricData
 
                 Resource: "*"
@@ -422,7 +306,7 @@ Resources:
 
               # ==================================================
               # VPC NETWORK INTERFACES
-              # ==================================================
+              # ==============================================================
 
               - Sid: ManageLambdaNetworkInterfaces
 
@@ -437,13 +321,6 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
 
                 Resource: "*"
-
-                Condition:
-
-                  StringEquals:
-
-                    aws:RequestedRegion:
-                      - !Ref AWS::Region
 
 
   # ==============================================================
@@ -485,17 +362,16 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
 
                 Action:
-
                   - ssm:GetParameter
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -525,7 +401,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - rds-db:connect
 
                 Resource: "*"
@@ -540,7 +415,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - events:PutEvents
 
                 Resource:
@@ -556,7 +430,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - cloudwatch:PutMetricData
 
                 Resource: "*"
@@ -581,18 +454,11 @@ Resources:
 
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
-                  - ec2:DeleteNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
 
                 Resource: "*"
-
-                Condition:
-
-                  StringEquals:
-
-                    aws:RequestedRegion:
-                      - !Ref AWS::Region
 
 
   # ==============================================================
@@ -634,17 +500,16 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
 
                 Action:
-
                   - ssm:GetParameter
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -656,7 +521,6 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - rds-db:connect
 
                 Resource: "*"
@@ -682,7 +546,6 @@ Resources:
                     - ${ReportsBucketArn}/*
 
                     - ReportsBucketArn:
-
                         Fn::ImportValue:
                           cloudmart-reports-bucket-arn
 
@@ -696,11 +559,9 @@ Resources:
                 Effect: Allow
 
                 Action:
-
                   - s3:ListBucket
 
                 Resource:
-
                   Fn::ImportValue:
                     cloudmart-reports-bucket-arn
 
@@ -717,18 +578,11 @@ Resources:
 
                   - ec2:CreateNetworkInterface
                   - ec2:DescribeNetworkInterfaces
-                  - ec2:DeleteNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
 
                 Resource: "*"
-
-                Condition:
-
-                  StringEquals:
-
-                    aws:RequestedRegion:
-                      - !Ref AWS::Region
 
 
 # ================================================================
@@ -736,7 +590,6 @@ Resources:
 # ================================================================
 
 Outputs:
-
 
   # ==============================================================
   # AUTHORIZER ROLE
@@ -752,22 +605,6 @@ Outputs:
     Export:
       Name:
         cloudmart-authorizer-role-arn
-
-
-  # ==============================================================
-  # CUSTOMER ROLE
-  # ==============================================================
-
-  CustomerRoleArn:
-
-    Description: CloudMart Customer Lambda IAM Role ARN
-
-    Value:
-      !GetAtt CustomerLambdaRole.Arn
-
-    Export:
-      Name:
-        cloudmart-customer-role-arn
 
 
   # ==============================================================

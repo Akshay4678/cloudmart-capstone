@@ -84,7 +84,69 @@ jobs:
 
 
       # ==========================================================
-      # 4. INSTALL CFN-LINT
+      # 4. CHECK REQUIRED SECRETS
+      # ==========================================================
+
+      - name: Check Required Secrets
+
+        env:
+
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+          KEY_PAIR_NAME: ${{ secrets.KEY_PAIR_NAME }}
+
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+        run: |
+
+          echo "=================================================="
+          echo "CHECKING REQUIRED SECRETS"
+          echo "=================================================="
+
+
+          if [ -z "$AWS_ROLE_ARN" ]; then
+
+            echo "ERROR: AWS_ROLE_ARN secret is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$DB_PASSWORD" ]; then
+
+            echo "ERROR: DB_PASSWORD secret is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$KEY_PAIR_NAME" ]; then
+
+            echo "ERROR: KEY_PAIR_NAME secret is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$AUTH_TOKEN" ]; then
+
+            echo "ERROR: AUTH_TOKEN secret is missing."
+
+            exit 1
+
+          fi
+
+
+          echo "Required secrets are configured."
+
+
+      # ==========================================================
+      # 5. INSTALL CFN-LINT
       # ==========================================================
 
       - name: Install cfn-lint
@@ -822,6 +884,7 @@ jobs:
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
             --parameter-overrides \
+              "KeyPairName=$KEY_PAIR_NAME" \
               "SSHIngressCidr=0.0.0.0/0" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
@@ -874,6 +937,7 @@ jobs:
             --template-file cloudformation/iam-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
+              "DBPassword=$DB_PASSWORD" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -912,6 +976,10 @@ jobs:
 
         id: deploy_auth
 
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
         run: |
 
           echo "=================================================="
@@ -925,6 +993,7 @@ jobs:
             --template-file cloudformation/auth-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
+              "DBPassword=$DB_PASSWORD" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -1136,6 +1205,28 @@ jobs:
       # before the Data stack attempts to remove old exports.
       # ==========================================================
 
+      - name: Create Database Password SecureString
+
+        env:
+
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+
+        run: |
+
+          echo "=================================================="
+          echo "CREATING DATABASE PASSWORD SECURESTRING"
+          echo "=================================================="
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/${ENVIRONMENT_NAME}/database/password" \
+            --value "$DB_PASSWORD" \
+            --type SecureString \
+            --overwrite
+
+          echo "Database password SecureString created."
+
+
       - name: Deploy Application Stack
 
         id: deploy_application
@@ -1157,7 +1248,6 @@ jobs:
             --template-file cloudformation/api-stack.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
-              "DBPassword=$DB_PASSWORD" \
               "CodeVersion=${{ github.sha }}" \
               "EnvironmentName=$ENVIRONMENT_NAME" \
             --no-fail-on-empty-changeset
@@ -1404,9 +1494,205 @@ jobs:
 
 
       # ==========================================================
-      # 34. DEPLOYMENT COMPLETE
+      # 34. SMOKE TEST GET PRODUCTS
       # ==========================================================
 
-      - name: Deployment Complete
+      - name: Smoke Test - GET Products
+
+        env:
+
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+
         run: |
-          echo "CloudMart deployment completed successfully."
+
+          echo "=================================================="
+          echo "SMOKE TEST - GET /products"
+          echo "=================================================="
+
+
+          HTTP_STATUS=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/products-response.json \
+            --write-out "%{http_code}" \
+            --request GET \
+            --header "Authorization: Bearer $AUTH_TOKEN" \
+            "${{ steps.api_url.outputs.url }}/products")
+
+
+          echo "HTTP STATUS: $HTTP_STATUS"
+
+
+          echo "RESPONSE:"
+          cat /tmp/products-response.json
+
+
+          echo ""
+
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+
+            echo "ERROR: GET /products smoke test failed."
+
+            exit 1
+
+          fi
+
+
+          echo "GET /products smoke test passed."
+
+
+      # ==========================================================
+      # 35. SMOKE TEST POST ORDER
+      # ==========================================================
+
+      - name: Smoke Test - POST Order
+
+        env:
+
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+
+        run: |
+
+          echo "=================================================="
+          echo "SMOKE TEST - POST /orders"
+          echo "=================================================="
+
+
+          cat > /tmp/order.json <<'EOF'
+          {
+            "customer_id": "CUST101",
+            "items": [
+              {
+                "product_id": 1,
+                "quantity": 1
+              }
+            ]
+          }
+          EOF
+
+
+          echo ""
+          echo "Order request:"
+          cat /tmp/order.json
+
+
+          echo ""
+
+
+          HTTP_STATUS=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/order-response.json \
+            --write-out "%{http_code}" \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "Authorization: Bearer $AUTH_TOKEN" \
+            --data @/tmp/order.json \
+            "${{ steps.api_url.outputs.url }}/orders")
+
+
+          echo "HTTP STATUS: $HTTP_STATUS"
+
+
+          echo ""
+          echo "RESPONSE:"
+          cat /tmp/order-response.json
+
+
+          echo ""
+
+
+          if [ "$HTTP_STATUS" != "202" ]; then
+
+            echo "ERROR: POST /orders smoke test failed."
+
+            echo "Expected HTTP 202."
+
+            exit 1
+
+          fi
+
+
+          echo "POST /orders smoke test passed."
+
+
+      # ==========================================================
+      # 36. FINAL STACK STATUS
+      # ==========================================================
+
+      - name: Final CloudFormation Status
+
+        if: always()
+
+        run: |
+
+          echo "=================================================="
+          echo "FINAL CLOUDMART STACK STATUS"
+          echo "=================================================="
+
+
+          echo ""
+          echo "===== NETWORK STACK ====="
+
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-network-stack \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table \
+            || true
+
+
+          echo ""
+          echo "===== DATA STACK ====="
+
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table \
+            || true
+
+
+          echo ""
+          echo "===== IAM STACK ====="
+
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-iam-stack \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table \
+            || true
+
+
+          echo ""
+          echo "===== AUTH STACK ====="
+
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-auth-stack \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table \
+            || true
+
+
+          echo ""
+          echo "===== APPLICATION STACK ====="
+
+
+          aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-api-stack \
+            --query "Stacks[0].[StackName,StackStatus]" \
+            --output table \
+            || true
+
+
+          echo ""
+          echo "=================================================="
+          echo "DEPLOYMENT WORKFLOW FINISHED"
+          echo "=================================================="

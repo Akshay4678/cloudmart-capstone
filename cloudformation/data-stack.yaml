@@ -66,6 +66,7 @@ Resources:
   # RDS MYSQL DATABASE
   #
   # Stores:
+  #   Customers
   #   Products
   #   Orders
   #   Order Items
@@ -81,11 +82,8 @@ Resources:
 
       Engine: mysql
 
-      # MySQL 8.4 is the currently supported LTS line.
       EngineVersion: '8.4.11'
 
-      # Allows CloudFormation to perform a major version upgrade
-      # if an existing CloudMart database is running MySQL 8.0.
       AllowMajorVersionUpgrade: true
 
       DBInstanceClass: db.t3.micro
@@ -313,6 +311,26 @@ Outputs:
 
 
   # ==============================================================
+  # MYSQL CONNECTION ENDPOINT
+  # ==============================================================
+
+  DatabaseConnectionEndpoint:
+
+    Description: Complete MySQL connection endpoint for EC2
+
+    Value:
+      !Sub
+        - "${Endpoint}:${Port}"
+        - Endpoint:
+            !GetAtt CloudMartDatabase.Endpoint.Address
+          Port:
+            !GetAtt CloudMartDatabase.Endpoint.Port
+
+    Export:
+      Name: cloudmart-database-connection-endpoint
+
+
+  # ==============================================================
   # DATABASE NAME
   # ==============================================================
 
@@ -408,7 +426,7 @@ Outputs:
 
   LambdaBucketArn:
 
-    Description: ARN of the CloudMart Lambda deployment bucket
+    Description: ARN of the CloudMart Lambda deployment packages bucket
 
     Value:
       !GetAtt LambdaArtifactsBucket.Arn

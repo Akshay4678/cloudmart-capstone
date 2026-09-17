@@ -23,8 +23,17 @@ Parameters:
 
   SSHIngressCidr:
     Type: String
-    Default: 0.0.0.0/0
+    Default: YOUR_PUBLIC_IP/32
     Description: CIDR allowed for SSH access
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair name
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI
 
 
 # ================================================================
@@ -477,6 +486,52 @@ Resources:
       CidrIp: !Ref SSHIngressCidr
 
 
+
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub cloudmart-ec2-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  CloudMartEC2:
+    Type: AWS::EC2::Instance
+    DependsOn: AttachGateway
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y mariadb105
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+          mkdir -p /home/ec2-user/cloudmart
+          chown -R ec2-user:ec2-user /home/ec2-user/cloudmart
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-ec2-${AWS::StackName}
+
   # ================================================================
   # VPC ENDPOINT - DYNAMODB
   # GATEWAY ENDPOINT
@@ -872,3 +927,21 @@ Outputs:
 
     Export:
       Name: cloudmart-cloudwatch-monitoring-vpc-endpoint
+
+  EC2InstanceId:
+    Description: CloudMart EC2 instance ID
+    Value: !Ref CloudMartEC2
+    Export:
+      Name: cloudmart-ec2-instance-id
+
+  EC2PublicIP:
+    Description: CloudMart EC2 public IP address
+    Value: !GetAtt CloudMartEC2.PublicIp
+    Export:
+      Name: cloudmart-ec2-public-ip
+
+  EC2PrivateIP:
+    Description: CloudMart EC2 private IP address
+    Value: !GetAtt CloudMartEC2.PrivateIp
+    Export:
+      Name: cloudmart-ec2-private-ip

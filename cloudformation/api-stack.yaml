@@ -383,21 +383,7 @@ Resources:
             InputPathsMap:
               productId: $.detail.product_id
               stockCount: $.detail.stock_count
-            InputTemplate: |
-              ==============================
-              CLOUDMART - LOW STOCK ALERT
-              ==============================
-
-              Hello,
-
-              Product <productId> is running low on stock.
-
-              Remaining Stock: <stockCount> units
-
-              Please restock this product soon to avoid order delays.
-
-              Regards,
-              CloudMart Team
+            InputTemplate: '"LOW STOCK ALERT!\n\nProduct <productId> is running low on stock.\nRemaining stock: <stockCount> units.\n\nPlease restock this product soon."'
 
 
   # ==============================================================
@@ -508,29 +494,7 @@ Resources:
               customerId: $.detail.customer_id
               status: $.detail.status
               totalAmount: $.detail.total_amount
-            InputTemplate: |
-              ==================================
-              CLOUDMART - ORDER CONFIRMED
-              ==================================
-
-              Hello,
-
-              Your order has been successfully processed.
-
-              ORDER DETAILS
-              ----------------------------------
-              Order ID     : <orderId>
-              Customer ID  : <customerId>
-              Order Status : <status>
-              Total Amount : <totalAmount>
-              ----------------------------------
-
-              Your order is now confirmed.
-
-              Thank you for choosing CloudMart!
-
-              Regards,
-              CloudMart Team
+            InputTemplate: '"ORDER CONFIRMED!\n\nYour order <orderId> has been successfully processed.\nCustomer: <customerId>\nStatus: <status>\nTotal Amount: <totalAmount>\n\nThank you for shopping with CloudMart!"'
 
 
   # ==============================================================
@@ -641,29 +605,18 @@ Resources:
               customerId: $.detail.customer_id
               status: $.detail.status
               reason: $.detail.reason
-            InputTemplate: |
-              ==================================
-              CLOUDMART - ORDER PROCESSING FAILED
-              ==================================
-
-              Hello,
-
-              We could not complete your order.
-
-              ORDER DETAILS
-              ----------------------------------
-              Order ID     : <orderId>
-              Customer ID  : <customerId>
+            InputTemplate: >-
+              "================================== CLOUDMART - ORDER PROCESSING FAILED ==================================
+              Hello, We could not complete your order.
+              ORDER DETAILS ----------------------------------
+              Order ID : <orderId>
+              Customer ID : <customerId>
               Order Status : <status>
-              Reason       : <reason>
+              Reason : <reason>
               ----------------------------------
-
               Please check the order details and try again if required.
-
               If you need assistance, please contact CloudMart Support.
-
-              Regards,
-              CloudMart Team
+              Regards, CloudMart Team"
 
 
   # ==============================================================

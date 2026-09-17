@@ -387,7 +387,30 @@ Resources:
               productId: $.detail.product_id
               stockCount: $.detail.stock_count
 
-            InputTemplate: '"==================================================\nCLOUDMART - LOW STOCK ALERT\n==================================================\n\nHello Admin,\n\nThe inventory level of the following product has reached the low-stock threshold.\n\nPRODUCT INVENTORY DETAILS\n--------------------------------------------------\nProduct ID     : <productId>\nRemaining Stock: <stockCount> units\nStock Status   : LOW STOCK\n--------------------------------------------------\n\nACTION REQUIRED\nPlease restock this product as soon as possible to avoid order processing issues.\n\nThis is an automated notification from the CloudMart inventory system.\n\nCloudMart Inventory Team\n=================================================="'
+            InputTemplate: !Join
+              - "\n"
+              - - '"=================================================="'
+                - '"CLOUDMART - LOW STOCK ALERT"'
+                - '"=================================================="'
+                - '"'
+                - '"Hello Admin,"'
+                - '"'
+                - '"The inventory level of the following product has reached the low-stock threshold."'
+                - '"'
+                - '"PRODUCT INVENTORY DETAILS"'
+                - '"--------------------------------------------------"'
+                - '"Product ID      : <productId>"'
+                - '"Remaining Stock: <stockCount> units"'
+                - '"Stock Status    : LOW STOCK"'
+                - '"--------------------------------------------------"'
+                - '"'
+                - '"ACTION REQUIRED"'
+                - '"Please restock this product as soon as possible to avoid order processing issues."'
+                - '"'
+                - '"This is an automated notification from the CloudMart inventory system."'
+                - '"'
+                - '"CloudMart Inventory Team"'
+                - '"=================================================="'
 
   # ==============================================================
   # LOW STOCK SNS POLICY
@@ -502,7 +525,31 @@ Resources:
               status: $.detail.status
               totalAmount: $.detail.total_amount
 
-            InputTemplate: '"==================================================\nCLOUDMART - ORDER CONFIRMED\n==================================================\n\nHello,\n\nYour order has been successfully processed.\nThank you for shopping with CloudMart.\n\nORDER DETAILS\n--------------------------------------------------\nOrder ID      : <orderId>\nCustomer ID   : <customerId>\nOrder Status  : <status>\nTotal Amount  : <totalAmount>\n--------------------------------------------------\n\nYour order is now confirmed.\n\nThank you for choosing CloudMart.\n\nCloudMart Team\n=================================================="'
+            InputTemplate: !Join
+              - "\n"
+              - - '"=================================================="'
+                - '"CLOUDMART - ORDER CONFIRMED"'
+                - '"=================================================="'
+                - '"'
+                - '"Hello,"'
+                - '"'
+                - '"Your order has been successfully processed."'
+                - '"Thank you for shopping with CloudMart."'
+                - '"'
+                - '"ORDER DETAILS"'
+                - '"--------------------------------------------------"'
+                - '"Order ID      : <orderId>"'
+                - '"Customer ID   : <customerId>"'
+                - '"Order Status  : <status>"'
+                - '"Total Amount  : <totalAmount>"'
+                - '"--------------------------------------------------"'
+                - '"'
+                - '"Your order is now confirmed."'
+                - '"'
+                - '"Thank you for choosing CloudMart."'
+                - '"'
+                - '"CloudMart Team"'
+                - '"=================================================="'
 
   # ==============================================================
   # ORDER CONFIRMATION SNS POLICY
@@ -617,7 +664,33 @@ Resources:
               status: $.detail.status
               reason: $.detail.reason
 
-            InputTemplate: '"==================================================\nCLOUDMART - ORDER PROCESSING FAILED\n==================================================\n\nHello,\n\nUnfortunately, your order could not be completed.\n\nORDER DETAILS\n--------------------------------------------------\nOrder ID       : <orderId>\nCustomer ID    : <customerId>\nOrder Status   : <status>\nFailure Reason : <reason>\n--------------------------------------------------\n\nWHAT YOU CAN DO\nPlease review the order details and try placing the order again if required.\n\nIf the problem continues, please contact CloudMart support.\n\nThank you for using CloudMart.\n\nCloudMart Team\n=================================================="'
+            InputTemplate: !Join
+              - "\n"
+              - - '"=================================================="'
+                - '"CLOUDMART - ORDER PROCESSING FAILED"'
+                - '"=================================================="'
+                - '"'
+                - '"Hello,"'
+                - '"'
+                - '"Unfortunately, your order could not be completed."'
+                - '"'
+                - '"ORDER DETAILS"'
+                - '"--------------------------------------------------"'
+                - '"Order ID       : <orderId>"'
+                - '"Customer ID    : <customerId>"'
+                - '"Order Status   : <status>"'
+                - '"Failure Reason : <reason>"'
+                - '"--------------------------------------------------"'
+                - '"'
+                - '"ACTION REQUIRED"'
+                - '"Please review the order details and try placing the order again if required."'
+                - '"'
+                - '"If the problem continues, please contact CloudMart support."'
+                - '"'
+                - '"Thank you for using CloudMart."'
+                - '"'
+                - '"CloudMart Team"'
+                - '"=================================================="'
 
   # ==============================================================
   # ORDER FAILURE SNS POLICY

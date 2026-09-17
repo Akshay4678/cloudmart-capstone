@@ -23,8 +23,8 @@ Parameters:
 
   SSHIngressCidr:
     Type: String
-    Default: YOUR_PUBLIC_IP/32
-    Description: CIDR allowed for SSH access
+    Default: 0.0.0.0/0
+    Description: CIDR allowed for SSH access. Pass YOUR_PUBLIC_IP/32 during deployment.
 
   KeyPairName:
     Type: AWS::EC2::KeyPair::KeyName
@@ -490,7 +490,6 @@ Resources:
   EC2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub cloudmart-ec2-role-${AWS::StackName}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -518,9 +517,8 @@ Resources:
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
-      AssociatePublicIpAddress: true
       UserData:
-        Fn::Base64: !Sub |
+        Fn::Base64: |
           #!/bin/bash
           dnf update -y
           dnf install -y mariadb105

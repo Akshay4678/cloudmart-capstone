@@ -1699,6 +1699,51 @@ jobs:
           echo "Daily report schedule verification passed."
 
 
+    # ==========================================================
+    # WAIT FOR EC2 TO REGISTER WITH SSM
+    # ==========================================================
+
+    - name: Wait for EC2 SSM Registration
+      run: |
+        set -e
+
+        INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
+
+        echo "=================================================="
+        echo "WAITING FOR EC2 SSM REGISTRATION"
+        echo "=================================================="
+        echo "Instance ID: $INSTANCE_ID"
+
+        for i in $(seq 1 30); do
+
+          STATUS=$(aws ssm describe-instance-information \
+            --region "$AWS_REGION" \
+            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+            --query "InstanceInformationList[0].PingStatus" \
+            --output text 2>/dev/null || true)
+
+          echo "SSM status: $STATUS"
+
+          if [ "$STATUS" = "Online" ]; then
+            echo "EC2 is Online in SSM."
+            echo "SSM is ready."
+            exit 0
+          fi
+
+          echo "EC2 is not ready yet. Waiting 10 seconds..."
+          sleep 10
+
+        done
+
+        echo "ERROR: EC2 did not become Online in SSM within 5 minutes."
+        exit 1
+
+
+
+      
+
+
+
       # ==========================================================
       # 37. MILESTONE 5 - DEPLOY FLASK DASHBOARD TO EXISTING EC2
       # ==========================================================

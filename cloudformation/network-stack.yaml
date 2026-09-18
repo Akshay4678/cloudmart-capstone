@@ -452,6 +452,24 @@ Resources:
       ToPort: 443
       SourceSecurityGroupId: !Ref LambdaSecurityGroup
 
+  # ================================================================
+  # VPC ENDPOINTS <- EC2 DASHBOARD
+  # HTTPS 443
+  # Required for EC2 dashboard -> SSM Parameter Store
+  # ================================================================
+
+  VPCEndpointFromEC2Ingress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref VPCEndpointSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref EC2SecurityGroup
+
+
+
 
   # ================================================================
   # EC2 DASHBOARD
@@ -792,27 +810,6 @@ Resources:
         - Key: Name
           Value: !Sub cloudmart-ec2-${AWS::StackName}
 
-  # ================================================================
-  # VPC ENDPOINT - DYNAMODB
-  # GATEWAY ENDPOINT
-  # ================================================================
-
-  DynamoDBVPCEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-
-    Properties:
-      VpcId: !Ref CloudMartVPC
-      VpcEndpointType: Gateway
-
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
-
-      RouteTableIds:
-        - !Ref PrivateRouteTable
-
-      Tags:
-        - Key: Name
-          Value: cloudmart-dynamodb-vpc-endpoint
-
 
   # ================================================================
   # VPC ENDPOINT - S3
@@ -1117,16 +1114,6 @@ Outputs:
       Name: cloudmart-eventbridge-vpc-endpoint
 
 
-  # ================================================================
-  # DYNAMODB ENDPOINT
-  # ================================================================
-
-  DynamoDBEndpointId:
-    Description: CloudMart DynamoDB VPC endpoint ID
-    Value: !Ref DynamoDBVPCEndpoint
-
-    Export:
-      Name: cloudmart-dynamodb-vpc-endpoint
 
 
   # ================================================================

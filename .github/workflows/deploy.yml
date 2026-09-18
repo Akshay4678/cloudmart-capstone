@@ -1604,43 +1604,7 @@ jobs:
 
 
       # ==========================================================
-      # 37. MILESTONE 5 - VERIFY DASHBOARD
-      #
-      # The EC2 UserData/systemd timer handles dashboard deployment.
-      # No SSH, SSM remote command, key pair, or EC2 reboot is required.
-      # ==========================================================
-
-      - name: Verify Dashboard EC2
-        run: |
-          set -euo pipefail
-
-          PUBLIC_IP="${{ steps.milestone5_outputs.outputs.public_ip }}"
-
-          echo "EC2 public IP: $PUBLIC_IP"
-          echo "Waiting for CloudMart dashboard health endpoint..."
-
-          for i in $(seq 1 72); do
-            if curl -fsS --connect-timeout 5 --max-time 10 "http://$PUBLIC_IP:5000/health" >/dev/null; then
-              echo "Dashboard health check passed."
-              echo "Dashboard URL: http://$PUBLIC_IP:5000"
-              exit 0
-            fi
-
-            if [ "$i" -eq 72 ]; then
-              echo "ERROR: Dashboard did not become healthy within 12 minutes."
-              echo ""
-              echo "The EC2 instance is running, but port 5000 is not responding."
-              echo "Check EC2 UserData and the cloudmart-dashboard systemd service."
-              exit 1
-            fi
-
-            echo "Dashboard not ready yet. Waiting 10 seconds..."
-            sleep 10
-          done
-
-
-      # ==========================================================
-      # 38. MILESTONE 5 - VERIFY DAILY REPORT SCHEDULE
+      # 37. MILESTONE 5 - VERIFY DAILY REPORT SCHEDULE
       # ==========================================================
 
       - name: Verify Daily Report Schedule
@@ -1687,7 +1651,7 @@ jobs:
 
 
       # ==========================================================
-      # 39. MILESTONE 5 - VERIFY CLOUDWATCH DASHBOARD AND ALARMS
+      # 38. MILESTONE 5 - VERIFY CLOUDWATCH DASHBOARD AND ALARMS
       # ==========================================================
 
       - name: Verify Milestone 5 Monitoring
@@ -1732,7 +1696,7 @@ jobs:
 
 
       # ==========================================================
-      # 40. MILESTONE 5 - FINAL URLS
+      # 39. MILESTONE 5 - FINAL URLS
       # ==========================================================
 
       - name: Milestone 5 URLs

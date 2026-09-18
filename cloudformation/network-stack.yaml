@@ -500,17 +500,6 @@ Resources:
   # SSH 22
   # ================================================================
 
-  EC2SSHIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-
-    Properties:
-      GroupId: !Ref EC2SecurityGroup
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      CidrIp: !Ref SSHIngressCidr
-
-
 
   EC2InstanceRole:
     Type: AWS::IAM::Role

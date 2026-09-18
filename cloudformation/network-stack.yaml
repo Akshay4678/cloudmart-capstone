@@ -15,9 +15,6 @@ Parameters:
     Description: CloudMart VPC CIDR block
 
 
-  KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: Existing EC2 key pair used for SSH access
 
 
   DashboardIngressCidr:
@@ -576,7 +573,6 @@ Resources:
       ImageId: !Ref LatestAmiId
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile
-      KeyName: !Ref KeyPairName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref EC2SecurityGroup

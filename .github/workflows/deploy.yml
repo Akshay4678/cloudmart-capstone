@@ -94,8 +94,6 @@ jobs:
 
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
-          KEY_PAIR_NAME: ${{ secrets.KEY_PAIR_NAME }}
-
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
         run: |

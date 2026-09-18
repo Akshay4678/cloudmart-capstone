@@ -453,9 +453,6 @@ Resources:
   # HTTPS 443
   # ================================================================
 
-  EC2HTTPSIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-
     Properties:
       GroupId: !Ref EC2SecurityGroup
       IpProtocol: tcp
@@ -468,9 +465,6 @@ Resources:
   # EC2 DASHBOARD
   # HTTP 80
   # ================================================================
-
-  EC2HTTPIngress:
-    Type: AWS::EC2::SecurityGroupIngress
 
     Properties:
       GroupId: !Ref EC2SecurityGroup
@@ -554,6 +548,8 @@ Resources:
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile
       SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash

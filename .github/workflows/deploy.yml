@@ -295,7 +295,7 @@ jobs:
 
 
       # ==========================================================
-      # 11. CHECK LAMBDA SOURCE FILES
+      # 12. CHECK LAMBDA SOURCE FILES
       # ==========================================================
 
       - name: Check Lambda Source Files
@@ -453,7 +453,7 @@ jobs:
 
 
       # ==========================================================
-      # 12. VERIFY LAMBDA REQUIREMENTS
+      # 13. VERIFY LAMBDA REQUIREMENTS
       # ==========================================================
 
       - name: Verify Lambda Requirements
@@ -529,7 +529,7 @@ jobs:
 
 
       # ==========================================================
-      # 13. PACKAGE LAMBDAS
+      # 14. PACKAGE LAMBDAS
       # ==========================================================
 
       - name: Package Lambda Functions
@@ -791,7 +791,7 @@ jobs:
 
 
       # ==========================================================
-      # 14. VERIFY PACKAGES
+      # 15. VERIFY PACKAGES
       # ==========================================================
 
       - name: Verify Lambda Packages
@@ -887,7 +887,7 @@ jobs:
 
 
       # ==========================================================
-      # 15. DEPLOY NETWORK
+      # 16. DEPLOY NETWORK
       # ==========================================================
 
       - name: Deploy Network Stack
@@ -912,7 +912,7 @@ jobs:
           echo "Network stack deployment completed."
 
       # ==========================================================
-      # 16. NETWORK ERRORS
+      # 17. NETWORK ERRORS
       # ==========================================================
 
       - name: Show Network Stack Errors
@@ -935,7 +935,7 @@ jobs:
 
 
       # ==========================================================
-      # 17. DEPLOY IAM
+      # 18. DEPLOY IAM
       # ==========================================================
 
       - name: Deploy IAM Stack
@@ -963,7 +963,7 @@ jobs:
 
 
       # ==========================================================
-      # 18. IAM ERRORS
+      # 19. IAM ERRORS
       # ==========================================================
 
       - name: Show IAM Stack Errors
@@ -986,7 +986,7 @@ jobs:
 
 
       # ==========================================================
-      # 19. DEPLOY AUTH
+      # 20. DEPLOY AUTH
       # ==========================================================
 
       - name: Deploy Auth Stack
@@ -1014,7 +1014,7 @@ jobs:
 
 
       # ==========================================================
-      # 20. AUTH ERRORS
+      # 21. AUTH ERRORS
       # ==========================================================
 
       - name: Show Auth Stack Errors
@@ -1195,7 +1195,7 @@ jobs:
 
 
       # ==========================================================
-      # 25. UPLOAD ORDER
+      # 27. UPLOAD ORDER
       # ==========================================================
 
       - name: Upload Order Lambda
@@ -1214,7 +1214,7 @@ jobs:
 
 
       # ==========================================================
-      # 26. UPLOAD ORDER PROCESSOR
+      # 28. UPLOAD ORDER PROCESSOR
       # ==========================================================
 
       - name: Upload Order Processor Lambda
@@ -1233,7 +1233,7 @@ jobs:
 
 
       # ==========================================================
-      # 27. UPLOAD REPORT
+      # 29. UPLOAD REPORT
       # ==========================================================
 
       - name: Upload Report Lambda
@@ -1252,7 +1252,7 @@ jobs:
 
 
       # ==========================================================
-      # 28. DEPLOY APPLICATION
+      # 30. DEPLOY APPLICATION
       #
       # IMPORTANT:
       # This happens before updating an existing Data stack.
@@ -1292,7 +1292,7 @@ jobs:
 
 
       # ==========================================================
-      # 29. APPLICATION ERRORS
+      # 31. APPLICATION ERRORS
       # ==========================================================
 
       - name: Show Application Stack Errors
@@ -1315,7 +1315,7 @@ jobs:
 
 
       # ==========================================================
-      # 30. UPDATE DATA STACK
+      # 32. UPDATE DATA STACK
       #
       # For an existing environment this happens AFTER the API
       # stack update, which removes old imports from the API stack.
@@ -1351,7 +1351,7 @@ jobs:
 
 
       # ==========================================================
-      # 31. DATA ERRORS
+      # 33. DATA ERRORS
       # ==========================================================
 
       - name: Show Data Stack Errors
@@ -1374,7 +1374,7 @@ jobs:
 
 
       # ==========================================================
-      # 32. INITIALIZE RDS DATABASE SCHEMA
+      # 34. INITIALIZE RDS DATABASE SCHEMA
       #
       # schema.sql is packaged inside Order Lambda.
       #
@@ -1492,7 +1492,7 @@ jobs:
 
 
       # ==========================================================
-      # 33. MILESTONE 5 - DEPLOY MONITORING STACK
+      # 35. MILESTONE 5 - DEPLOY MONITORING STACK
       # ==========================================================
 
       - name: Deploy Monitoring Stack
@@ -1517,7 +1517,7 @@ jobs:
 
 
       # ==========================================================
-      # 34. MILESTONE 5 - GET EXISTING EC2 AND REPORT OUTPUTS
+      # 36. MILESTONE 5 - GET EXISTING EC2 AND REPORT OUTPUTS
       # ==========================================================
 
       - name: Get Milestone 5 Outputs
@@ -1567,7 +1567,7 @@ jobs:
 
 
       # ==========================================================
-      # 35. MILESTONE 5 - GIVE EXISTING EC2 REQUIRED ACCESS
+      # 37. MILESTONE 5 - GIVE EXISTING EC2 REQUIRED ACCESS
       # ==========================================================
 
       - name: Configure Existing EC2 IAM Permissions
@@ -1654,7 +1654,7 @@ jobs:
 
 
       # ==========================================================
-      # 36. MILESTONE 5 - VERIFY DAILY REPORT SCHEDULE
+      # 38. MILESTONE 5 - VERIFY DAILY REPORT SCHEDULE
       # ==========================================================
 
       - name: Verify Daily Report Schedule
@@ -1699,44 +1699,44 @@ jobs:
           echo "Daily report schedule verification passed."
 
 
-    # ==========================================================
-    # WAIT FOR EC2 TO REGISTER WITH SSM
-    # ==========================================================
+      # ==========================================================
+      # WAIT FOR EC2 TO REGISTER WITH SSM
+      # ==========================================================
 
-    - name: Wait for EC2 SSM Registration
-      run: |
-        set -e
+      - name: Wait for EC2 SSM Registration
+        run: |
+          set -e
 
-        INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
+          INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
 
-        echo "=================================================="
-        echo "WAITING FOR EC2 SSM REGISTRATION"
-        echo "=================================================="
-        echo "Instance ID: $INSTANCE_ID"
+          echo "=================================================="
+          echo "WAITING FOR EC2 SSM REGISTRATION"
+          echo "=================================================="
+          echo "Instance ID: $INSTANCE_ID"
 
-        for i in $(seq 1 30); do
+          for i in $(seq 1 30); do
 
-          STATUS=$(aws ssm describe-instance-information \
-            --region "$AWS_REGION" \
-            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
-            --query "InstanceInformationList[0].PingStatus" \
-            --output text 2>/dev/null || true)
+            STATUS=$(aws ssm describe-instance-information \
+              --region "$AWS_REGION" \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --query "InstanceInformationList[0].PingStatus" \
+              --output text 2>/dev/null || true)
 
-          echo "SSM status: $STATUS"
+            echo "SSM status: $STATUS"
 
-          if [ "$STATUS" = "Online" ]; then
-            echo "EC2 is Online in SSM."
-            echo "SSM is ready."
-            exit 0
-          fi
+            if [ "$STATUS" = "Online" ]; then
+              echo "EC2 is Online in SSM."
+              echo "SSM is ready."
+              exit 0
+            fi
 
-          echo "EC2 is not ready yet. Waiting 10 seconds..."
-          sleep 10
+            echo "EC2 is not ready yet. Waiting 10 seconds..."
+            sleep 10
 
-        done
+          done
 
-        echo "ERROR: EC2 did not become Online in SSM within 5 minutes."
-        exit 1
+          echo "ERROR: EC2 did not become Online in SSM within 5 minutes."
+          exit 1
 
 
 
@@ -1745,7 +1745,7 @@ jobs:
 
 
       # ==========================================================
-      # 37. MILESTONE 5 - DEPLOY FLASK DASHBOARD TO EXISTING EC2
+      # 40. MILESTONE 5 - DEPLOY FLASK DASHBOARD TO EXISTING EC2
       # ==========================================================
 
       - name: Deploy Dashboard to Existing EC2
@@ -1899,7 +1899,7 @@ jobs:
 
 
       # ==========================================================
-      # 38. MILESTONE 5 - VERIFY CLOUDWATCH DASHBOARD AND ALARMS
+      # 41. MILESTONE 5 - VERIFY CLOUDWATCH DASHBOARD AND ALARMS
       # ==========================================================
 
       - name: Verify Milestone 5 Monitoring
@@ -1944,7 +1944,7 @@ jobs:
 
 
       # ==========================================================
-      # 39. MILESTONE 5 - FINAL URLS
+      # 42. MILESTONE 5 - FINAL URLS
       # ==========================================================
 
       - name: Milestone 5 URLs
@@ -1992,7 +1992,7 @@ jobs:
 
 
       # ==========================================================
-      # 41. FINAL STACK STATUS
+      # 44. FINAL STACK STATUS
       # ==========================================================
 
       - name: Final CloudFormation Status

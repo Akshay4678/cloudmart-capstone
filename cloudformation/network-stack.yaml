@@ -23,16 +23,6 @@ Parameters:
     Description: CIDR allowed to access the dashboard
 
 
-  SSHIngressCidr:
-    Type: String
-    Default: 0.0.0.0/0
-    Description: CIDR allowed for SSH access. The GitHub Actions workflow passes the runner IP/32.
-
-
-  KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: Existing EC2 key pair used for SSH access to the CloudMart dashboard instance.
-
 
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
@@ -506,20 +496,7 @@ Resources:
       CidrIp: !Ref DashboardIngressCidr
 
 
-  # ================================================================
-  # EC2 DASHBOARD
-  # SSH 22
-  # ================================================================
 
-  EC2SSHIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-
-    Properties:
-      GroupId: !Ref EC2SecurityGroup
-      IpProtocol: tcp
-      FromPort: 22
-      ToPort: 22
-      CidrIp: !Ref SSHIngressCidr
 
 
 
@@ -539,12 +516,12 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Sid: ReadDatabasePassword
+              - Sid: ReadDatabaseParameters
                 Effect: Allow
                 Action:
                   - ssm:GetParameter
                 Resource:
-                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/dev/database/password
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/dev/database/password
 
               - Sid: ReadReportsBucket
                 Effect: Allow
@@ -577,43 +554,150 @@ Resources:
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile
       SubnetId: !Ref PublicSubnet
-      KeyName: !Ref KeyPairName
-      SecurityGroupIds:
-        - !Ref EC2SecurityGroup
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          set -e
+          set -euo pipefail
+
+          exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
+
+          AWS_REGION_VALUE="${AWS::Region}"
+          ACCOUNT_ID_VALUE="${AWS::AccountId}"
+          LAMBDA_BUCKET_VALUE="cloudmart-lambda-${AWS::AccountId}-${AWS::Region}"
+          DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
+          DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
+
+          echo "Starting CloudMart dashboard bootstrap..."
 
           dnf update -y
           dnf install -y mariadb python3 python3-pip unzip
 
-          mkdir -p /home/ec2-user/cloudmart
+          if ! command -v aws >/dev/null 2>&1; then
+            echo "ERROR: AWS CLI is not available on the Amazon Linux AMI."
+            exit 1
+          fi
+
           mkdir -p /opt/cloudmart-dashboard
-          chown -R ec2-user:ec2-user /home/ec2-user/cloudmart
           chown -R ec2-user:ec2-user /opt/cloudmart-dashboard
 
-          python3 -m venv /opt/cloudmart-dashboard/venv
-          chown -R ec2-user:ec2-user /opt/cloudmart-dashboard/venv
+          cat > /usr/local/bin/cloudmart-dashboard-deploy.sh <<'DEPLOYEOF'
+          #!/bin/bash
+          set -euo pipefail
 
-          cat > /etc/cloudmart-dashboard.env <<EOF
-          AWS_REGION=${AWS::Region}
+          AWS_REGION_VALUE="$1"
+          LAMBDA_BUCKET_VALUE="$2"
+          DASHBOARD_KEY="$3"
+          DB_HOST_CONFIG_KEY="$4"
+
+          DASHBOARD_DIR="/opt/cloudmart-dashboard"
+          ZIP_FILE="/tmp/cloudmart-dashboard.zip"
+
+          echo "Checking dashboard artifact..."
+          for i in $(seq 1 60); do
+            if aws s3api head-object --region "$AWS_REGION_VALUE" --bucket "$LAMBDA_BUCKET_VALUE" --key "$DASHBOARD_KEY" >/dev/null 2>&1; then
+              break
+            fi
+
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: Dashboard artifact was not found in S3 after waiting."
+              exit 1
+            fi
+
+            echo "Dashboard artifact not available yet. Waiting 10 seconds..."
+            sleep 10
+          done
+
+          echo "Reading dashboard database host configuration..."
+          for i in $(seq 1 60); do
+            if aws s3api head-object --region "$AWS_REGION_VALUE" --bucket "$LAMBDA_BUCKET_VALUE" --key "$DB_HOST_CONFIG_KEY" >/dev/null 2>&1; then
+              break
+            fi
+
+            if [ "$i" -eq 60 ]; then
+              echo "ERROR: Database host configuration was not found in S3 after waiting."
+              exit 1
+            fi
+
+            echo "Database host configuration not available yet. Waiting 10 seconds..."
+            sleep 10
+          done
+
+          DB_HOST_VALUE=$(aws s3 cp \
+            "s3://$LAMBDA_BUCKET_VALUE/$DB_HOST_CONFIG_KEY" \
+            - \
+            --region "$AWS_REGION_VALUE")
+
+          DB_HOST_VALUE=$(printf '%s' "$DB_HOST_VALUE" | tr -d '\r\n')
+
+          if [ -z "$DB_HOST_VALUE" ]; then
+            echo "ERROR: Database host configuration is empty."
+            exit 1
+          fi
+
+          echo "Downloading dashboard artifact..."
+          aws s3 cp \
+            "s3://$LAMBDA_BUCKET_VALUE/$DASHBOARD_KEY" \
+            "$ZIP_FILE" \
+            --region "$AWS_REGION_VALUE"
+
+          rm -rf "$DASHBOARD_DIR"/*
+          unzip -o "$ZIP_FILE" -d "$DASHBOARD_DIR"
+          rm -f "$ZIP_FILE"
+
+          if [ ! -f "$DASHBOARD_DIR/app.py" ]; then
+            echo "ERROR: app.py is missing from the dashboard package."
+            exit 1
+          fi
+
+          if [ ! -f "$DASHBOARD_DIR/requirements.txt" ]; then
+            echo "ERROR: requirements.txt is missing from the dashboard package."
+            exit 1
+          fi
+
+          if [ ! -x "$DASHBOARD_DIR/venv/bin/python" ]; then
+            rm -rf "$DASHBOARD_DIR/venv"
+            python3 -m venv "$DASHBOARD_DIR/venv"
+          fi
+
+          "$DASHBOARD_DIR/venv/bin/pip" install --upgrade pip
+          "$DASHBOARD_DIR/venv/bin/pip" install -r "$DASHBOARD_DIR/requirements.txt"
+
+          cat > /etc/cloudmart-dashboard.env <<ENVEOF
+          AWS_REGION=$AWS_REGION_VALUE
           REPORTS_BUCKET=cloudmart-reports-${AWS::AccountId}-${AWS::Region}
-          DB_PASSWORD_PARAMETER=/cloudmart/dev/database/password
-          DB_HOST=
+          DB_HOST=$DB_HOST_VALUE
           DB_NAME=cloudmart
           DB_USER=cloudmartadmin
-          EOF
+          DB_PORT=3306
+          DB_PASSWORD_PARAMETER=/cloudmart/dev/database/password
+          ENVEOF
 
           chown root:root /etc/cloudmart-dashboard.env
           chmod 600 /etc/cloudmart-dashboard.env
+          chown -R ec2-user:ec2-user "$DASHBOARD_DIR"
 
-          cat > /etc/systemd/system/cloudmart-dashboard.service <<'EOF'
+          systemctl daemon-reload
+          systemctl enable cloudmart-dashboard
+
+          sleep 3
+
+          if ! systemctl is-active --quiet cloudmart-dashboard; then
+            echo "ERROR: CloudMart dashboard service is not active."
+            systemctl status cloudmart-dashboard --no-pager || true
+            journalctl -u cloudmart-dashboard -n 80 --no-pager || true
+            exit 1
+          fi
+
+          echo "Dashboard deployment completed."
+          DEPLOYEOF
+
+          chmod 755 /usr/local/bin/cloudmart-dashboard-deploy.sh
+
+          cat > /etc/systemd/system/cloudmart-dashboard.service <<'SERVICEEOF'
           [Unit]
           Description=CloudMart Flask Dashboard
-          After=network-online.target
+          After=network-online.target cloudmart-dashboard-update.service
           Wants=network-online.target
-
           [Service]
           Type=simple
           User=ec2-user
@@ -625,10 +709,26 @@ Resources:
 
           [Install]
           WantedBy=multi-user.target
-          EOF
+          SERVICEEOF
+
+          cat > /etc/systemd/system/cloudmart-dashboard-update.service <<UPDATEEOF
+          [Unit]
+          Description=CloudMart Dashboard Package Update
+          Wants=network-online.target
+          After=network-online.target
+          Before=cloudmart-dashboard.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_VALUE" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY"
+          UPDATEEOF
 
           systemctl daemon-reload
-          systemctl enable cloudmart-dashboard
+          systemctl enable cloudmart-dashboard-update.service
+          systemctl start cloudmart-dashboard-update.service
+          systemctl enable --now cloudmart-dashboard.service
+
+          echo "CloudMart dashboard bootstrap completed."
       Tags:
         - Key: Name
           Value: !Sub cloudmart-ec2-${AWS::StackName}

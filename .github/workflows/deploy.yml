@@ -890,29 +890,6 @@ jobs:
 
 
       # ==========================================================
-      # 16. CAPTURE EXISTING EC2 INSTANCE
-      # ==========================================================
-
-      - name: Capture Existing EC2 Instance
-        id: existing_ec2
-        run: |
-          set -euo pipefail
-
-          OLD_INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack \
-            --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
-            --output text 2>/dev/null || true)
-
-          if [ -z "$OLD_INSTANCE_ID" ] || [ "$OLD_INSTANCE_ID" = "None" ]; then
-            OLD_INSTANCE_ID=""
-          fi
-
-          echo "old_instance_id=$OLD_INSTANCE_ID" >> "$GITHUB_OUTPUT"
-          echo "Existing EC2 instance: ${OLD_INSTANCE_ID:-none}"
-
-
-      # ==========================================================
       # 17. DEPLOY NETWORK
       # ==========================================================
 
@@ -1627,69 +1604,39 @@ jobs:
 
 
       # ==========================================================
-      # 37. MILESTONE 5 - REFRESH DASHBOARD ON EXISTING EC2
+      # 37. MILESTONE 5 - VERIFY DASHBOARD
+      #
+      # The EC2 UserData/systemd timer handles dashboard deployment.
+      # No SSH, SSM remote command, key pair, or EC2 reboot is required.
       # ==========================================================
 
-      - name: Refresh Dashboard EC2
+      - name: Verify Dashboard EC2
         run: |
           set -euo pipefail
 
-          OLD_INSTANCE_ID="${{ steps.existing_ec2.outputs.old_instance_id }}"
-          NEW_INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
           PUBLIC_IP="${{ steps.milestone5_outputs.outputs.public_ip }}"
 
-          echo "Old EC2 instance: ${OLD_INSTANCE_ID:-none}"
-          echo "Current EC2 instance: $NEW_INSTANCE_ID"
+          echo "EC2 public IP: $PUBLIC_IP"
+          echo "Waiting for CloudMart dashboard health endpoint..."
 
-          if [ -n "$OLD_INSTANCE_ID" ] && [ "$OLD_INSTANCE_ID" = "$NEW_INSTANCE_ID" ]; then
-            echo "Existing EC2 detected. Rebooting so the systemd dashboard updater downloads the new package..."
-
-            aws ec2 reboot-instances \
-              --region "$AWS_REGION" \
-              --instance-ids "$NEW_INSTANCE_ID"
-          else
-            echo "New/replaced EC2 detected. UserData will install the dashboard automatically."
-          fi
-
-          echo "Waiting for EC2 instance to become running..."
-          for i in $(seq 1 30); do
-            STATE=$(aws ec2 describe-instances \
-              --region "$AWS_REGION" \
-              --instance-ids "$NEW_INSTANCE_ID" \
-              --query "Reservations[0].Instances[0].State.Name" \
-              --output text)
-
-            if [ "$STATE" = "running" ]; then
-              echo "EC2 is running."
-              break
-            fi
-
-            if [ "$i" -eq 30 ]; then
-              echo "ERROR: EC2 did not return to running state within 5 minutes."
-              exit 1
-            fi
-
-            echo "Current EC2 state: $STATE. Waiting 10 seconds..."
-            sleep 10
-          done
-
-          echo "Waiting for dashboard health endpoint..."
           for i in $(seq 1 72); do
             if curl -fsS --connect-timeout 5 --max-time 10 "http://$PUBLIC_IP:5000/health" >/dev/null; then
               echo "Dashboard health check passed."
-              break
+              echo "Dashboard URL: http://$PUBLIC_IP:5000"
+              exit 0
             fi
 
             if [ "$i" -eq 72 ]; then
               echo "ERROR: Dashboard did not become healthy within 12 minutes."
+              echo ""
+              echo "The EC2 instance is running, but port 5000 is not responding."
+              echo "Check EC2 UserData and the cloudmart-dashboard systemd service."
               exit 1
             fi
 
             echo "Dashboard not ready yet. Waiting 10 seconds..."
             sleep 10
           done
-
-          echo "Dashboard URL: http://$PUBLIC_IP:5000"
 
 
       # ==========================================================

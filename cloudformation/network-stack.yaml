@@ -561,36 +561,74 @@ Resources:
 
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
           ZIP_FILE="/tmp/cloudmart-dashboard.zip"
+          STATE_FILE="/var/lib/cloudmart-dashboard-state"
+          TMP_STATE_FILE="/tmp/cloudmart-dashboard-state.new"
+
+          mkdir -p "$(dirname "$STATE_FILE")"
 
           echo "Checking dashboard artifact..."
-          for i in $(seq 1 60); do
-            if aws s3api head-object --region "$AWS_REGION_VALUE" --bucket "$LAMBDA_BUCKET_VALUE" --key "$DASHBOARD_KEY" >/dev/null 2>&1; then
-              break
-            fi
 
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: Dashboard artifact was not found in S3 after waiting."
-              exit 1
-            fi
+          ARTIFACT_ETAG=$(aws s3api head-object \
+            --region "$AWS_REGION_VALUE" \
+            --bucket "$LAMBDA_BUCKET_VALUE" \
+            --key "$DASHBOARD_KEY" \
+            --query "ETag" \
+            --output text 2>/dev/null || true)
 
-            echo "Dashboard artifact not available yet. Waiting 10 seconds..."
-            sleep 10
-          done
+          DB_CONFIG_ETAG=$(aws s3api head-object \
+            --region "$AWS_REGION_VALUE" \
+            --bucket "$LAMBDA_BUCKET_VALUE" \
+            --key "$DB_HOST_CONFIG_KEY" \
+            --query "ETag" \
+            --output text 2>/dev/null || true)
+
+          # On first boot, wait for the GitHub Actions artifacts.
+          if [ ! -f "$STATE_FILE" ]; then
+            for i in $(seq 1 60); do
+              if [ -n "$ARTIFACT_ETAG" ] && [ "$ARTIFACT_ETAG" != "None" ] \
+                 && [ -n "$DB_CONFIG_ETAG" ] && [ "$DB_CONFIG_ETAG" != "None" ]; then
+                break
+              fi
+
+              if [ "$i" -eq 60 ]; then
+                echo "ERROR: Dashboard artifacts were not found in S3 after waiting."
+                exit 1
+              fi
+
+              echo "Dashboard artifacts not available yet. Waiting 10 seconds..."
+              sleep 10
+
+              ARTIFACT_ETAG=$(aws s3api head-object \
+                --region "$AWS_REGION_VALUE" \
+                --bucket "$LAMBDA_BUCKET_VALUE" \
+                --key "$DASHBOARD_KEY" \
+                --query "ETag" \
+                --output text 2>/dev/null || true)
+
+              DB_CONFIG_ETAG=$(aws s3api head-object \
+                --region "$AWS_REGION_VALUE" \
+                --bucket "$LAMBDA_BUCKET_VALUE" \
+                --key "$DB_HOST_CONFIG_KEY" \
+                --query "ETag" \
+                --output text 2>/dev/null || true)
+            done
+          else
+            # During periodic checks, do nothing when nothing changed.
+            if [ -n "$ARTIFACT_ETAG" ] && [ -n "$DB_CONFIG_ETAG" ]; then
+              if grep -q "^ARTIFACT_ETAG=$ARTIFACT_ETAG$" "$STATE_FILE" 2>/dev/null \
+                 && grep -q "^DB_CONFIG_ETAG=$DB_CONFIG_ETAG$" "$STATE_FILE" 2>/dev/null; then
+                if systemctl is-active --quiet cloudmart-dashboard; then
+                  echo "Dashboard is already up to date."
+                  exit 0
+                fi
+              fi
+            else
+              echo "Dashboard artifacts are temporarily unavailable. Keeping current deployment."
+              exit 0
+            fi
+          fi
 
           echo "Reading dashboard database host configuration..."
-          for i in $(seq 1 60); do
-            if aws s3api head-object --region "$AWS_REGION_VALUE" --bucket "$LAMBDA_BUCKET_VALUE" --key "$DB_HOST_CONFIG_KEY" >/dev/null 2>&1; then
-              break
-            fi
-
-            if [ "$i" -eq 60 ]; then
-              echo "ERROR: Database host configuration was not found in S3 after waiting."
-              exit 1
-            fi
-
-            echo "Database host configuration not available yet. Waiting 10 seconds..."
-            sleep 10
-          done
 
           DB_HOST_VALUE=$(aws s3 cp \
             "s3://$LAMBDA_BUCKET_VALUE/$DB_HOST_CONFIG_KEY" \
@@ -646,8 +684,13 @@ Resources:
           chmod 600 /etc/cloudmart-dashboard.env
           chown -R ec2-user:ec2-user "$DASHBOARD_DIR"
 
+          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\n' \
+            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" > "$TMP_STATE_FILE"
+          mv "$TMP_STATE_FILE" "$STATE_FILE"
+
           systemctl daemon-reload
           systemctl enable cloudmart-dashboard
+          systemctl restart cloudmart-dashboard
 
           sleep 3
 
@@ -666,8 +709,9 @@ Resources:
           cat > /etc/systemd/system/cloudmart-dashboard.service <<'SERVICEEOF'
           [Unit]
           Description=CloudMart Flask Dashboard
-          After=network-online.target cloudmart-dashboard-update.service
+          After=network-online.target
           Wants=network-online.target
+
           [Service]
           Type=simple
           User=ec2-user
@@ -686,16 +730,29 @@ Resources:
           Description=CloudMart Dashboard Package Update
           Wants=network-online.target
           After=network-online.target
-          Before=cloudmart-dashboard.service
 
           [Service]
           Type=oneshot
           ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_VALUE" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY"
           UPDATEEOF
 
+          cat > /etc/systemd/system/cloudmart-dashboard-update.timer <<TIMEREOF
+          [Unit]
+          Description=Check for CloudMart Dashboard Updates
+
+          [Timer]
+          OnBootSec=2min
+          OnUnitActiveSec=1min
+          Unit=cloudmart-dashboard-update.service
+
+          [Install]
+          WantedBy=timers.target
+          TIMEREOF
+
           systemctl daemon-reload
           systemctl enable cloudmart-dashboard-update.service
           systemctl start cloudmart-dashboard-update.service
+          systemctl enable --now cloudmart-dashboard-update.timer
           systemctl enable --now cloudmart-dashboard.service
 
           echo "CloudMart dashboard bootstrap completed."

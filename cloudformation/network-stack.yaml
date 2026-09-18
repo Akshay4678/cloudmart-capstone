@@ -22,6 +22,15 @@ Parameters:
     Default: 0.0.0.0/0
     Description: CIDR allowed to access the dashboard
 
+  SSHIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to SSH to the dashboard EC2 instance
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair used for SSH access
+
 
 
   LatestAmiId:
@@ -464,6 +473,22 @@ Resources:
       CidrIp: !Ref DashboardIngressCidr
 
 
+  # ================================================================
+  # EC2 SSH ACCESS
+  # TCP 22
+  # ================================================================
+
+  EC2SSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SSHIngressCidr
+
+
 
 
 
@@ -521,6 +546,7 @@ Resources:
       ImageId: !Ref LatestAmiId
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile
+      KeyName: !Ref KeyPairName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref EC2SecurityGroup

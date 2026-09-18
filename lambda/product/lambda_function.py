@@ -6,6 +6,7 @@ from decimal import Decimal
 import boto3
 
 ssm = boto3.client("ssm")
+cloudwatch = boto3.client("cloudwatch")
 import pymysql
 from botocore.config import Config
 
@@ -36,6 +37,10 @@ DB_USER = os.environ["DB_USER"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+
+LOW_STOCK_THRESHOLD = int(
+    os.environ.get("LOW_STOCK_THRESHOLD", "5")
+)
 
 DB_PASSWORD_PARAMETER = os.environ.get(
     "DB_PASSWORD_PARAMETER",
@@ -82,6 +87,38 @@ def get_connection():
     print("AFTER DB CONNECTION")
 
     return connection
+
+
+# =========================================================
+# METRICS
+# =========================================================
+
+def put_metric(metric_name, value=1):
+    try:
+        cloudwatch.put_metric_data(
+            Namespace="CloudMart/Application",
+            MetricData=[
+                {
+                    "MetricName": metric_name,
+                    "Value": value,
+                    "Unit": "Count",
+                    "Dimensions": [
+                        {
+                            "Name": "Environment",
+                            "Value": ENVIRONMENT,
+                        },
+                        {
+                            "Name": "Service",
+                            "Value": "Product",
+                        },
+                    ],
+                }
+            ],
+        )
+    except Exception as exc:
+        print(
+            f"CloudWatch metric error: {exc}"
+        )
 
 
 # =========================================================
@@ -608,6 +645,13 @@ def create_product(
     print("AFTER COMMIT")
 
     # ---------------------------------------------------------
+    # LOW STOCK METRIC
+    # ---------------------------------------------------------
+
+    if stock_count <= LOW_STOCK_THRESHOLD:
+        put_metric("LowStockEvents")
+
+    # ---------------------------------------------------------
     # PUBLISH EVENT
     # ---------------------------------------------------------
 
@@ -1037,6 +1081,16 @@ def update_product(
     )
 
     # ---------------------------------------------------------
+    # LOW STOCK METRIC
+    # ---------------------------------------------------------
+
+    if (
+        old_stock > LOW_STOCK_THRESHOLD
+        and stock_count <= LOW_STOCK_THRESHOLD
+    ):
+        put_metric("LowStockEvents")
+
+    # ---------------------------------------------------------
     # PUBLISH EVENT
     # ---------------------------------------------------------
 
@@ -1266,6 +1320,10 @@ def lambda_handler(
             "Product ID:",
             product_id
         )
+
+        # Count each Product API request exactly once.
+        put_metric("ProductRequests")
+
         
 
         # Validate productId only when the endpoint uses a product ID.

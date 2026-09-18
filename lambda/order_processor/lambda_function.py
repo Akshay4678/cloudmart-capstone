@@ -28,6 +28,10 @@ DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 
+LOW_STOCK_THRESHOLD = int(
+    os.environ.get("LOW_STOCK_THRESHOLD", "5")
+)
+
 DB_PASSWORD_PARAMETER = os.environ.get(
     "DB_PASSWORD_PARAMETER",
     f"/cloudmart/{ENVIRONMENT}/database/password"
@@ -915,6 +919,7 @@ def process_order(message):
 
                 stock_changes.append({
                     "product_id": product_id,
+                    "old_stock": old_stock,
                     "stock_count": new_stock,
                 })
 
@@ -1033,6 +1038,14 @@ def process_order(message):
         # Publish product stock events only after the database
         # transaction has committed successfully.
         for stock_change in stock_changes:
+
+            # Emit one low-stock event when stock crosses
+            # from above the threshold into the low-stock range.
+            if (
+                stock_change["old_stock"] > LOW_STOCK_THRESHOLD
+                and stock_change["stock_count"] <= LOW_STOCK_THRESHOLD
+            ):
+                put_metric("LowStockEvents")
             try:
                 publish_product_stock_event(
                     product_id=stock_change["product_id"],

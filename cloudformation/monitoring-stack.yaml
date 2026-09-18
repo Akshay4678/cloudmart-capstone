@@ -1,0 +1,720 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: CloudMart Milestone 5 Monitoring Stack
+
+Parameters:
+
+  EnvironmentName:
+    Type: String
+    Default: dev
+
+    AllowedValues:
+      - dev
+      - prod
+
+    Description: CloudMart deployment environment
+
+
+# ================================================================
+# RESOURCES
+# ================================================================
+
+Resources:
+
+
+  # ==============================================================
+  # CLOUDWATCH OPERATIONS DASHBOARD
+  # ==============================================================
+
+  CloudMartOperationsDashboard:
+
+    Type: AWS::CloudWatch::Dashboard
+
+    Properties:
+
+      DashboardName: cloudmart-operations
+
+      DashboardBody: !Sub
+        - |
+          {
+            "start": "-PT3H",
+            "periodOverride": "auto",
+            "widgets": [
+
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Orders Created and Failed",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "CloudMart/Application",
+                      "OrdersCreated",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "Order",
+                      {
+                        "label": "Orders Created"
+                      }
+                    ],
+                    [
+                      "CloudMart/Application",
+                      "OrdersFailed",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "Order",
+                      {
+                        "label": "Orders Failed"
+                      }
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Low Stock Events",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "CloudMart/Application",
+                      "LowStockEvents",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "Product",
+                      {
+                        "label": "Product Low Stock"
+                      }
+                    ],
+                    [
+                      "CloudMart/Application",
+                      "LowStockEvents",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "OrderProcessing",
+                      {
+                        "label": "Order Processing Low Stock"
+                      }
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 6,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Order Processing",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "CloudMart/Application",
+                      "OrdersProcessed",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "OrderProcessing",
+                      {
+                        "label": "Orders Processed"
+                      }
+                    ],
+                    [
+                      "CloudMart/Application",
+                      "OrderProcessingFailures",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "OrderProcessing",
+                      {
+                        "label": "Processing Failures"
+                      }
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 6,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Lambda Errors",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "AWS/Lambda",
+                      "Errors",
+                      "FunctionName",
+                      "cloudmart-product-${EnvironmentName}",
+                      {
+                        "label": "Product"
+                      }
+                    ],
+                    [
+                      "AWS/Lambda",
+                      "Errors",
+                      "FunctionName",
+                      "cloudmart-order-${EnvironmentName}",
+                      {
+                        "label": "Order"
+                      }
+                    ],
+                    [
+                      "AWS/Lambda",
+                      "Errors",
+                      "FunctionName",
+                      "cloudmart-order-processor-${EnvironmentName}",
+                      {
+                        "label": "Order Processor"
+                      }
+                    ],
+                    [
+                      "AWS/Lambda",
+                      "Errors",
+                      "FunctionName",
+                      "cloudmart-report-${EnvironmentName}",
+                      {
+                        "label": "Report"
+                      }
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 12,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "RDS CPU Utilization",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "AWS/RDS",
+                      "CPUUtilization",
+                      "DBInstanceIdentifier",
+                      "${DatabaseIdentifier}"
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 12,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "RDS Database Connections",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "AWS/RDS",
+                      "DatabaseConnections",
+                      "DBInstanceIdentifier",
+                      "${DatabaseIdentifier}"
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 18,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Order Queue Messages",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Maximum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "AWS/SQS",
+                      "ApproximateNumberOfMessagesVisible",
+                      "QueueName",
+                      "cloudmart-orders-${EnvironmentName}"
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 18,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Order Request Volume",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "CloudMart/Application",
+                      "OrderRequests",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "Order"
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 24,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Product Request Volume",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "CloudMart/Application",
+                      "ProductRequests",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "Product"
+                    ]
+                  ]
+                }
+              },
+
+
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 24,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Reports Generated",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "CloudMart/Application",
+                      "ReportsGenerated",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "Report"
+                    ]
+                  ]
+                }
+              }
+
+            ]
+          }
+
+        - DatabaseIdentifier:
+            Fn::ImportValue: cloudmart-database-identifier
+
+
+  # ==============================================================
+  # ORDERS FAILED ALARM
+  # ==============================================================
+
+  OrdersFailedAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-orders-failed-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when one or more order requests fail.
+
+      Namespace:
+        CloudMart/Application
+
+      MetricName:
+        OrdersFailed
+
+      Dimensions:
+
+        - Name:
+            Environment
+
+          Value:
+            !Ref EnvironmentName
+
+        - Name:
+            Service
+
+          Value:
+            Order
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue:
+            cloudmart-order-failure-topic-arn
+
+
+  # ==============================================================
+  # LOW STOCK EVENTS ALARM - PRODUCT
+  # ==============================================================
+
+  LowStockEventsAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-low-stock-events-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when a product enters low stock.
+
+      Namespace:
+        CloudMart/Application
+
+      MetricName:
+        LowStockEvents
+
+      Dimensions:
+
+        - Name:
+            Environment
+
+          Value:
+            !Ref EnvironmentName
+
+        - Name:
+            Service
+
+          Value:
+            Product
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue:
+            cloudmart-low-stock-topic-arn
+
+
+  # ==============================================================
+  # LOW STOCK EVENTS ALARM - ORDER PROCESSING
+  # ==============================================================
+
+  LowStockEventsOrderProcessingAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-low-stock-events-order-processing-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when order processing causes stock to enter low stock.
+
+      Namespace:
+        CloudMart/Application
+
+      MetricName:
+        LowStockEvents
+
+      Dimensions:
+
+        - Name:
+            Environment
+
+          Value:
+            !Ref EnvironmentName
+
+        - Name:
+            Service
+
+          Value:
+            OrderProcessing
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue:
+            cloudmart-low-stock-topic-arn
+
+
+  # ==============================================================
+  # ORDER PROCESSOR LAMBDA ERRORS ALARM
+  # ==============================================================
+
+  OrderProcessorLambdaErrorsAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-order-processor-errors-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when the Order Processor Lambda reports an execution error.
+
+      Namespace:
+        AWS/Lambda
+
+      MetricName:
+        Errors
+
+      Dimensions:
+
+        - Name:
+            FunctionName
+
+          Value:
+            !Sub cloudmart-order-processor-${EnvironmentName}
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue:
+            cloudmart-order-failure-topic-arn
+
+
+  # ==============================================================
+  # RDS CPU ALARM
+  # ==============================================================
+
+  RDSCPUAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-rds-cpu-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when RDS CPU utilization is high.
+
+      Namespace:
+        AWS/RDS
+
+      MetricName:
+        CPUUtilization
+
+      Dimensions:
+
+        - Name:
+            DBInstanceIdentifier
+
+          Value:
+            Fn::ImportValue:
+              cloudmart-database-identifier
+
+      Statistic:
+        Average
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        80
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue:
+            cloudmart-order-failure-topic-arn
+
+
+# ================================================================
+# OUTPUTS
+# ================================================================
+
+Outputs:
+
+  OperationsDashboardName:
+
+    Description:
+      CloudMart operations dashboard name
+
+    Value:
+      !Ref CloudMartOperationsDashboard
+
+
+  OrdersFailedAlarmName:
+
+    Description:
+      Orders failed alarm name
+
+    Value:
+      !Ref OrdersFailedAlarm
+
+
+  LowStockEventsAlarmName:
+
+    Description:
+      Low stock alarm name
+
+    Value:
+      !Ref LowStockEventsAlarm
+
+
+  LowStockEventsOrderProcessingAlarmName:
+
+    Description:
+      Low stock alarm for order processing
+
+    Value:
+      !Ref LowStockEventsOrderProcessingAlarm
+
+
+  OrderProcessorLambdaErrorsAlarmName:
+
+    Description:
+      Order processor Lambda error alarm name
+
+    Value:
+      !Ref OrderProcessorLambdaErrorsAlarm
+
+
+  RDSCPUAlarmName:
+
+    Description:
+      RDS CPU alarm name
+
+    Value:
+      !Ref RDSCPUAlarm

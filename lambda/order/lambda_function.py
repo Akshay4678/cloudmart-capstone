@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
+
+ssm = boto3.client("ssm")
 import pymysql
 
 
@@ -15,7 +17,6 @@ import pymysql
 
 sqs = boto3.client("sqs")
 cloudwatch = boto3.client("cloudwatch")
-ssm = boto3.client("ssm")
 
 
 # ================================================================
@@ -27,14 +28,14 @@ QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
-DB_PASSWORD_PARAMETER = os.environ.get(
-    "DB_PASSWORD_PARAMETER",
-    "/cloudmart/dev/database/password",
-)
-DB_PASSWORD = None
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
 
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+
+DB_PASSWORD_PARAMETER = os.environ.get(
+    "DB_PASSWORD_PARAMETER",
+    f"/cloudmart/{ENVIRONMENT}/database/password"
+)
 
 
 # ================================================================
@@ -48,28 +49,23 @@ SCHEMA_FILE = os.path.join(
 
 
 # ================================================================
-# DATABASE PASSWORD
-# ================================================================
-
-def get_db_password():
-    global DB_PASSWORD
-
-    if DB_PASSWORD is None:
-        result = ssm.get_parameter(
-            Name=DB_PASSWORD_PARAMETER,
-            WithDecryption=True,
-        )
-        DB_PASSWORD = result["Parameter"]["Value"]
-
-        if not DB_PASSWORD:
-            raise RuntimeError("Database password parameter is empty")
-
-    return DB_PASSWORD
-
-
-# ================================================================
 # DATABASE CONNECTION
 # ================================================================
+
+_db_password = None
+
+def get_db_password():
+    global _db_password
+
+    if _db_password is None:
+        parameter = ssm.get_parameter(
+            Name=DB_PASSWORD_PARAMETER,
+            WithDecryption=True
+        )
+        _db_password = parameter["Parameter"]["Value"]
+
+    return _db_password
+
 
 def get_connection():
     return pymysql.connect(
@@ -838,12 +834,7 @@ def initialize_schema():
 # CREATE ORDER
 # ================================================================
 
-def create_order(
-    body,
-    performed_by=None,
-    authenticated_customer_id=None,
-    role="USER",
-):
+def create_order(body, performed_by=None):
 
     if not isinstance(body, dict):
         raise ValueError(
@@ -854,7 +845,7 @@ def create_order(
         "customer_id"
     )
 
-    role = str(role or "USER").strip().upper()
+    items = body.get("items")
 
     # ------------------------------------------------------------
     # CUSTOMER VALIDATION
@@ -873,25 +864,6 @@ def create_order(
         raise ValueError(
             "customer_id cannot be empty"
         )
-
-    # ------------------------------------------------------------
-    # AUTHENTICATED CUSTOMER VALIDATION
-    # ------------------------------------------------------------
-
-    if authenticated_customer_id:
-        authenticated_customer_id = str(
-            authenticated_customer_id
-        ).strip()
-
-        if (
-            role != "ADMIN"
-            and customer_id != authenticated_customer_id
-        ):
-            raise ValueError(
-                "You can place orders only for your own customer_id"
-            )
-
-    items = body.get("items")
 
     # ------------------------------------------------------------
     # ITEM VALIDATION
@@ -935,20 +907,22 @@ def create_order(
                 "quantity is required"
             )
 
-        if (
-            isinstance(item["product_id"], bool)
-            or not isinstance(item["product_id"], int)
-        ):
-            raise ValueError("product_id must be an integer")
+        try:
 
-        if (
-            isinstance(item["quantity"], bool)
-            or not isinstance(item["quantity"], int)
-        ):
-            raise ValueError("quantity must be an integer")
+            product_id = int(
+                item["product_id"]
+            )
 
-        product_id = item["product_id"]
-        quantity = item["quantity"]
+            quantity = int(
+                item["quantity"]
+            )
+
+        except (TypeError, ValueError):
+
+            raise ValueError(
+                "product_id and quantity "
+                "must be numbers"
+            )
 
         if product_id <= 0:
             raise ValueError(
@@ -1335,10 +1309,6 @@ def create_order(
             "OrdersCreated"
         )
 
-        put_metric(
-            "OrderRequests"
-        )
-
         return response(
             202,
             {
@@ -1363,10 +1333,6 @@ def create_order(
             f"Order validation error: {exc}"
         )
 
-        put_metric(
-            "OrderRequests"
-        )
-
         return response(
             400,
             {
@@ -1386,10 +1352,6 @@ def create_order(
 
         put_metric(
             "OrdersFailed"
-        )
-
-        put_metric(
-            "OrderRequests"
         )
 
         return response(
@@ -1677,85 +1639,6 @@ def get_customer_orders(customer_id):
 
 
 # ================================================================
-# GET ALL ORDERS - ADMIN ONLY
-# ================================================================
-
-def get_all_orders():
-
-    connection = None
-
-    try:
-        connection = get_connection()
-
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT
-                    o.order_id,
-                    o.customer_id,
-                    o.status,
-                    o.total_amount,
-                    o.created_at,
-                    o.updated_at,
-                    oi.product_id,
-                    p.name AS product_name,
-                    p.description AS product_description,
-                    oi.quantity,
-                    oi.price AS item_price
-                FROM orders o
-                INNER JOIN order_items oi
-                    ON o.order_id = oi.order_id
-                INNER JOIN products p
-                    ON oi.product_id = p.product_id
-                ORDER BY o.created_at DESC, o.order_id, oi.product_id
-                """
-            )
-            rows = cursor.fetchall()
-
-        orders = {}
-
-        for row in rows:
-            order_id = row["order_id"]
-
-            if order_id not in orders:
-                orders[order_id] = {
-                    "order_id": order_id,
-                    "customer_id": row["customer_id"],
-                    "status": row["status"],
-                    "total_amount": row["total_amount"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"],
-                    "items": [],
-                }
-
-            orders[order_id]["items"].append(
-                {
-                    "product_id": row["product_id"],
-                    "product_name": row["product_name"],
-                    "product_description": row["product_description"],
-                    "quantity": row["quantity"],
-                    "price": row["item_price"],
-                }
-            )
-
-        return response(
-            200,
-            {
-                "count": len(orders),
-                "orders": list(orders.values()),
-            },
-        )
-
-    except Exception as exc:
-        print(f"Get all orders error: {exc}")
-        return response(500, {"message": "Internal server error"})
-
-    finally:
-        if connection:
-            connection.close()
-
-
-# ================================================================
 # UPDATE ORDER
 # ================================================================
 
@@ -1763,9 +1646,6 @@ def update_order(
     order_id,
     body,
     performed_by=None,
-    role="USER",
-    authenticated_customer_id=None,
-    patch_only=False,
 ):
 
     if not isinstance(body, dict):
@@ -1780,35 +1660,30 @@ def update_order(
             },
         )
 
-    status = body.get("status")
-    status = str(status).strip().upper() if status is not None else None
-    role = str(role or "USER").strip().upper()
+    status = body.get(
+        "status"
+    )
 
-    if not status:
-        return response(400, {"message": "status is required"})
+    allowed_statuses = [
+        "PROCESSING",
+        "CONFIRMED",
+        "FAILED",
+        "CANCELLED",
+    ]
 
-    if role not in ("USER", "ADMIN"):
-        return response(403, {"message": "Valid user role is required"})
+    if status not in allowed_statuses:
 
-    # PATCH is reserved for cancellation only.
-    # FAILED is set by the Order Processor, not by API clients.
-    if patch_only and status != "CANCELLED":
-        return response(400, {
-            "message": "Only CANCELLED is allowed for PATCH /orders/{orderId}"
-        })
-
-    if role == "USER" and status != "CANCELLED":
-        return response(403, {
-            "message": "Users can only change order status to CANCELLED"
-        })
-
-    if role == "ADMIN" and not patch_only:
-        allowed_statuses = ["PROCESSING", "CONFIRMED", "FAILED", "CANCELLED"]
-        if status not in allowed_statuses:
-            return response(400, {
-                "message": "Invalid order status",
-                "allowed_statuses": allowed_statuses,
-            })
+        return response(
+            400,
+            {
+                "message": (
+                    "Invalid order status"
+                ),
+                "allowed_statuses": (
+                    allowed_statuses
+                ),
+            },
+        )
 
     connection = None
 
@@ -1859,17 +1734,6 @@ def update_order(
                         ),
                     },
                 )
-
-            if (
-                role == "USER"
-                and authenticated_customer_id
-                and str(old_order["customer_id"]).strip()
-                != str(authenticated_customer_id).strip()
-            ):
-                connection.rollback()
-                return response(403, {
-                    "message": "You can cancel only your own orders"
-                })
 
         # --------------------------------------------------------
         # UPDATE ORDER
@@ -2255,9 +2119,8 @@ def lambda_handler(
         or {}
     )
 
-    request_context = event.get("requestContext") or {}
-    authorizer = request_context.get("authorizer") or {}
-    role = str(authorizer.get("role") or "USER").upper()
+    # Count each Order API request exactly once.
+    put_metric("OrderRequests")
 
     order_id = path_parameters.get(
         "orderId"
@@ -2285,19 +2148,9 @@ def lambda_handler(
                 )
             )
 
-            authenticated_customer_id = (
-                authorizer.get("customer_id")
-                or authorizer.get("user")
-                or authorizer.get("principalId")
-            )
-
             return create_order(
-                body=body,
-                performed_by=performed_by,
-                authenticated_customer_id=(
-                    authenticated_customer_id
-                ),
-                role=role,
+                body,
+                performed_by,
             )
 
         except ValueError as exc:
@@ -2347,67 +2200,48 @@ def lambda_handler(
         )
 
     # ============================================================
-    # GET /orders
-    # ADMIN -> all orders
-    # USER  -> own customer orders
+    # GET /orders?customer_id=CUST101
+    # ============================================================
 
     if method == "GET":
 
-        if role == "ADMIN":
-            return get_all_orders()
-
-        customer_id = query_parameters.get("customer_id")
-
-        if not customer_id:
-            return response(400, {
-                "message": "customer_id query parameter is required"
-            })
-
-        customer_id = str(customer_id).strip()
-
-        if not customer_id:
-            return response(400, {
-                "message": "customer_id cannot be empty"
-            })
-
-        authenticated_customer_id = (
-            authorizer.get("customer_id")
-            or authorizer.get("user")
-            or authorizer.get("principalId")
+        customer_id = (
+            query_parameters.get(
+                "customer_id"
+            )
         )
 
-        if (
-            authenticated_customer_id
-            and customer_id != str(authenticated_customer_id).strip()
-        ):
-            return response(403, {
-                "message": "You can view only your own orders"
-            })
+        if not customer_id:
 
-        return get_customer_orders(customer_id)
-
-    # PATCH /orders/{orderId} - USER AND ADMIN CAN CANCEL
-    # ============================================================
-
-    if method == "PATCH" and order_id:
-        try:
-            body = parse_request_body(event)
-            performed_by = get_performed_by(event, body)
-            authenticated_customer_id = (
-                authorizer.get("customer_id")
-                or authorizer.get("user")
-                or authorizer.get("principalId")
+            return response(
+                400,
+                {
+                    "message": (
+                        "customer_id query "
+                        "parameter is required"
+                    ),
+                },
             )
-            return update_order(
-                order_id,
-                body,
-                performed_by,
-                role,
-                authenticated_customer_id,
-                patch_only=True,
+
+        customer_id = str(
+            customer_id
+        ).strip()
+
+        if not customer_id:
+
+            return response(
+                400,
+                {
+                    "message": (
+                        "customer_id cannot "
+                        "be empty"
+                    ),
+                },
             )
-        except ValueError as exc:
-            return response(400, {"message": str(exc)})
+
+        return get_customer_orders(
+            customer_id
+        )
 
     # ============================================================
     # PUT /orders/{orderId}
@@ -2435,7 +2269,6 @@ def lambda_handler(
                 order_id,
                 body,
                 performed_by,
-                role,
             )
 
         except ValueError as exc:

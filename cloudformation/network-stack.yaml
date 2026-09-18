@@ -15,6 +15,11 @@ Parameters:
     Description: CloudMart VPC CIDR block
 
 
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair used for SSH access
+
+
   DashboardIngressCidr:
     Type: String
     Default: 0.0.0.0/0
@@ -525,8 +530,38 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
+
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+      Policies:
+        - PolicyName: CloudMartDashboardAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadDatabasePassword
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/dev/database/password
+
+              - Sid: ReadReportsBucket
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${AWS::AccountId}-${AWS::Region}/*
+
+              - Sid: ReadLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-lambda-${AWS::AccountId}-${AWS::Region}/*
 
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -541,18 +576,62 @@ Resources:
       ImageId: !Ref LatestAmiId
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile
+      KeyName: !Ref KeyPairName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
       UserData:
-        Fn::Base64: |
+        Fn::Base64: !Sub |
           #!/bin/bash
+          set -e
+
           dnf update -y
-          dnf install -y mariadb
+          dnf install -y mariadb python3 python3-pip unzip
+
           systemctl enable amazon-ssm-agent
           systemctl start amazon-ssm-agent
+
           mkdir -p /home/ec2-user/cloudmart
+          mkdir -p /opt/cloudmart-dashboard
           chown -R ec2-user:ec2-user /home/ec2-user/cloudmart
+          chown -R ec2-user:ec2-user /opt/cloudmart-dashboard
+
+          python3 -m venv /opt/cloudmart-dashboard/venv
+          chown -R ec2-user:ec2-user /opt/cloudmart-dashboard/venv
+
+          cat > /etc/cloudmart-dashboard.env <<EOF
+          AWS_REGION=${AWS::Region}
+          REPORTS_BUCKET=cloudmart-reports-${AWS::AccountId}-${AWS::Region}
+          DB_PASSWORD_PARAMETER=/cloudmart/dev/database/password
+          DB_HOST=
+          DB_NAME=cloudmart
+          DB_USER=cloudmartadmin
+          EOF
+
+          chown root:root /etc/cloudmart-dashboard.env
+          chmod 600 /etc/cloudmart-dashboard.env
+
+          cat > /etc/systemd/system/cloudmart-dashboard.service <<'EOF'
+          [Unit]
+          Description=CloudMart Flask Dashboard
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/opt/cloudmart-dashboard
+          EnvironmentFile=/etc/cloudmart-dashboard.env
+          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 60 app:app
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          systemctl daemon-reload
+          systemctl enable cloudmart-dashboard
       Tags:
         - Key: Name
           Value: !Sub cloudmart-ec2-${AWS::StackName}

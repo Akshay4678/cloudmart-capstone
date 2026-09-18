@@ -270,6 +270,33 @@ jobs:
 
 
       # ==========================================================
+      # 11. VALIDATE MILESTONE 5 SOURCES
+      # ==========================================================
+
+      - name: Validate Milestone 5 Sources
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "VALIDATING MILESTONE 5 SOURCES"
+          echo "=================================================="
+
+          test -f cloudformation/monitoring-stack.yaml
+          test -f dashboard/app.py
+          test -f dashboard/requirements.txt
+          test -f lambda/report/lambda_function.py
+          test -f lambda/report/requirements.txt
+
+          python -m py_compile             dashboard/app.py             lambda/report/lambda_function.py
+
+          cfn-lint             --non-zero-exit-code error             cloudformation/monitoring-stack.yaml
+
+          aws cloudformation validate-template             --region "$AWS_REGION"             --template-body file://cloudformation/monitoring-stack.yaml
+
+          echo "Milestone 5 source validation passed."
+
+
+      # ==========================================================
       # 11. CHECK LAMBDA SOURCE FILES
       # ==========================================================
 
@@ -385,6 +412,22 @@ jobs:
 
 
           echo "Report Lambda files OK."
+
+
+          echo ""
+          echo "Checking Dashboard source files..."
+
+          if [ ! -f "dashboard/app.py" ]; then
+            echo "ERROR: Missing dashboard/app.py"
+            exit 1
+          fi
+
+          if [ ! -f "dashboard/requirements.txt" ]; then
+            echo "ERROR: Missing dashboard/requirements.txt"
+            exit 1
+          fi
+
+          echo "Dashboard files OK."
 
 
           echo ""
@@ -850,55 +893,27 @@ jobs:
       # ==========================================================
 
       - name: Deploy Network Stack
-
         id: deploy_network
-
-        env:
-
-          KEY_PAIR_NAME: ${{ secrets.KEY_PAIR_NAME }}
-
         run: |
+          set -e
 
           echo "=================================================="
           echo "DEPLOYING NETWORK STACK"
           echo "=================================================="
 
-          # Use the GitHub secret when it is configured.
-          # Otherwise, automatically use the first EC2 key pair in this region.
-          if [ -z "$KEY_PAIR_NAME" ]; then
-
-            echo "KEY_PAIR_NAME secret is not configured."
-            echo "Searching for an existing EC2 key pair in $AWS_REGION..."
-
-            KEY_PAIR_NAME=$(aws ec2 describe-key-pairs \
-              --region "$AWS_REGION" \
-              --query 'KeyPairs[0].KeyName' \
-              --output text)
-
-          fi
-
-          if [ -z "$KEY_PAIR_NAME" ] || [ "$KEY_PAIR_NAME" = "None" ]; then
-
-            echo "ERROR: No EC2 key pair exists in $AWS_REGION."
-            echo "Create an EC2 key pair in this region or add KEY_PAIR_NAME as a GitHub secret."
-            exit 1
-
-          fi
-
-          echo "Using EC2 key pair: $KEY_PAIR_NAME"
-
+          # network-stack.yaml currently does not declare KeyPairName.
+          # The EC2 instance is managed through AWS Systems Manager (SSM),
+          # so a key pair is not required for Milestone 5 deployment.
           aws cloudformation deploy \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
             --parameter-overrides \
-              "KeyPairName=$KEY_PAIR_NAME" \
               "SSHIngressCidr=0.0.0.0/0" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
           echo "Network stack deployment completed."
-
 
       # ==========================================================
       # 16. NETWORK ERRORS
@@ -1121,7 +1136,51 @@ jobs:
 
 
       # ==========================================================
-      # 24. UPLOAD PRODUCT
+      # 24. PACKAGE DASHBOARD
+      # ==========================================================
+
+      - name: Package Dashboard
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "PACKAGING EC2 DASHBOARD"
+          echo "=================================================="
+
+          rm -rf build/dashboard
+          mkdir -p build/dashboard
+
+          cp dashboard/app.py build/dashboard/app.py
+          cp dashboard/requirements.txt build/dashboard/requirements.txt
+
+          python -m py_compile build/dashboard/app.py
+
+          cd build/dashboard
+          zip -r "../cloudmart-dashboard-${{ github.sha }}.zip" .
+          cd ../..
+
+          test -s "build/cloudmart-dashboard-${{ github.sha }}.zip"
+
+          echo "Dashboard package created successfully."
+
+
+      # ==========================================================
+      # 25. UPLOAD DASHBOARD PACKAGE
+      # ==========================================================
+
+      - name: Upload Dashboard Package
+        run: |
+          set -e
+
+          echo "Uploading Dashboard package..."
+
+          aws s3 cp             "build/cloudmart-dashboard-${{ github.sha }}.zip"             "s3://${{ steps.lambda_bucket.outputs.bucket }}/dashboard/cloudmart-dashboard-${{ github.sha }}.zip"
+
+          echo "Dashboard package uploaded."
+
+
+      # ==========================================================
+      # 26. UPLOAD PRODUCT
       # ==========================================================
 
       - name: Upload Product Lambda
@@ -1437,8 +1496,426 @@ jobs:
 
 
       # ==========================================================
-      # 33. GET API URL
+      # 33. MILESTONE 5 - DEPLOY MONITORING STACK
       # ==========================================================
+
+      - name: Deploy Monitoring Stack
+        id: deploy_monitoring
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "DEPLOYING MILESTONE 5 MONITORING STACK"
+          echo "=================================================="
+
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-monitoring-stack \
+            --template-file cloudformation/monitoring-stack.yaml \
+            --parameter-overrides \
+              "EnvironmentName=$ENVIRONMENT_NAME" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+          echo "Monitoring stack deployment completed."
+
+
+      # ==========================================================
+      # 34. MILESTONE 5 - GET EXISTING EC2 AND REPORT OUTPUTS
+      # ==========================================================
+
+      - name: Get Milestone 5 Outputs
+        id: milestone5_outputs
+        run: |
+          set -e
+
+          REPORTS_BUCKET=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucket'].OutputValue" \
+            --output text)
+
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-network-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+            --output text)
+
+          DB_HOST=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" \
+            --output text)
+
+          PUBLIC_IP=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-network-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='EC2PublicIP'].OutputValue" \
+            --output text)
+
+          for value in "$REPORTS_BUCKET" "$INSTANCE_ID" "$DB_HOST" "$PUBLIC_IP"; do
+            if [ -z "$value" ] || [ "$value" = "None" ]; then
+              echo "ERROR: Required Milestone 5 CloudFormation output is missing."
+              exit 1
+            fi
+          done
+
+          echo "reports_bucket=$REPORTS_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "db_host=$DB_HOST" >> "$GITHUB_OUTPUT"
+          echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
+
+          echo "Reports bucket: $REPORTS_BUCKET"
+          echo "EC2 instance: $INSTANCE_ID"
+          echo "EC2 public IP: $PUBLIC_IP"
+
+
+      # ==========================================================
+      # 35. MILESTONE 5 - GIVE EXISTING EC2 REQUIRED ACCESS
+      # ==========================================================
+
+      - name: Configure Existing EC2 IAM Permissions
+        run: |
+          set -e
+
+          INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
+          REPORTS_BUCKET="${{ steps.milestone5_outputs.outputs.reports_bucket }}"
+          LAMBDA_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          PROFILE_ARN=$(aws ec2 describe-instances \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --query "Reservations[0].Instances[0].IamInstanceProfile.Arn" \
+            --output text)
+
+          if [ -z "$PROFILE_ARN" ] || [ "$PROFILE_ARN" = "None" ]; then
+            echo "ERROR: Existing EC2 has no IAM instance profile."
+            exit 1
+          fi
+
+          PROFILE_NAME="${PROFILE_ARN##*/}"
+
+          ROLE_NAME=$(aws iam get-instance-profile \
+            --instance-profile-name "$PROFILE_NAME" \
+            --query "InstanceProfile.Roles[0].RoleName" \
+            --output text)
+
+          if [ -z "$ROLE_NAME" ] || [ "$ROLE_NAME" = "None" ]; then
+            echo "ERROR: Could not determine EC2 IAM role."
+            exit 1
+          fi
+
+          cat > /tmp/cloudmart-dashboard-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "ReadReports",
+                "Effect": "Allow",
+                "Action": [
+                  "s3:ListBucket"
+                ],
+                "Resource": "arn:aws:s3:::$REPORTS_BUCKET"
+              },
+              {
+                "Sid": "ReadReportObjects",
+                "Effect": "Allow",
+                "Action": [
+                  "s3:GetObject"
+                ],
+                "Resource": "arn:aws:s3:::$REPORTS_BUCKET/*"
+              },
+              {
+                "Sid": "DownloadDashboardPackage",
+                "Effect": "Allow",
+                "Action": [
+                  "s3:GetObject"
+                ],
+                "Resource": "arn:aws:s3:::$LAMBDA_BUCKET/dashboard/*"
+              },
+              {
+                "Sid": "ReadDatabasePassword",
+                "Effect": "Allow",
+                "Action": [
+                  "ssm:GetParameter"
+                ],
+                "Resource": "arn:aws:ssm:$AWS_REGION:$ACCOUNT_ID:parameter/cloudmart/dev/database/password"
+              }
+            ]
+          }
+          EOF
+
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name CloudMartDashboardAccess \
+            --policy-document file:///tmp/cloudmart-dashboard-policy.json
+
+          # Allow IAM permissions a few seconds to propagate before SSM deployment.
+          sleep 5
+
+          echo "Dashboard IAM permissions configured on role: $ROLE_NAME"
+
+
+      # ==========================================================
+      # 36. MILESTONE 5 - VERIFY DAILY REPORT SCHEDULE
+      # ==========================================================
+
+      - name: Verify Daily Report Schedule
+        run: |
+          set -e
+
+          RULE_NAME="cloudmart-daily-report-rule-${ENVIRONMENT_NAME}"
+
+          RULE_STATE=$(aws events describe-rule \
+            --region "$AWS_REGION" \
+            --name "$RULE_NAME" \
+            --query "State" \
+            --output text)
+
+          SCHEDULE=$(aws events describe-rule \
+            --region "$AWS_REGION" \
+            --name "$RULE_NAME" \
+            --query "ScheduleExpression" \
+            --output text)
+
+          TARGET_COUNT=$(aws events list-targets-by-rule \
+            --region "$AWS_REGION" \
+            --rule "$RULE_NAME" \
+            --query "length(Targets)" \
+            --output text)
+
+          echo "Report rule: $RULE_NAME"
+          echo "State: $RULE_STATE"
+          echo "Schedule: $SCHEDULE"
+          echo "Target count: $TARGET_COUNT"
+
+          if [ "$RULE_STATE" != "ENABLED" ]; then
+            echo "ERROR: Daily report EventBridge rule is not enabled."
+            exit 1
+          fi
+
+          if [ "$TARGET_COUNT" -lt 1 ]; then
+            echo "ERROR: Daily report EventBridge rule has no target."
+            exit 1
+          fi
+
+          echo "Daily report schedule verification passed."
+
+
+      # ==========================================================
+      # 37. MILESTONE 5 - DEPLOY FLASK DASHBOARD TO EXISTING EC2
+      # ==========================================================
+
+      - name: Deploy Dashboard to Existing EC2
+        id: deploy_dashboard
+        run: |
+          set -e
+
+          INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
+          DB_HOST="${{ steps.milestone5_outputs.outputs.db_host }}"
+          REPORTS_BUCKET="${{ steps.milestone5_outputs.outputs.reports_bucket }}"
+          LAMBDA_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+          DASHBOARD_KEY="dashboard/cloudmart-dashboard-${{ github.sha }}.zip"
+
+          cat > /tmp/deploy-dashboard.sh <<EOF
+          #!/bin/bash
+          set -euo pipefail
+
+          dnf install -y python3 python3-pip unzip
+
+          mkdir -p /opt/cloudmart-dashboard
+
+          aws s3 cp "s3://$LAMBDA_BUCKET/$DASHBOARD_KEY" /tmp/cloudmart-dashboard.zip
+
+          rm -rf /opt/cloudmart-dashboard/*
+          unzip -o /tmp/cloudmart-dashboard.zip -d /opt/cloudmart-dashboard
+
+          rm -rf /opt/cloudmart-dashboard/venv
+          python3 -m venv /opt/cloudmart-dashboard/venv
+
+          /opt/cloudmart-dashboard/venv/bin/pip install --upgrade pip
+          /opt/cloudmart-dashboard/venv/bin/pip install -r /opt/cloudmart-dashboard/requirements.txt
+
+          cat > /etc/cloudmart-dashboard.env <<ENVEOF
+          AWS_REGION=$AWS_REGION
+          REPORTS_BUCKET=$REPORTS_BUCKET
+          DB_HOST=$DB_HOST
+          DB_NAME=cloudmart
+          DB_USER=cloudmartadmin
+          DB_PORT=3306
+          DB_PASSWORD_PARAMETER=/cloudmart/dev/database/password
+          ENVEOF
+
+          chmod 600 /etc/cloudmart-dashboard.env
+          chown root:root /etc/cloudmart-dashboard.env
+
+          cat > /etc/systemd/system/cloudmart-dashboard.service <<'SERVICEEOF'
+          [Unit]
+          Description=CloudMart Flask Dashboard
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/opt/cloudmart-dashboard
+          EnvironmentFile=/etc/cloudmart-dashboard.env
+          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 60 app:app
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICEEOF
+
+          chown -R ec2-user:ec2-user /opt/cloudmart-dashboard
+
+          systemctl daemon-reload
+          systemctl enable cloudmart-dashboard
+          systemctl restart cloudmart-dashboard
+
+          sleep 3
+
+          systemctl is-active --quiet cloudmart-dashboard
+          curl -fsS http://127.0.0.1:5000/health
+
+          rm -f /tmp/cloudmart-dashboard.zip
+
+          echo "Dashboard deployed successfully."
+          EOF
+
+          sed -i 's/^          //' /tmp/deploy-dashboard.sh
+
+          python - <<PY
+          import json
+          from pathlib import Path
+
+          script = Path("/tmp/deploy-dashboard.sh").read_text()
+
+          request = {
+              "DocumentName": "AWS-RunShellScript",
+              "InstanceIds": ["$INSTANCE_ID"],
+              "Comment": "Deploy CloudMart Milestone 5 Flask dashboard",
+              "Parameters": {
+                  "commands": [script]
+              }
+          }
+
+          Path("/tmp/ssm-request.json").write_text(json.dumps(request))
+          PY
+
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --cli-input-json file:///tmp/ssm-request.json \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM command: $COMMAND_ID"
+
+          FINAL_STATUS="Pending"
+
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "Status" \
+              --output text)
+
+            echo "Dashboard deployment status: $STATUS"
+
+            case "$STATUS" in
+              Success)
+                FINAL_STATUS="Success"
+                break
+                ;;
+              Failed|Cancelled|TimedOut)
+                FINAL_STATUS="$STATUS"
+                break
+                ;;
+              *)
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          if [ "$FINAL_STATUS" != "Success" ]; then
+            echo "ERROR: Dashboard deployment failed or timed out."
+
+            aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query '[Status,StandardOutputContent,StandardErrorContent]' \
+              --output text || true
+
+            exit 1
+          fi
+
+          echo "Dashboard URL: http://${{ steps.milestone5_outputs.outputs.public_ip }}:5000"
+
+
+      # ==========================================================
+      # 38. MILESTONE 5 - VERIFY CLOUDWATCH DASHBOARD AND ALARMS
+      # ==========================================================
+
+      - name: Verify Milestone 5 Monitoring
+        run: |
+          set -e
+
+          echo "=================================================="
+          echo "VERIFYING MILESTONE 5 MONITORING"
+          echo "=================================================="
+
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-monitoring-stack \
+            --query "Stacks[0].StackStatus" \
+            --output text)
+
+          if [ "$STACK_STATUS" != "CREATE_COMPLETE" ] && [ "$STACK_STATUS" != "UPDATE_COMPLETE" ]; then
+            echo "ERROR: Monitoring stack status is $STACK_STATUS"
+            exit 1
+          fi
+
+          aws cloudwatch get-dashboard \
+            --region "$AWS_REGION" \
+            --dashboard-name cloudmart-operations \
+            >/dev/null
+
+          ALARM_COUNT=$(aws cloudformation describe-stack-resources \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-monitoring-stack \
+            --query "length(StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm'])" \
+            --output text)
+
+          echo "CloudWatch dashboard: cloudmart-operations"
+          echo "CloudWatch alarms in monitoring stack: $ALARM_COUNT"
+
+          if [ "$ALARM_COUNT" -lt 4 ]; then
+            echo "ERROR: Expected at least four CloudWatch alarms."
+            exit 1
+          fi
+
+          echo "Monitoring verification passed."
+
+
+      # ==========================================================
+      # 39. MILESTONE 5 - FINAL URLS
+      # ==========================================================
+
+      - name: Milestone 5 URLs
+        run: |
+          echo "=============================================="
+          echo "CloudMart Milestone 5 deployment complete"
+          echo "=============================================="
+          echo "Dashboard: http://${{ steps.milestone5_outputs.outputs.public_ip }}:5000"
+          echo "CloudWatch dashboard: cloudmart-operations"
+          echo "=============================================="
+
+
 
       - name: Get API URL
 
@@ -1474,7 +1951,7 @@ jobs:
 
 
       # ==========================================================
-      # 34. FINAL STACK STATUS
+      # 41. FINAL STACK STATUS
       # ==========================================================
 
       - name: Final CloudFormation Status

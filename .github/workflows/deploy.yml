@@ -96,6 +96,10 @@ jobs:
 
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
+          KEY_PAIR_NAME: ${{ secrets.KEY_PAIR_NAME }}
+
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
         run: |
 
           echo "=================================================="
@@ -115,6 +119,24 @@ jobs:
           if [ -z "$DB_PASSWORD" ]; then
 
             echo "ERROR: DB_PASSWORD secret is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$KEY_PAIR_NAME" ]; then
+
+            echo "ERROR: KEY_PAIR_NAME secret is missing."
+
+            exit 1
+
+          fi
+
+
+          if [ -z "$EC2_SSH_PRIVATE_KEY" ]; then
+
+            echo "ERROR: EC2_SSH_PRIVATE_KEY secret is missing."
 
             exit 1
 
@@ -892,25 +914,41 @@ jobs:
 
       - name: Deploy Network Stack
         id: deploy_network
+        env:
+          KEY_PAIR_NAME: ${{ secrets.KEY_PAIR_NAME }}
         run: |
-          set -e
+          set -euo pipefail
 
           echo "=================================================="
           echo "DEPLOYING NETWORK STACK"
           echo "=================================================="
 
-          # network-stack.yaml currently does not declare KeyPairName.
-          # The EC2 instance is managed through AWS Systems Manager (SSM),
-          # so a key pair is not required for Milestone 5 deployment.
+          if [ -z "$KEY_PAIR_NAME" ]; then
+            echo "ERROR: KEY_PAIR_NAME secret is missing."
+            exit 1
+          fi
+
+          RUNNER_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')
+
+          if [ -z "$RUNNER_IP" ]; then
+            echo "ERROR: Could not determine GitHub Actions runner public IP."
+            exit 1
+          fi
+
+          echo "Using EC2 key pair: $KEY_PAIR_NAME"
+          echo "Allowing SSH from GitHub Actions runner: $RUNNER_IP/32"
+
           aws cloudformation deploy \
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
+            --parameter-overrides \
+              "KeyPairName=$KEY_PAIR_NAME" \
+              "SSHIngressCidr=$RUNNER_IP/32" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
           echo "Network stack deployment completed."
-
       # ==========================================================
       # 17. NETWORK ERRORS
       # ==========================================================
@@ -1567,7 +1605,7 @@ jobs:
 
 
       # ==========================================================
-      # 37. MILESTONE 5 - GIVE EXISTING EC2 REQUIRED ACCESS
+      # 37. MILESTONE 5 - GIVE EC2 REQUIRED ACCESS
       # ==========================================================
 
       - name: Configure Existing EC2 IAM Permissions
@@ -1647,7 +1685,7 @@ jobs:
             --policy-name CloudMartDashboardAccess \
             --policy-document file:///tmp/cloudmart-dashboard-policy.json
 
-          # Allow IAM permissions a few seconds to propagate before SSM deployment.
+          # Allow IAM permissions a few seconds to propagate before SSH deployment.
           sleep 5
 
           echo "Dashboard IAM permissions configured on role: $ROLE_NAME"
@@ -1699,87 +1737,90 @@ jobs:
           echo "Daily report schedule verification passed."
 
 
-      # ==========================================================
-      # WAIT FOR EC2 TO REGISTER WITH SSM
-      # ==========================================================
-
-      - name: Wait for EC2 SSM Registration
-        run: |
-          set -e
-
-          INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
-
-          echo "=================================================="
-          echo "WAITING FOR EC2 SSM REGISTRATION"
-          echo "=================================================="
-          echo "Instance ID: $INSTANCE_ID"
-
-          for i in $(seq 1 30); do
-
-            STATUS=$(aws ssm describe-instance-information \
-              --region "$AWS_REGION" \
-              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
-              --query "InstanceInformationList[0].PingStatus" \
-              --output text 2>/dev/null || true)
-
-            echo "SSM status: $STATUS"
-
-            if [ "$STATUS" = "Online" ]; then
-              echo "EC2 is Online in SSM."
-              echo "SSM is ready."
-              exit 0
-            fi
-
-            echo "EC2 is not ready yet. Waiting 10 seconds..."
-            sleep 10
-
-          done
-
-          echo "ERROR: EC2 did not become Online in SSM within 5 minutes."
-          exit 1
-
-
-
-      
-
-
 
       # ==========================================================
-      # 40. MILESTONE 5 - DEPLOY FLASK DASHBOARD TO EXISTING EC2
+      # 40. MILESTONE 5 - DEPLOY FLASK DASHBOARD TO EC2 VIA SSH
       # ==========================================================
 
-      - name: Deploy Dashboard to Existing EC2
+      - name: Deploy Dashboard to EC2 via SSH
         id: deploy_dashboard
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
         run: |
-          set -e
+          set -euo pipefail
 
           INSTANCE_ID="${{ steps.milestone5_outputs.outputs.instance_id }}"
+          PUBLIC_IP="${{ steps.milestone5_outputs.outputs.public_ip }}"
           DB_HOST="${{ steps.milestone5_outputs.outputs.db_host }}"
           REPORTS_BUCKET="${{ steps.milestone5_outputs.outputs.reports_bucket }}"
-          LAMBDA_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
-          DASHBOARD_KEY="dashboard/cloudmart-dashboard-${{ github.sha }}.zip"
+          DASHBOARD_ZIP="build/cloudmart-dashboard-${{ github.sha }}.zip"
 
-          cat > /tmp/deploy-dashboard.sh <<EOF
+          echo "=================================================="
+          echo "DEPLOYING DASHBOARD TO EC2 VIA SSH"
+          echo "=================================================="
+          echo "Instance: $INSTANCE_ID"
+          echo "Public IP: $PUBLIC_IP"
+
+          if [ ! -s "$DASHBOARD_ZIP" ]; then
+            echo "ERROR: Dashboard ZIP not found: $DASHBOARD_ZIP"
+            exit 1
+          fi
+
+          SSH_KEY="$RUNNER_TEMP/cloudmart-ec2-key.pem"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$SSH_KEY"
+          chmod 600 "$SSH_KEY"
+
+          SSH_OPTS=(
+            -i "$SSH_KEY"
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4
+          )
+
+          echo "Waiting for SSH on $PUBLIC_IP:22..."
+          for i in $(seq 1 30); do
+            if ssh "${SSH_OPTS[@]}" "ec2-user@$PUBLIC_IP" "echo SSH connection successful"; then
+              break
+            fi
+
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: EC2 SSH did not become available within 5 minutes."
+              exit 1
+            fi
+
+            echo "SSH not ready yet. Waiting 10 seconds..."
+            sleep 10
+          done
+
+          echo "Uploading dashboard package..."
+          scp "${SSH_OPTS[@]}" \
+            "$DASHBOARD_ZIP" \
+            "ec2-user@$PUBLIC_IP:/tmp/cloudmart-dashboard.zip"
+
+          cat > /tmp/deploy-dashboard-remote.sh <<'REMOTE_SCRIPT'
           #!/bin/bash
           set -euo pipefail
 
-          dnf install -y python3 python3-pip unzip
+          DB_HOST="$1"
+          REPORTS_BUCKET="$2"
+          AWS_REGION_VALUE="$3"
 
-          mkdir -p /opt/cloudmart-dashboard
+          sudo dnf install -y python3 python3-pip unzip
 
-          aws s3 cp "s3://$LAMBDA_BUCKET/$DASHBOARD_KEY" /tmp/cloudmart-dashboard.zip
+          sudo mkdir -p /opt/cloudmart-dashboard
+          sudo rm -rf /opt/cloudmart-dashboard/*
+          sudo unzip -o /tmp/cloudmart-dashboard.zip -d /opt/cloudmart-dashboard
+          sudo rm -f /tmp/cloudmart-dashboard.zip
 
-          rm -rf /opt/cloudmart-dashboard/*
-          unzip -o /tmp/cloudmart-dashboard.zip -d /opt/cloudmart-dashboard
+          sudo rm -rf /opt/cloudmart-dashboard/venv
+          sudo python3 -m venv /opt/cloudmart-dashboard/venv
+          sudo /opt/cloudmart-dashboard/venv/bin/pip install --upgrade pip
+          sudo /opt/cloudmart-dashboard/venv/bin/pip install -r /opt/cloudmart-dashboard/requirements.txt
 
-          rm -rf /opt/cloudmart-dashboard/venv
-          python3 -m venv /opt/cloudmart-dashboard/venv
-
-          /opt/cloudmart-dashboard/venv/bin/pip install --upgrade pip
-          /opt/cloudmart-dashboard/venv/bin/pip install -r /opt/cloudmart-dashboard/requirements.txt
-
-          cat > /etc/cloudmart-dashboard.env <<ENVEOF
-          AWS_REGION=$AWS_REGION
+          sudo tee /etc/cloudmart-dashboard.env > /dev/null <<ENVEOF
+          AWS_REGION=$AWS_REGION_VALUE
           REPORTS_BUCKET=$REPORTS_BUCKET
           DB_HOST=$DB_HOST
           DB_NAME=cloudmart
@@ -1788,10 +1829,10 @@ jobs:
           DB_PASSWORD_PARAMETER=/cloudmart/dev/database/password
           ENVEOF
 
-          chmod 600 /etc/cloudmart-dashboard.env
-          chown root:root /etc/cloudmart-dashboard.env
+          sudo chmod 600 /etc/cloudmart-dashboard.env
+          sudo chown root:root /etc/cloudmart-dashboard.env
 
-          cat > /etc/systemd/system/cloudmart-dashboard.service <<'SERVICEEOF'
+          sudo tee /etc/systemd/system/cloudmart-dashboard.service > /dev/null <<'SERVICEEOF'
           [Unit]
           Description=CloudMart Flask Dashboard
           After=network-online.target
@@ -1810,94 +1851,35 @@ jobs:
           WantedBy=multi-user.target
           SERVICEEOF
 
-          chown -R ec2-user:ec2-user /opt/cloudmart-dashboard
-
-          systemctl daemon-reload
-          systemctl enable cloudmart-dashboard
-          systemctl restart cloudmart-dashboard
+          sudo chown -R ec2-user:ec2-user /opt/cloudmart-dashboard
+          sudo systemctl daemon-reload
+          sudo systemctl enable cloudmart-dashboard
+          sudo systemctl restart cloudmart-dashboard
 
           sleep 3
 
-          systemctl is-active --quiet cloudmart-dashboard
-          curl -fsS http://127.0.0.1:5000/health
-
-          rm -f /tmp/cloudmart-dashboard.zip
-
-          echo "Dashboard deployed successfully."
-          EOF
-
-          sed -i 's/^          //' /tmp/deploy-dashboard.sh
-
-          python - <<PY
-          import json
-          from pathlib import Path
-
-          script = Path("/tmp/deploy-dashboard.sh").read_text()
-
-          request = {
-              "DocumentName": "AWS-RunShellScript",
-              "InstanceIds": ["$INSTANCE_ID"],
-              "Comment": "Deploy CloudMart Milestone 5 Flask dashboard",
-              "Parameters": {
-                  "commands": [script]
-              }
-          }
-
-          Path("/tmp/ssm-request.json").write_text(json.dumps(request))
-          PY
-
-          COMMAND_ID=$(aws ssm send-command \
-            --region "$AWS_REGION" \
-            --cli-input-json file:///tmp/ssm-request.json \
-            --query "Command.CommandId" \
-            --output text)
-
-          echo "SSM command: $COMMAND_ID"
-
-          FINAL_STATUS="Pending"
-
-          for i in $(seq 1 60); do
-            STATUS=$(aws ssm get-command-invocation \
-              --region "$AWS_REGION" \
-              --command-id "$COMMAND_ID" \
-              --instance-id "$INSTANCE_ID" \
-              --query "Status" \
-              --output text)
-
-            echo "Dashboard deployment status: $STATUS"
-
-            case "$STATUS" in
-              Success)
-                FINAL_STATUS="Success"
-                break
-                ;;
-              Failed|Cancelled|TimedOut)
-                FINAL_STATUS="$STATUS"
-                break
-                ;;
-              *)
-                ;;
-            esac
-
-            sleep 5
-          done
-
-          if [ "$FINAL_STATUS" != "Success" ]; then
-            echo "ERROR: Dashboard deployment failed or timed out."
-
-            aws ssm get-command-invocation \
-              --region "$AWS_REGION" \
-              --command-id "$COMMAND_ID" \
-              --instance-id "$INSTANCE_ID" \
-              --query '[Status,StandardOutputContent,StandardErrorContent]' \
-              --output text || true
-
+          if ! sudo systemctl is-active --quiet cloudmart-dashboard; then
+            echo "ERROR: CloudMart dashboard service is not active."
+            sudo systemctl status cloudmart-dashboard --no-pager || true
+            sudo journalctl -u cloudmart-dashboard -n 80 --no-pager || true
             exit 1
           fi
 
-          echo "Dashboard URL: http://${{ steps.milestone5_outputs.outputs.public_ip }}:5000"
+          curl -fsS http://127.0.0.1:5000/health
+          echo
+          echo "Dashboard deployed successfully."
+          REMOTE_SCRIPT
 
+          sed -i 's/^          //' /tmp/deploy-dashboard-remote.sh
 
+          echo "Running dashboard deployment on EC2..."
+          ssh "${SSH_OPTS[@]}" "ec2-user@$PUBLIC_IP" \
+            "bash -s -- $(printf '%q' "$DB_HOST") $(printf '%q' "$REPORTS_BUCKET") $(printf '%q' "$AWS_REGION")" \
+            < /tmp/deploy-dashboard-remote.sh
+
+          rm -f "$SSH_KEY" /tmp/deploy-dashboard-remote.sh
+
+          echo "Dashboard URL: http://$PUBLIC_IP:5000"
       # ==========================================================
       # 41. MILESTONE 5 - VERIFY CLOUDWATCH DASHBOARD AND ALARMS
       # ==========================================================

@@ -23,6 +23,17 @@ Parameters:
     Description: CIDR allowed to access the dashboard
 
 
+  SSHIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed for SSH access. The GitHub Actions workflow passes the runner IP/32.
+
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair used for SSH access to the CloudMart dashboard instance.
+
+
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
@@ -500,6 +511,17 @@ Resources:
   # SSH 22
   # ================================================================
 
+  EC2SSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SSHIngressCidr
+
+
 
   EC2InstanceRole:
     Type: AWS::IAM::Role
@@ -511,9 +533,6 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
-
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
       Policies:
         - PolicyName: CloudMartDashboardAccess
@@ -558,6 +577,7 @@ Resources:
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile
       SubnetId: !Ref PublicSubnet
+      KeyName: !Ref KeyPairName
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
       UserData:
@@ -567,9 +587,6 @@ Resources:
 
           dnf update -y
           dnf install -y mariadb python3 python3-pip unzip
-
-          systemctl enable amazon-ssm-agent
-          systemctl start amazon-ssm-agent
 
           mkdir -p /home/ec2-user/cloudmart
           mkdir -p /opt/cloudmart-dashboard

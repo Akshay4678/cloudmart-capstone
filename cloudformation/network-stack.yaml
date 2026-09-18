@@ -27,10 +27,6 @@ Parameters:
     Default: 0.0.0.0/0
     Description: CIDR allowed to SSH to the dashboard EC2 instance
 
-  KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: EC2 key pair used for SSH access
-
 
 
   LatestAmiId:
@@ -476,6 +472,8 @@ Resources:
   # ================================================================
   # EC2 SSH ACCESS
   # TCP 22
+  # No key pair is required by this CloudFormation template.
+  # EC2 Instance Connect can be used from the AWS Console.
   # ================================================================
 
   EC2SSHIngress:
@@ -546,7 +544,6 @@ Resources:
       ImageId: !Ref LatestAmiId
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile
-      KeyName: !Ref KeyPairName
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref EC2SecurityGroup

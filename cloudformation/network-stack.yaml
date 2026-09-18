@@ -563,12 +563,21 @@ Resources:
           echo "Starting CloudMart dashboard bootstrap..."
 
           dnf update -y
-          dnf install -y mariadb python3 python3-pip unzip
+          dnf install -y mariadb python3 python3-pip unzip awscli-2
+
+          # Amazon Linux 2023 does not guarantee that the AWS CLI is
+          # preinstalled. Install it explicitly before any S3 operations.
+          if ! command -v aws >/dev/null 2>&1; then
+            echo "ERROR: AWS CLI installation failed."
+            dnf install -y awscli-2
+          fi
 
           if ! command -v aws >/dev/null 2>&1; then
-            echo "ERROR: AWS CLI is not available on the Amazon Linux AMI."
+            echo "ERROR: AWS CLI is still not available after installation."
             exit 1
           fi
+
+          echo "AWS CLI detected: $(aws --version)"
 
           mkdir -p /opt/cloudmart-dashboard
           chown -R ec2-user:ec2-user /opt/cloudmart-dashboard

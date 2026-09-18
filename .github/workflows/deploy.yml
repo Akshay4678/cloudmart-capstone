@@ -906,8 +906,6 @@ jobs:
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
-            --parameter-overrides \
-              "SSHIngressCidr=0.0.0.0/0" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 

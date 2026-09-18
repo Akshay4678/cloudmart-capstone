@@ -1678,7 +1678,7 @@ jobs:
             --dashboard-name cloudmart-operations \
             >/dev/null
 
-          ALARM_COUNT=$(aws cloudformation describe-stack-resources \
+          ALARM_COUNT=$(aws cloudformation list-stack-resources \
             --region "$AWS_REGION" \
             --stack-name cloudmart-monitoring-stack \
             --query "length(StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm'])" \

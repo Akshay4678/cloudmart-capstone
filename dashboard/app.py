@@ -142,7 +142,7 @@ def fetch_dashboard_data():
             p.product_id,
             p.name,
             COALESCE(SUM(oi.quantity), 0) AS units_sold,
-            COALESCE(SUM(oi.subtotal), 0) AS revenue
+            COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS revenue
         FROM orders o
         INNER JOIN order_items oi
             ON o.order_id = oi.order_id
@@ -562,7 +562,7 @@ def order_details(order_id):
             p.name AS product_name,
             oi.quantity,
             oi.unit_price,
-            oi.subtotal
+            (oi.quantity * oi.unit_price) AS subtotal
         FROM order_items oi
         INNER JOIN products p
             ON oi.product_id = p.product_id
@@ -601,7 +601,7 @@ def order_items():
             p.name AS product_name,
             oi.quantity,
             oi.unit_price,
-            oi.subtotal,
+            (oi.quantity * oi.unit_price) AS subtotal,
             oi.created_at
         FROM order_items oi
         INNER JOIN products p

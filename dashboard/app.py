@@ -66,8 +66,9 @@ def get_database_summary():
 
             cursor.execute(
                 """
-                SELECT COALESCE(SUM(quantity), 0) AS total_stock
-                FROM inventory
+                SELECT COALESCE(SUM(stock_count), 0) AS total_stock
+                FROM products
+                WHERE status = 'ACTIVE'
                 """
             )
             stock = cursor.fetchone()["total_stock"]
@@ -75,11 +76,9 @@ def get_database_summary():
             cursor.execute(
                 """
                 SELECT COUNT(*) AS low_stock_products
-                FROM inventory i
-                INNER JOIN products p
-                    ON p.product_id = i.product_id
-                WHERE p.status = 'ACTIVE'
-                  AND i.quantity <= 5
+                FROM products
+                WHERE status = 'ACTIVE'
+                  AND stock_count <= 5
                 """
             )
             low_stock = cursor.fetchone()["low_stock_products"]
@@ -87,7 +86,7 @@ def get_database_summary():
             cursor.execute(
                 """
                 SELECT COUNT(*) AS total_history
-                FROM product_history
+                FROM audit_logs
                 """
             )
             history = cursor.fetchone()["total_history"]
@@ -318,7 +317,7 @@ DASHBOARD_HTML = r"""
 <body>
 <header>
     <h1>CloudMart Operations Dashboard</h1>
-    <p>AWS EC2 Flask Dashboard • Reports + Product/Inventory Summary</p>
+    <p>AWS EC2 Flask Dashboard • Reports + Product/Stock Summary</p>
 </header>
 
 <main>
@@ -352,7 +351,7 @@ DASHBOARD_HTML = r"""
         </div>
 
         <div class="card">
-            <h3>Product History Events</h3>
+            <h3>Audit Log Events</h3>
             <div class="value">{{ db.product_history_events }}</div>
         </div>
     </div>

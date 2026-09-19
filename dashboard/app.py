@@ -2,6 +2,7 @@ import csv
 import io
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import boto3
 import pymysql
@@ -135,14 +136,14 @@ def fetch_dashboard_data():
     )
 
     # Top 5 products sold during the last 7 days.
-    # order_items uses quantity + unit_price in the actual schema.
+    # order_items uses quantity + price in the actual schema.
     top_products = query_db(
         """
         SELECT
             p.product_id,
             p.name,
             COALESCE(SUM(oi.quantity), 0) AS units_sold,
-            COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS revenue
+            COALESCE(SUM(oi.quantity * oi.price), 0) AS revenue
         FROM orders o
         INNER JOIN order_items oi
             ON o.order_id = oi.order_id
@@ -226,6 +227,18 @@ def get_report_objects():
         reverse=True,
     )
     return reports
+
+
+def get_todays_report(reports):
+    """Return today's daily_report CSV, or None if it has not been generated yet."""
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+    expected_name = f"daily_report_{today}.csv"
+
+    for report in reports:
+        if report["key"].split("/")[-1] == expected_name:
+            return report
+
+    return None
 
 
 def read_report_csv(key):
@@ -557,17 +570,16 @@ def order_details(order_id):
     items = query_db(
         """
         SELECT
-            oi.order_item_id,
             oi.product_id,
             p.name AS product_name,
             oi.quantity,
-            oi.unit_price,
-            (oi.quantity * oi.unit_price) AS subtotal
+            oi.price AS unit_price,
+            (oi.quantity * oi.price) AS subtotal
         FROM order_items oi
         INNER JOIN products p
             ON oi.product_id = p.product_id
         WHERE oi.order_id = %s
-        ORDER BY oi.order_item_id
+        ORDER BY oi.created_at
         """,
         (order_id,),
     )
@@ -595,18 +607,17 @@ def order_items():
     rows = query_db(
         """
         SELECT
-            oi.order_item_id,
             oi.order_id,
             oi.product_id,
             p.name AS product_name,
             oi.quantity,
-            oi.unit_price,
-            (oi.quantity * oi.unit_price) AS subtotal,
+            oi.price AS unit_price,
+            (oi.quantity * oi.price) AS subtotal,
             oi.created_at
         FROM order_items oi
         INNER JOIN products p
             ON oi.product_id = p.product_id
-        ORDER BY oi.created_at DESC, oi.order_item_id DESC
+        ORDER BY oi.created_at DESC
         """
     )
 
@@ -665,21 +676,34 @@ def audit_logs():
 @app.route("/reports")
 def reports():
     report_rows = []
+    todays_report = None
+    previous_reports = []
     report_error = None
 
     try:
         report_rows = get_report_objects()
+        todays_report = get_todays_report(report_rows)
+
+        if todays_report:
+            previous_reports = [
+                report for report in report_rows
+                if report["key"] != todays_report["key"]
+            ]
+        else:
+            previous_reports = report_rows
+
     except Exception as exc:
         report_error = str(exc)
 
     return render_template_string(
         PAGE_HTML,
         page_title="Reports",
-        page_subtitle="Generated CSV reports stored privately in S3",
+        page_subtitle="Daily CSV reports stored privately in S3",
         active="reports",
         content=render_template_string(
             REPORTS_BODY,
-            reports=report_rows,
+            todays_report=todays_report,
+            previous_reports=previous_reports,
             report_error=report_error,
         ),
         generated_at=datetime.now().strftime("%d %b %Y, %I:%M %p"),
@@ -1235,6 +1259,41 @@ tbody tr:hover {
     display: grid;
     gap: 10px;
     padding: 15px;
+}
+
+.report-highlight {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 20px;
+    border: 1px solid #dbe5f5;
+    border-radius: 12px;
+    background: #f8fbff;
+}
+
+.report-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #eef4ff;
+    color: #2563eb;
+    font-size: 22px;
+    flex: 0 0 48px;
+}
+
+.report-highlight-info {
+    flex: 1;
+    min-width: 0;
+}
+
+@media (max-width: 760px) {
+    .report-highlight {
+        align-items: flex-start;
+        flex-direction: column;
+    }
 }
 
 .report-row {
@@ -1969,7 +2028,6 @@ ORDER_DETAIL_BODY = r"""
         <table>
             <thead>
                 <tr>
-                    <th>Item ID</th>
                     <th>Product ID</th>
                     <th>Product</th>
                     <th>Quantity</th>
@@ -1981,7 +2039,6 @@ ORDER_DETAIL_BODY = r"""
             <tbody>
             {% for item in items %}
                 <tr>
-                    <td>{{ item.order_item_id }}</td>
                     <td>{{ item.product_id }}</td>
                     <td class="product-name">{{ item.product_name }}</td>
                     <td>{{ item.quantity }}</td>
@@ -2017,7 +2074,6 @@ ORDER_ITEMS_BODY = r"""
         <table>
             <thead>
                 <tr>
-                    <th>Item ID</th>
                     <th>Order ID</th>
                     <th>Product ID</th>
                     <th>Product</th>
@@ -2031,8 +2087,6 @@ ORDER_ITEMS_BODY = r"""
             <tbody>
             {% for item in items %}
                 <tr>
-                    <td>{{ item.order_item_id }}</td>
-
                     <td>
                         <a class="product-name"
                            href="{{ url_for('order_details', order_id=item.order_id) }}">
@@ -2117,8 +2171,8 @@ AUDIT_BODY = r"""
 REPORTS_BODY = r"""
 <div class="section-title" style="margin-top:0;">
     <div>
-        <h2>Generated Reports</h2>
-        <p>Daily CSV reports generated by the Report Lambda and stored in S3</p>
+        <h2>Reports</h2>
+        <p>Daily CloudMart CSV reports generated by the Report Lambda and stored privately in S3.</p>
     </div>
 </div>
 
@@ -2131,59 +2185,101 @@ REPORTS_BODY = r"""
 <section class="panel">
     <div class="panel-head">
         <div>
-            <h3>CloudMart Reports</h3>
-            <span>Private S3 objects · download through a temporary signed URL</span>
+            <h3>Today's Daily Report</h3>
+
+            {% if todays_report %}
+                <span>
+                    {{ todays_report.key.split("/")[-1] }}
+                    · {{ todays_report.size }} bytes
+                    · {{ todays_report.last_modified }}
+                </span>
+            {% else %}
+                <span>
+                    Today's CSV has not been generated yet.
+                </span>
+            {% endif %}
         </div>
     </div>
 
-    {% if reports %}
+    {% if todays_report %}
+    <div class="report-highlight">
+        <div class="report-icon">▤</div>
+
+        <div class="report-highlight-info">
+            <div class="report-name">
+                {{ todays_report.key.split("/")[-1] }}
+            </div>
+
+            <div class="report-meta">
+                Generated daily by EventBridge → Report Lambda → S3
+            </div>
+        </div>
+
+        <div class="actions">
+            <a class="btn"
+               href="{{ url_for('view_report', key=todays_report.key) }}">
+                View Today's CSV
+            </a>
+
+            <a class="btn btn-green"
+               href="{{ url_for('download_report', key=todays_report.key) }}">
+                ↓ Download Today's CSV
+            </a>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty">
+        The daily report will appear here after the scheduled Report Lambda
+        generates today's CSV.
+    </div>
+    {% endif %}
+</section>
+
+<section class="panel" style="margin-top:24px;">
+    <div class="panel-head">
+        <div>
+            <h3>Previous Reports</h3>
+            <span>Previously generated CloudMart CSV reports</span>
+        </div>
+    </div>
+
+    {% if previous_reports %}
     <div class="report-list">
-
-        {% for report in reports %}
+        {% for report in previous_reports %}
         <div class="report-row">
-
             <div>
                 <div class="report-name">
                     {{ report.key.split("/")[-1] }}
                 </div>
 
                 <div class="report-meta">
-                    {{ report.key }}
+                    {{ report.last_modified }}
                     · {{ report.size }} bytes
-                    · {{ report.last_modified }}
                 </div>
             </div>
 
             <div class="actions">
-
                 <a class="btn"
                    href="{{ url_for('view_report', key=report.key) }}">
-                    View Report
+                    View
                 </a>
 
                 <a class="btn btn-green"
                    href="{{ url_for('download_report', key=report.key) }}">
-                    ↓ Download CSV
+                    Download
                 </a>
-
             </div>
-
         </div>
         {% endfor %}
-
     </div>
-
     {% else %}
-
     <div class="empty">
-        No CSV reports are currently available.
-        <br><br>
-        The daily EventBridge rule must trigger the Report Lambda first.
+        No previous CSV reports are currently available.
     </div>
-
     {% endif %}
 </section>
 """
+
 
 
 # ============================================================

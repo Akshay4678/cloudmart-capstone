@@ -643,12 +643,13 @@ def audit_logs():
     rows = query_db(
         """
         SELECT
-            audit_id,
-            customer_id,
-            action,
+            log_id,
             entity_type,
             entity_id,
-            details,
+            action,
+            old_value,
+            new_value,
+            performed_by,
             created_at
         FROM audit_logs
         ORDER BY created_at DESC
@@ -673,6 +674,8 @@ def audit_logs():
 # REPORTS
 # ============================================================
 
+# Direct URL: http://<EC2-public-ip>:5000/reports
+# Do not use /#reports; URL fragments are browser-only and are not sent to Flask.
 @app.route("/reports")
 def reports():
     report_rows = []
@@ -1447,7 +1450,7 @@ footer {
     <div class="env">● DEV</div>
 </header>
 
-<main class="content">
+<main class="content" id="page-content">
     {{ content | safe }}
 
     <footer>
@@ -2130,12 +2133,13 @@ AUDIT_BODY = r"""
         <table>
             <thead>
                 <tr>
-                    <th>Audit ID</th>
-                    <th>Customer ID</th>
-                    <th>Action</th>
-                    <th>Entity</th>
+                    <th>Log ID</th>
+                    <th>Entity Type</th>
                     <th>Entity ID</th>
-                    <th>Details</th>
+                    <th>Action</th>
+                    <th>Old Value</th>
+                    <th>New Value</th>
+                    <th>Performed By</th>
                     <th>Created</th>
                 </tr>
             </thead>
@@ -2143,14 +2147,15 @@ AUDIT_BODY = r"""
             <tbody>
             {% for log in logs %}
                 <tr>
-                    <td>{{ log.audit_id }}</td>
-                    <td>{{ log.customer_id or "—" }}</td>
+                    <td>{{ log.log_id }}</td>
+                    <td>{{ log.entity_type or "—" }}</td>
+                    <td>{{ log.entity_id or "—" }}</td>
                     <td>
                         <span class="badge badge-blue">{{ log.action }}</span>
                     </td>
-                    <td>{{ log.entity_type or "—" }}</td>
-                    <td>{{ log.entity_id or "—" }}</td>
-                    <td class="description">{{ log.details or "—" }}</td>
+                    <td class="description">{{ log.old_value or "—" }}</td>
+                    <td class="description">{{ log.new_value or "—" }}</td>
+                    <td>{{ log.performed_by or "—" }}</td>
                     <td>{{ log.created_at }}</td>
                 </tr>
             {% endfor %}

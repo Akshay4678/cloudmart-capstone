@@ -558,7 +558,12 @@ Resources:
   CloudMartEC2:
     Type: AWS::EC2::Instance
     DependsOn: AttachGateway
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
     Properties:
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
       ImageId: !Ref LatestAmiId
       InstanceType: t3.micro
       IamInstanceProfile: !Ref EC2InstanceProfile

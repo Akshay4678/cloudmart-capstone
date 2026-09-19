@@ -200,16 +200,20 @@ def fetch_dashboard_data():
 # ============================================================
 
 def get_report_objects():
+    """
+    List CSV reports from the private reports bucket.
+
+    The Report Lambda may store the CSV either at the bucket root
+    or under a reports/ prefix, so the dashboard intentionally does
+    not assume a particular S3 prefix.
+    """
     if not REPORTS_BUCKET:
         return []
 
     reports = []
     paginator = s3.get_paginator("list_objects_v2")
 
-    for page in paginator.paginate(
-        Bucket=REPORTS_BUCKET,
-        Prefix="reports/",
-    ):
+    for page in paginator.paginate(Bucket=REPORTS_BUCKET):
         for obj in page.get("Contents", []):
             key = obj["Key"]
 
@@ -643,7 +647,6 @@ def audit_logs():
     rows = query_db(
         """
         SELECT
-            log_id,
             entity_type,
             entity_id,
             action,
@@ -755,7 +758,7 @@ def view_report():
 def download_report():
     key = request.args.get("key", "").strip()
 
-    if not key or not key.startswith("reports/"):
+    if not key or not key.lower().endswith(".csv") or ".." in key:
         return "Invalid report", 400
 
     filename = key.rsplit("/", 1)[-1] or "cloudmart-report.csv"
@@ -1705,7 +1708,6 @@ PRODUCTS_BODY = r"""
         <table>
             <thead>
                 <tr>
-                    <th>ID</th>
                     <th>Product</th>
                     <th>Description</th>
                     <th>Price</th>
@@ -1719,8 +1721,6 @@ PRODUCTS_BODY = r"""
             <tbody>
             {% for product in products %}
                 <tr>
-                    <td>{{ product.product_id }}</td>
-
                     <td class="product-name">
                         {{ product.name }}
                     </td>
@@ -2133,7 +2133,6 @@ AUDIT_BODY = r"""
         <table>
             <thead>
                 <tr>
-                    <th>Log ID</th>
                     <th>Entity Type</th>
                     <th>Entity ID</th>
                     <th>Action</th>
@@ -2147,7 +2146,6 @@ AUDIT_BODY = r"""
             <tbody>
             {% for log in logs %}
                 <tr>
-                    <td>{{ log.log_id }}</td>
                     <td>{{ log.entity_type or "—" }}</td>
                     <td>{{ log.entity_id or "—" }}</td>
                     <td>
@@ -2234,8 +2232,16 @@ REPORTS_BODY = r"""
     </div>
     {% else %}
     <div class="empty">
-        The daily report will appear here after the scheduled Report Lambda
-        generates today's CSV.
+        <div style="margin-bottom:12px;">
+            Today's CSV has not been generated yet.
+        </div>
+        <span class="btn" style="opacity:.55;cursor:not-allowed;">
+            ↓ Download Today's CSV
+        </span>
+        <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+            The download button becomes active automatically when today's CSV
+            is available in the reports S3 bucket.
+        </div>
     </div>
     {% endif %}
 </section>

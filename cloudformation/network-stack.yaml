@@ -581,7 +581,7 @@ Resources:
           echo "Starting CloudMart dashboard bootstrap..."
 
           dnf update -y
-          dnf install -y mariadb python3 python3-pip unzip awscli-2
+          dnf install -y mariadb105 python3 python3-pip unzip awscli-2
 
           # Amazon Linux 2023 does not guarantee that the AWS CLI is
           # preinstalled. Install it explicitly before any S3 operations.

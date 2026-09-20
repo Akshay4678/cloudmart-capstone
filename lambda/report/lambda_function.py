@@ -1,13 +1,10 @@
-import base64
-import json
+import csv
+import io
 import os
-import uuid
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import boto3
-
-ssm = boto3.client("ssm")
 import pymysql
 
 
@@ -15,57 +12,57 @@ import pymysql
 # AWS CLIENTS
 # ================================================================
 
-sqs = boto3.client("sqs")
-cloudwatch = boto3.client("cloudwatch")
+AWS_REGION = os.environ.get("AWS_REGION", "ap-south-1")
+
+s3 = boto3.client("s3", region_name=AWS_REGION)
+ssm = boto3.client("ssm", region_name=AWS_REGION)
+cloudwatch = boto3.client("cloudwatch", region_name=AWS_REGION)
 
 
 # ================================================================
 # ENVIRONMENT VARIABLES
 # ================================================================
 
-QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+
+REPORTS_BUCKET = os.environ["REPORTS_BUCKET"]
 
 DB_HOST = os.environ["DB_HOST"]
-DB_NAME = os.environ["DB_NAME"]
-DB_USER = os.environ["DB_USER"]
+DB_NAME = os.environ.get("DB_NAME", "cloudmart")
+DB_USER = os.environ.get("DB_USER", "cloudmartadmin")
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
-
-ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 
 DB_PASSWORD_PARAMETER = os.environ.get(
     "DB_PASSWORD_PARAMETER",
-    f"/cloudmart/{ENVIRONMENT}/database/password"
+    f"/cloudmart/{ENVIRONMENT}/database/password",
 )
 
-
-# ================================================================
-# FILE PATHS
-# ================================================================
-
-SCHEMA_FILE = os.path.join(
-    os.path.dirname(__file__),
-    "schema.sql",
-)
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 # ================================================================
-# DATABASE CONNECTION
+# SSM PASSWORD
 # ================================================================
 
 _db_password = None
+
 
 def get_db_password():
     global _db_password
 
     if _db_password is None:
-        parameter = ssm.get_parameter(
+        response = ssm.get_parameter(
             Name=DB_PASSWORD_PARAMETER,
-            WithDecryption=True
+            WithDecryption=True,
         )
-        _db_password = parameter["Parameter"]["Value"]
+        _db_password = response["Parameter"]["Value"]
 
     return _db_password
 
+
+# ================================================================
+# DATABASE CONNECTION
+# ================================================================
 
 def get_connection():
     return pymysql.connect(
@@ -75,15 +72,15 @@ def get_connection():
         database=DB_NAME,
         port=DB_PORT,
         connect_timeout=5,
-        read_timeout=10,
-        write_timeout=10,
+        read_timeout=20,
+        write_timeout=20,
         cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False,
+        autocommit=True,
     )
 
 
 # ================================================================
-# METRICS
+# CLOUDWATCH
 # ================================================================
 
 def put_metric(metric_name, value=1):
@@ -102,2200 +99,444 @@ def put_metric(metric_name, value=1):
                         },
                         {
                             "Name": "Service",
-                            "Value": "Order",
+                            "Value": "Report",
                         },
                     ],
                 }
             ],
         )
     except Exception as exc:
-        print(f"Metric error: {exc}")
+        print(f"CloudWatch metric error: {exc}")
 
 
 # ================================================================
-# JSON SERIALIZATION
+# CSV
 # ================================================================
 
-def json_default(value):
-    """
-    Convert MySQL/Python values into JSON-safe values.
-    """
+def csv_value(value):
+    if value is None:
+        return ""
 
-    if isinstance(value, Decimal):
-        return str(value)
-
-    if isinstance(value, (datetime,)):
-        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        return value.isoformat(sep=" ")
 
     return str(value)
 
 
-# ================================================================
-# HTTP RESPONSE
-# ================================================================
-
-def response(status_code, body):
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-        },
-        "body": json.dumps(
-            body,
-            default=json_default,
-        ),
-    }
-
-
-# ================================================================
-# ACTOR / PERFORMED BY
-# ================================================================
-
-def get_performed_by(event=None, body=None):
-    """
-    Determine who performed the operation.
-
-    Priority:
-
-    1. Cognito/JWT subject
-    2. Legacy API Gateway authorizer subject
-    3. performed_by supplied in request body
-    4. customer_id from request body
-    5. fallback service identity
-    """
-
-    event = event or {}
-    body = body or {}
-
-    # ------------------------------------------------------------
-    # HTTP API JWT AUTHORIZE
-    # ------------------------------------------------------------
-
-    request_context = (
-        event.get("requestContext")
-        or {}
-    )
-
-    authorizer = (
-        request_context.get("authorizer")
-        or {}
-    )
-
-    jwt = (
-        authorizer.get("jwt")
-        or {}
-    )
-
-    claims = (
-        jwt.get("claims")
-        or {}
-    )
-
-    if claims.get("sub"):
-        return str(claims["sub"])
-
-    # ------------------------------------------------------------
-    # REST API / LEGACY COGNITO AUTHORIZE
-    # ------------------------------------------------------------
-
-    legacy_claims = (
-        authorizer.get("claims")
-        or {}
-    )
-
-    if legacy_claims.get("sub"):
-        return str(legacy_claims["sub"])
-
-    # ------------------------------------------------------------
-    # OPTIONAL REQUEST ACTOR
-    # ------------------------------------------------------------
-
-    if body.get("performed_by"):
-        return str(
-            body["performed_by"]
-        ).strip()
-
-    # ------------------------------------------------------------
-    # CUSTOMER FALLBACK
-    # ------------------------------------------------------------
-
-    if body.get("customer_id"):
-        return str(
-            body["customer_id"]
-        ).strip()
-
-    # ------------------------------------------------------------
-    # SERVICE FALLBACK
-    # ------------------------------------------------------------
-
-    return "order-api"
-
-
-# ================================================================
-# AUDIT LOG
-# ================================================================
-
-def write_audit_log(
-    connection,
-    entity_type,
-    entity_id,
-    action,
-    old_value=None,
-    new_value=None,
-    performed_by=None,
-):
-    """
-    Write an audit/history record.
-
-    This function intentionally does NOT commit.
-    The caller controls the transaction so that
-    the business operation and audit entry commit
-    together.
-    """
-
-    old_json = (
-        json.dumps(
-            old_value,
-            default=json_default,
-        )
-        if old_value is not None
-        else None
-    )
-
-    new_json = (
-        json.dumps(
-            new_value,
-            default=json_default,
-        )
-        if new_value is not None
-        else None
-    )
-
-    with connection.cursor() as cursor:
-
-        cursor.execute(
-            """
-            INSERT INTO audit_logs
-            (
-                entity_type,
-                entity_id,
-                action,
-                old_value,
-                new_value,
-                performed_by,
-                created_at
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                %s
-            )
-            """,
-            (
-                entity_type,
-                str(entity_id),
-                action,
-                old_json,
-                new_json,
-                performed_by,
-                datetime.now(timezone.utc)
-                .replace(tzinfo=None),
-            ),
-        )
-
-    print(
-        "Audit log written: "
-        f"{entity_type} "
-        f"{entity_id} "
-        f"{action} "
-        f"by {performed_by}"
-    )
-
-
-# ================================================================
-# REQUEST BODY
-# ================================================================
-
-def parse_request_body(event):
-    body = event.get("body")
-
-    if body is None:
-        return {}
-
-    if isinstance(body, dict):
-        return body
-
-    if not isinstance(body, str):
-        raise ValueError(
-            "Request body must be JSON"
-        )
-
-    if event.get("isBase64Encoded"):
-        try:
-            body = base64.b64decode(
-                body
-            ).decode("utf-8")
-        except Exception as exc:
-            raise ValueError(
-                "Invalid base64 request body"
-            ) from exc
-
-    try:
-        return json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise ValueError(
-            "Invalid JSON body"
-        ) from exc
-
-
-# ================================================================
-# SQL STATEMENT SPLITTER
-# ================================================================
-
-def split_sql_statements(sql):
-    """
-    Split schema.sql into SQL statements.
-
-    This handles semicolons inside quoted strings and ignores
-    SQL comments beginning with --.
-    """
-
-    statements = []
-    current = []
-
-    in_single_quote = False
-    in_double_quote = False
-    in_backtick = False
-    escape_next = False
-
-    lines = sql.splitlines()
-
-    for line in lines:
-
-        stripped = line.strip()
-
-        # --------------------------------------------------------
-        # SKIP FULL-LINE COMMENTS
-        # --------------------------------------------------------
-
-        if stripped.startswith("--"):
-            continue
-
-        i = 0
-
-        while i < len(line):
-
-            char = line[i]
-
-            if escape_next:
-                current.append(char)
-                escape_next = False
-                i += 1
-                continue
-
-            if char == "\\":
-                current.append(char)
-                escape_next = True
-                i += 1
-                continue
-
-            if (
-                char == "'"
-                and not in_double_quote
-                and not in_backtick
-            ):
-                in_single_quote = (
-                    not in_single_quote
-                )
-                current.append(char)
-                i += 1
-                continue
-
-            if (
-                char == '"'
-                and not in_single_quote
-                and not in_backtick
-            ):
-                in_double_quote = (
-                    not in_double_quote
-                )
-                current.append(char)
-                i += 1
-                continue
-
-            if (
-                char == "`"
-                and not in_single_quote
-                and not in_double_quote
-            ):
-                in_backtick = (
-                    not in_backtick
-                )
-                current.append(char)
-                i += 1
-                continue
-
-            if (
-                char == ";"
-                and not in_single_quote
-                and not in_double_quote
-                and not in_backtick
-            ):
-                statement = (
-                    "".join(current)
-                    .strip()
-                )
-
-                if statement:
-                    statements.append(
-                        statement
-                    )
-
-                current = []
-                i += 1
-                continue
-
-            current.append(char)
-            i += 1
-
-        current.append("\n")
-
-    final_statement = (
-        "".join(current)
-        .strip()
-    )
-
-    if final_statement:
-        statements.append(
-            final_statement
-        )
-
-    return statements
-
-
-# ================================================================
-# PRODUCTS STATUS MIGRATION
-# ================================================================
-
-def migrate_products_status(connection):
-    """
-    Safely migrate an existing products table to support
-    the new soft-delete/status requirement.
-
-    Existing databases may already have the products table
-    without a status column.
-
-    This function:
-
-    1. Checks whether products.status exists.
-    2. Adds it when missing.
-    3. Sets existing products to ACTIVE when stock > 0.
-    4. Sets existing products to INACTIVE when stock = 0.
-
-    This operation is safe to run multiple times.
-    """
-
-    print(
-        "Checking products.status migration..."
-    )
-
-    with connection.cursor() as cursor:
-
-        # --------------------------------------------------------
-        # CHECK WHETHER status COLUMN EXISTS
-        # --------------------------------------------------------
-
-        cursor.execute(
-            """
-            SELECT COUNT(*) AS column_count
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = %s
-              AND TABLE_NAME = 'products'
-              AND COLUMN_NAME = 'status'
-            """,
-            (DB_NAME,),
-        )
-
-        result = cursor.fetchone()
-
-        column_exists = (
-            result
-            and int(
-                result["column_count"]
-            ) > 0
-        )
-
-        # --------------------------------------------------------
-        # ADD status COLUMN IF REQUIRED
-        # --------------------------------------------------------
-
-        if not column_exists:
-
-            print(
-                "products.status does not exist. "
-                "Adding status column..."
-            )
-
-            cursor.execute(
-                """
-                ALTER TABLE products
-                ADD COLUMN status VARCHAR(20)
-                NOT NULL DEFAULT 'ACTIVE'
-                AFTER stock_count
-                """
-            )
-
-            print(
-                "products.status column added successfully."
-            )
-
-        else:
-
-            print(
-                "products.status already exists. "
-                "No column migration required."
-            )
-
-        # --------------------------------------------------------
-        # SYNCHRONIZE STATUS WITH EXISTING STOCK
-        # --------------------------------------------------------
-
-        cursor.execute(
-            """
-            UPDATE products
-            SET status =
-                CASE
-                    WHEN stock_count > 0
-                        THEN 'ACTIVE'
-                    ELSE 'INACTIVE'
-                END
-            WHERE status IS NULL
-               OR status NOT IN (
-                    'ACTIVE',
-                    'INACTIVE'
-               )
-               OR (
-                    stock_count = 0
-                    AND status <> 'INACTIVE'
-               )
-               OR (
-                    stock_count > 0
-                    AND status <> 'ACTIVE'
-               )
-            """
-        )
-
-        updated_rows = cursor.rowcount
-
-        print(
-            "Product status synchronization completed. "
-            f"Rows updated: {updated_rows}"
-        )
-
-    connection.commit()
-
-    print(
-        "Products status migration completed successfully."
-    )
-
-
-# ================================================================
-# SCHEMA INITIALIZATION
-# ================================================================
-
-def initialize_schema():
-    """
-    Initialize the CloudMart MySQL schema using schema.sql
-    packaged inside the Order Lambda deployment ZIP.
-
-    Also performs safe migration of the existing products table
-    so the new status column can be introduced without requiring
-    manual database changes.
-    """
-
-    connection = None
-
-    try:
-
-        # --------------------------------------------------------
-        # VERIFY schema.sql EXISTS
-        # --------------------------------------------------------
-
-        if not os.path.exists(
-            SCHEMA_FILE
-        ):
-
-            print(
-                f"Schema file not found: "
-                f"{SCHEMA_FILE}"
-            )
-
-            return response(
-                500,
-                {
-                    "message": (
-                        "schema.sql not found "
-                        "in Lambda package"
-                    ),
-                },
-            )
-
-        print(
-            f"Reading schema file: "
-            f"{SCHEMA_FILE}"
-        )
-
-        with open(
-            SCHEMA_FILE,
-            "r",
-            encoding="utf-8",
-        ) as schema_file:
-
-            sql = schema_file.read()
-
-        statements = (
-            split_sql_statements(sql)
-        )
-
-        print(
-            f"Found {len(statements)} SQL statements "
-            f"in schema.sql"
-        )
-
-        # --------------------------------------------------------
-        # CONNECT TO RDS
-        # --------------------------------------------------------
-
-        connection = get_connection()
-
-        # --------------------------------------------------------
-        # PERFORM PRODUCTS STATUS MIGRATION
-        # --------------------------------------------------------
-
-        migrate_products_status(
-            connection
-        )
-
-        # --------------------------------------------------------
-        # EXECUTE schema.sql
-        # --------------------------------------------------------
-
-        executed = 0
-        skipped = 0
-
-        with connection.cursor() as cursor:
-
-            for index, statement in enumerate(
-                statements,
-                start=1,
-            ):
-
-                try:
-
-                    print(
-                        f"Executing SQL statement "
-                        f"{index}/{len(statements)}"
-                    )
-
-                    cursor.execute(
-                        statement
-                    )
-
-                    executed += 1
-
-                except pymysql.MySQLError as exc:
-
-                    error_code = (
-                        exc.args[0]
-                        if exc.args
-                        else None
-                    )
-
-                    error_message = str(
-                        exc
-                    )
-
-                    # ------------------------------------------------
-                    # EXISTING TABLE / INDEX
-                    # ------------------------------------------------
-
-                    if error_code in (
-                        1050,
-                        1061,
-                    ):
-
-                        print(
-                            "Skipping existing "
-                            "database object "
-                            f"for statement {index}: "
-                            f"{error_message}"
-                        )
-
-                        skipped += 1
-                        continue
-
-                    # ------------------------------------------------
-                    # DUPLICATE DATA
-                    # ------------------------------------------------
-
-                    if error_code == 1062:
-
-                        print(
-                            "Skipping duplicate data "
-                            f"for statement {index}: "
-                            f"{error_message}"
-                        )
-
-                        skipped += 1
-                        continue
-
-                    # ------------------------------------------------
-                    # REAL SQL FAILURE
-                    # ------------------------------------------------
-
-                    print(
-                        f"Schema statement "
-                        f"{index} failed."
-                    )
-
-                    print(
-                        f"MySQL error: "
-                        f"{error_message}"
-                    )
-
-                    raise
-
-        # --------------------------------------------------------
-        # COMMIT
-        # --------------------------------------------------------
-
-        connection.commit()
-
-        print(
-            "Database schema initialization "
-            "completed successfully."
-        )
-
-        put_metric(
-            "SchemaInitializationSuccess"
-        )
-
-        return response(
-            200,
-            {
-                "message": (
-                    "Database schema initialized "
-                    "successfully"
-                ),
-                "statements_found": len(
-                    statements
-                ),
-                "statements_executed": executed,
-                "statements_skipped": skipped,
-            },
-        )
-
-    except Exception as exc:
-
-        if connection:
-            connection.rollback()
-
-        print(
-            "Schema initialization error: "
-            f"{type(exc).__name__}: {exc}"
-        )
-
-        put_metric(
-            "SchemaInitializationFailures"
-        )
-
-        return response(
-            500,
-            {
-                "message": (
-                    "Database schema initialization failed"
-                ),
-                "error": str(exc),
-            },
-        )
-
-    finally:
-
-        if connection:
-            connection.close()
-
-
-# ================================================================
-# CREATE ORDER
-# ================================================================
-
-def create_order(body, performed_by=None):
-
-    if not isinstance(body, dict):
-        raise ValueError(
-            "Request body must be a JSON object"
-        )
-
-    customer_id = body.get(
-        "customer_id"
-    )
-
-    items = body.get("items")
-
-    # ------------------------------------------------------------
-    # CUSTOMER VALIDATION
-    # ------------------------------------------------------------
-
-    if not customer_id:
-        raise ValueError(
-            "customer_id is required"
-        )
-
-    customer_id = str(
-        customer_id
-    ).strip()
-
-    if not customer_id:
-        raise ValueError(
-            "customer_id cannot be empty"
-        )
-
-    # ------------------------------------------------------------
-    # ITEM VALIDATION
-    # ------------------------------------------------------------
-
-    if not isinstance(items, list):
-        raise ValueError(
-            "items must be an array"
-        )
-
-    if len(items) == 0:
-        raise ValueError(
-            "items must contain at least one item"
-        )
-
-    if len(items) > 100:
-        raise ValueError(
-            "Too many order items"
-        )
-
-    # ------------------------------------------------------------
-    # NORMALIZE ITEMS
-    # ------------------------------------------------------------
-
-    item_map = {}
-
-    for item in items:
-
-        if not isinstance(item, dict):
-            raise ValueError(
-                "Each item must be an object"
-            )
-
-        if "product_id" not in item:
-            raise ValueError(
-                "product_id is required"
-            )
-
-        if "quantity" not in item:
-            raise ValueError(
-                "quantity is required"
-            )
-
-        try:
-
-            product_id = int(
-                item["product_id"]
-            )
-
-            quantity = int(
-                item["quantity"]
-            )
-
-        except (TypeError, ValueError):
-
-            raise ValueError(
-                "product_id and quantity "
-                "must be numbers"
-            )
-
-        if product_id <= 0:
-            raise ValueError(
-                "product_id must be greater than zero"
-            )
-
-        if quantity <= 0:
-            raise ValueError(
-                "quantity must be greater than zero"
-            )
-
-        item_map[product_id] = (
-            item_map.get(
-                product_id,
-                0,
-            )
-            + quantity
-        )
-
-    normalized_items = [
-        {
-            "product_id": product_id,
-            "quantity": quantity,
-        }
-        for product_id, quantity
-        in sorted(
-            item_map.items()
-        )
+def make_csv(row):
+    fieldnames = [
+        "report_date",
+        "orders_total",
+        "orders_confirmed",
+        "orders_processing",
+        "orders_failed",
+        "orders_cancelled",
+        "total_revenue",
+        "items_sold",
+        "active_products",
+        "low_stock_products",
+        "audit_events",
+        "generated_at",
     ]
 
-    order_id = (
-        "ORD-"
-        + uuid.uuid4().hex[:12].upper()
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        output,
+        fieldnames=fieldnames,
     )
 
-    now = (
-        datetime.now(timezone.utc)
-        .replace(tzinfo=None)
+    writer.writeheader()
+    writer.writerow(
+        {
+            field: csv_value(row.get(field))
+            for field in fieldnames
+        }
+    )
+
+    return output.getvalue().encode("utf-8")
+
+
+# ================================================================
+# GENERATE DAILY REPORT
+# ================================================================
+
+def generate_daily_report(report_date):
+
+    start_local = datetime(
+        report_date.year,
+        report_date.month,
+        report_date.day,
+        0,
+        0,
+        0,
+        tzinfo=BUSINESS_TIMEZONE,
+    )
+
+    end_local = start_local + timedelta(days=1)
+
+    # CloudMart DATETIME values are stored without timezone.
+    # Convert IST boundaries to UTC before querying MySQL.
+    start_utc = start_local.astimezone(
+        ZoneInfo("UTC")
+    ).replace(tzinfo=None)
+
+    end_utc = end_local.astimezone(
+        ZoneInfo("UTC")
+    ).replace(tzinfo=None)
+
+    print(
+        f"Report date: {report_date.isoformat()}"
+    )
+    print(
+        f"Database window: {start_utc} -> {end_utc}"
     )
 
     connection = None
 
     try:
-
-        connection = get_connection()
-
-        # --------------------------------------------------------
-        # VERIFY CUSTOMER
-        # --------------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT
-                    customer_id
-                FROM customers
-                WHERE customer_id = %s
-                """,
-                (customer_id,),
-            )
-
-            customer = cursor.fetchone()
-
-        if not customer:
-
-            connection.rollback()
-
-            return response(
-                400,
-                {
-                    "message": (
-                        "Customer does not exist"
-                    ),
-                    "customer_id": customer_id,
-                },
-            )
-
-        # --------------------------------------------------------
-        # READ PRODUCTS AND CHECK STOCK
-        # --------------------------------------------------------
-
-        total_amount = Decimal(
-            "0.00"
-        )
-
-        priced_items = []
-
-        with connection.cursor() as cursor:
-
-            for item in normalized_items:
-
-                product_id = item[
-                    "product_id"
-                ]
-
-                quantity = item[
-                    "quantity"
-                ]
-
-                cursor.execute(
-                    """
-                    SELECT
-                        product_id,
-                        name,
-                        description,
-                        price,
-                        stock_count,
-                        status
-                    FROM products
-                    WHERE product_id = %s
-                    FOR UPDATE
-                    """,
-                    (product_id,),
-                )
-
-                product = cursor.fetchone()
-
-                if not product:
-
-                    raise ValueError(
-                        f"Product {product_id} "
-                        f"does not exist"
-                    )
-
-                price = Decimal(
-                    str(
-                        product["price"]
-                    )
-                )
-
-                stock_count = int(
-                    product[
-                        "stock_count"
-                    ]
-                )
-
-                product_status = (
-                    product["status"]
-                )
-
-                # ------------------------------------------------
-                # INACTIVE PRODUCT
-                # ------------------------------------------------
-
-                if product_status != "ACTIVE":
-
-                    connection.rollback()
-
-                    return response(
-                        409,
-                        {
-                            "message": (
-                                "Product is inactive"
-                            ),
-                            "product_id": product_id,
-                            "product_name": product[
-                                "name"
-                            ],
-                            "status": product_status,
-                        },
-                    )
-
-                # ------------------------------------------------
-                # OUT OF STOCK
-                # ------------------------------------------------
-
-                if stock_count <= 0:
-
-                    connection.rollback()
-
-                    return response(
-                        409,
-                        {
-                            "message": (
-                                "Product is out of stock"
-                            ),
-                            "product_id": product_id,
-                            "product_name": product[
-                                "name"
-                            ],
-                            "available_stock": 0,
-                        },
-                    )
-
-                # ------------------------------------------------
-                # INSUFFICIENT STOCK
-                # ------------------------------------------------
-
-                if quantity > stock_count:
-
-                    connection.rollback()
-
-                    return response(
-                        409,
-                        {
-                            "message": (
-                                "Insufficient stock"
-                            ),
-                            "product_id": product_id,
-                            "product_name": product[
-                                "name"
-                            ],
-                            "requested_quantity": quantity,
-                            "available_stock": stock_count,
-                        },
-                    )
-
-                priced_items.append(
-                    {
-                        "product_id": product_id,
-                        "quantity": quantity,
-                        "price": price,
-                    }
-                )
-
-                total_amount += (
-                    price * quantity
-                )
-
-        # --------------------------------------------------------
-        # INSERT ORDER
-        # --------------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                INSERT INTO orders
-                (
-                    order_id,
-                    customer_id,
-                    status,
-                    total_amount,
-                    created_at,
-                    updated_at
-                )
-                VALUES
-                (
-                    %s,
-                    %s,
-                    %s,
-                    %s,
-                    %s,
-                    %s
-                )
-                """,
-                (
-                    order_id,
-                    customer_id,
-                    "PROCESSING",
-                    total_amount,
-                    now,
-                    now,
-                ),
-            )
-
-        # --------------------------------------------------------
-        # INSERT ORDER ITEMS
-        # --------------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            for item in priced_items:
-
-                cursor.execute(
-                    """
-                    INSERT INTO order_items
-                    (
-                        order_id,
-                        product_id,
-                        quantity,
-                        price,
-                        created_at
-                    )
-                    VALUES
-                    (
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s
-                    )
-                    """,
-                    (
-                        order_id,
-                        item[
-                            "product_id"
-                        ],
-                        item[
-                            "quantity"
-                        ],
-                        item["price"],
-                        now,
-                    ),
-                )
-
-        # --------------------------------------------------------
-        # AUDIT: ORDER CREATED
-        # --------------------------------------------------------
-
-        new_order_snapshot = {
-            "order_id": order_id,
-            "customer_id": customer_id,
-            "status": "PROCESSING",
-            "total_amount": total_amount,
-            "items": [
-                {
-                    "product_id": item[
-                        "product_id"
-                    ],
-                    "quantity": item[
-                        "quantity"
-                    ],
-                    "price": item[
-                        "price"
-                    ],
-                }
-                for item in priced_items
-            ],
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        write_audit_log(
-            connection=connection,
-            entity_type="ORDER",
-            entity_id=order_id,
-            action="ORDER_CREATED",
-            old_value=None,
-            new_value=new_order_snapshot,
-            performed_by=performed_by,
-        )
-
-        # --------------------------------------------------------
-        # COMMIT ORDER + AUDIT TOGETHER
-        # --------------------------------------------------------
-
-        connection.commit()
-
-        print(
-            f"Order {order_id} created successfully "
-            f"with PROCESSING status"
-        )
-
-        # --------------------------------------------------------
-        # SEND ORDER TO SQS
-        # --------------------------------------------------------
-
-        message = {
-            "order_id": order_id,
-            "customer_id": customer_id,
-            "items": [
-                {
-                    "product_id": item[
-                        "product_id"
-                    ],
-                    "quantity": item[
-                        "quantity"
-                    ],
-                    "price": str(
-                        item["price"]
-                    ),
-                }
-                for item in priced_items
-            ],
-            "total_amount": str(
-                total_amount
-            ),
-        }
-
-        sqs.send_message(
-            QueueUrl=QUEUE_URL,
-            MessageBody=json.dumps(
-                message
-            ),
-        )
-
-        print(
-            f"Order {order_id} sent to SQS successfully"
-        )
-
-        put_metric(
-            "OrdersCreated"
-        )
-
-        put_metric(
-            "OrderRequests"
-        )
-
-        return response(
-            202,
-            {
-                "message": (
-                    "Order accepted for processing"
-                ),
-                "order_id": order_id,
-                "customer_id": customer_id,
-                "status": "PROCESSING",
-                "total_amount": str(
-                    total_amount
-                ),
-            },
-        )
-
-    except ValueError as exc:
-
-        if connection:
-            connection.rollback()
-
-        print(
-            f"Order validation error: {exc}"
-        )
-
-        put_metric(
-            "OrderRequests"
-        )
-
-        return response(
-            400,
-            {
-                "message": str(exc),
-            },
-        )
-
-    except Exception as exc:
-
-        if connection:
-            connection.rollback()
-
-        print(
-            "Order creation error: "
-            f"{type(exc).__name__}: {exc}"
-        )
-
-        put_metric(
-            "OrdersFailed"
-        )
-
-        put_metric(
-            "OrderRequests"
-        )
-
-        return response(
-            500,
-            {
-                "message": (
-                    "Internal server error"
-                ),
-            },
-        )
-
-    finally:
-
-        if connection:
-            connection.close()
-
-
-# ================================================================
-# GET SINGLE ORDER
-# ================================================================
-
-def get_order(order_id):
-
-    connection = None
-
-    try:
-
         connection = get_connection()
 
         with connection.cursor() as cursor:
 
-            cursor.execute(
-                """
-                SELECT
-                    o.order_id,
-                    o.customer_id,
-                    c.name AS customer_name,
-                    c.email AS customer_email,
-                    o.status,
-                    o.total_amount,
-                    o.created_at,
-                    o.updated_at
-                FROM orders o
-                INNER JOIN customers c
-                    ON o.customer_id = c.customer_id
-                WHERE o.order_id = %s
-                """,
-                (order_id,),
-            )
-
-            order = cursor.fetchone()
-
-        if not order:
-
-            return response(
-                404,
-                {
-                    "message": "Order not found",
-                },
-            )
-
-        with connection.cursor() as cursor:
+            # --------------------------------------------------------
+            # ORDERS
+            # --------------------------------------------------------
 
             cursor.execute(
                 """
                 SELECT
-                    oi.product_id,
-                    p.name AS product_name,
-                    p.description AS product_description,
-                    oi.quantity,
-                    oi.price,
-                    oi.created_at
-                FROM order_items oi
-                INNER JOIN products p
-                    ON oi.product_id = p.product_id
-                WHERE oi.order_id = %s
-                ORDER BY oi.product_id
+                    COUNT(*) AS orders_total,
+
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'CONFIRMED'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS orders_confirmed,
+
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'PROCESSING'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS orders_processing,
+
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'FAILED'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS orders_failed,
+
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'CANCELLED'
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS orders_cancelled,
+
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN status = 'CONFIRMED'
+                                THEN total_amount
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS total_revenue
+
+                FROM orders
+
+                WHERE created_at >= %s
+                  AND created_at < %s
                 """,
-                (order_id,),
-            )
-
-            order["items"] = (
-                cursor.fetchall()
-            )
-
-        return response(
-            200,
-            order,
-        )
-
-    except Exception as exc:
-
-        print(
-            f"Get order error: {exc}"
-        )
-
-        return response(
-            500,
-            {
-                "message": (
-                    "Internal server error"
+                (
+                    start_utc,
+                    end_utc,
                 ),
-            },
-        )
+            )
 
-    finally:
+            order_summary = cursor.fetchone() or {}
 
-        if connection:
-            connection.close()
-
-
-# ================================================================
-# GET CUSTOMER ORDERS
-# ================================================================
-
-def get_customer_orders(customer_id):
-
-    connection = None
-
-    try:
-
-        connection = get_connection()
-
-        # --------------------------------------------------------
-        # GET CUSTOMER
-        # --------------------------------------------------------
-
-        with connection.cursor() as cursor:
+            # --------------------------------------------------------
+            # ORDER ITEMS
+            # --------------------------------------------------------
 
             cursor.execute(
                 """
                 SELECT
-                    customer_id,
-                    name,
-                    email,
-                    phone
-                FROM customers
-                WHERE customer_id = %s
-                """,
-                (customer_id,),
-            )
-
-            customer = cursor.fetchone()
-
-        if not customer:
-
-            return response(
-                404,
-                {
-                    "message": (
-                        "Customer not found"
-                    ),
-                    "customer_id": customer_id,
-                },
-            )
-
-        # --------------------------------------------------------
-        # GET ORDERS + PRODUCTS
-        # --------------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT
-                    o.order_id,
-                    o.customer_id,
-                    o.status,
-                    o.total_amount,
-                    o.created_at,
-                    o.updated_at,
-
-                    oi.product_id,
-                    p.name AS product_name,
-                    p.description AS product_description,
-                    oi.quantity,
-                    oi.price AS item_price
+                    COALESCE(
+                        SUM(oi.quantity),
+                        0
+                    ) AS items_sold
 
                 FROM orders o
 
                 INNER JOIN order_items oi
                     ON o.order_id = oi.order_id
 
-                INNER JOIN products p
-                    ON oi.product_id = p.product_id
-
-                WHERE o.customer_id = %s
-
-                ORDER BY
-                    o.created_at DESC,
-                    oi.product_id
+                WHERE o.created_at >= %s
+                  AND o.created_at < %s
+                  AND o.status = 'CONFIRMED'
                 """,
-                (customer_id,),
-            )
-
-            rows = cursor.fetchall()
-
-        # --------------------------------------------------------
-        # GROUP ITEMS BY ORDER
-        # --------------------------------------------------------
-
-        orders = {}
-
-        for row in rows:
-
-            order_id = row[
-                "order_id"
-            ]
-
-            if order_id not in orders:
-
-                orders[order_id] = {
-                    "order_id": order_id,
-                    "customer_id": row[
-                        "customer_id"
-                    ],
-                    "status": row[
-                        "status"
-                    ],
-                    "total_amount": row[
-                        "total_amount"
-                    ],
-                    "created_at": row[
-                        "created_at"
-                    ],
-                    "updated_at": row[
-                        "updated_at"
-                    ],
-                    "items": [],
-                }
-
-            orders[order_id][
-                "items"
-            ].append(
-                {
-                    "product_id": row[
-                        "product_id"
-                    ],
-                    "product_name": row[
-                        "product_name"
-                    ],
-                    "product_description": row[
-                        "product_description"
-                    ],
-                    "quantity": row[
-                        "quantity"
-                    ],
-                    "price": row[
-                        "item_price"
-                    ],
-                }
-            )
-
-        return response(
-            200,
-            {
-                "customer": customer,
-                "count": len(orders),
-                "orders": list(
-                    orders.values()
+                (
+                    start_utc,
+                    end_utc,
                 ),
-            },
-        )
+            )
 
-    except Exception as exc:
+            item_summary = cursor.fetchone() or {}
+
+            # --------------------------------------------------------
+            # PRODUCTS
+            # --------------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS active_products,
+
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN stock_count <= 5
+                                THEN 1
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS low_stock_products
+
+                FROM products
+
+                WHERE status = 'ACTIVE'
+                """
+            )
+
+            product_summary = cursor.fetchone() or {}
+
+            # --------------------------------------------------------
+            # AUDIT LOGS
+            # --------------------------------------------------------
+
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS audit_events
+
+                FROM audit_logs
+
+                WHERE created_at >= %s
+                  AND created_at < %s
+                """,
+                (
+                    start_utc,
+                    end_utc,
+                ),
+            )
+
+            audit_summary = cursor.fetchone() or {}
+
+        row = {
+            "report_date": report_date.isoformat(),
+
+            "orders_total": int(
+                order_summary.get("orders_total") or 0
+            ),
+
+            "orders_confirmed": int(
+                order_summary.get("orders_confirmed") or 0
+            ),
+
+            "orders_processing": int(
+                order_summary.get("orders_processing") or 0
+            ),
+
+            "orders_failed": int(
+                order_summary.get("orders_failed") or 0
+            ),
+
+            "orders_cancelled": int(
+                order_summary.get("orders_cancelled") or 0
+            ),
+
+            "total_revenue": (
+                order_summary.get("total_revenue") or 0
+            ),
+
+            "items_sold": int(
+                item_summary.get("items_sold") or 0
+            ),
+
+            "active_products": int(
+                product_summary.get("active_products") or 0
+            ),
+
+            "low_stock_products": int(
+                product_summary.get("low_stock_products") or 0
+            ),
+
+            "audit_events": int(
+                audit_summary.get("audit_events") or 0
+            ),
+
+            "generated_at": datetime.now(
+                BUSINESS_TIMEZONE
+            ).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        }
 
         print(
-            "Get customer orders error: "
-            f"{exc}"
+            "Report values: "
+            f"orders={row['orders_total']}, "
+            f"confirmed={row['orders_confirmed']}, "
+            f"revenue={row['total_revenue']}, "
+            f"items={row['items_sold']}"
         )
 
-        return response(
-            500,
-            {
-                "message": (
-                    "Internal server error"
-                ),
-            },
-        )
+        return row
 
     finally:
-
         if connection:
             connection.close()
 
 
 # ================================================================
-# UPDATE ORDER
+# S3 UPLOAD
 # ================================================================
 
-def update_order(
-    order_id,
-    body,
-    performed_by=None,
-):
+def upload_report(report_date, csv_bytes):
 
-    if not isinstance(body, dict):
-
-        return response(
-            400,
-            {
-                "message": (
-                    "Request body must be "
-                    "a JSON object"
-                ),
-            },
-        )
-
-    status = body.get(
-        "status"
+    key = (
+        f"reports/"
+        f"daily_report_{report_date.isoformat()}.csv"
     )
 
-    allowed_statuses = [
-        "PROCESSING",
-        "CONFIRMED",
-        "FAILED",
-        "CANCELLED",
-    ]
-
-    if status not in allowed_statuses:
-
-        return response(
-            400,
-            {
-                "message": (
-                    "Invalid order status"
-                ),
-                "allowed_statuses": (
-                    allowed_statuses
-                ),
-            },
-        )
-
-    connection = None
-
-    try:
-
-        connection = get_connection()
-
-        now = (
-            datetime.now(timezone.utc)
-            .replace(tzinfo=None)
-        )
-
-        # --------------------------------------------------------
-        # GET OLD ORDER
-        # --------------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                SELECT
-                    order_id,
-                    customer_id,
-                    status,
-                    total_amount,
-                    created_at,
-                    updated_at
-                FROM orders
-                WHERE order_id = %s
-                FOR UPDATE
-                """,
-                (order_id,),
-            )
-
-            old_order = (
-                cursor.fetchone()
-            )
-
-            if not old_order:
-
-                connection.rollback()
-
-                return response(
-                    404,
-                    {
-                        "message": (
-                            "Order not found"
-                        ),
-                    },
-                )
-
-        # --------------------------------------------------------
-        # UPDATE ORDER
-        # --------------------------------------------------------
-
-        with connection.cursor() as cursor:
-
-            cursor.execute(
-                """
-                UPDATE orders
-                SET
-                    status = %s,
-                    updated_at = %s
-                WHERE order_id = %s
-                """,
-                (
-                    status,
-                    now,
-                    order_id,
-                ),
-            )
-
-        # --------------------------------------------------------
-        # AUDIT: ORDER UPDATED
-        # --------------------------------------------------------
-
-        old_order_snapshot = {
-            "order_id": old_order[
-                "order_id"
-            ],
-            "customer_id": old_order[
-                "customer_id"
-            ],
-            "status": old_order[
-                "status"
-            ],
-            "total_amount": old_order[
-                "total_amount"
-            ],
-            "created_at": old_order[
-                "created_at"
-            ],
-            "updated_at": old_order[
-                "updated_at"
-            ],
-        }
-
-        new_order_snapshot = {
-            "order_id": old_order[
-                "order_id"
-            ],
-            "customer_id": old_order[
-                "customer_id"
-            ],
-            "status": status,
-            "total_amount": old_order[
-                "total_amount"
-            ],
-            "created_at": old_order[
-                "created_at"
-            ],
-            "updated_at": now,
-        }
-
-        write_audit_log(
-            connection=connection,
-            entity_type="ORDER",
-            entity_id=order_id,
-            action="ORDER_UPDATED",
-            old_value=old_order_snapshot,
-            new_value=new_order_snapshot,
-            performed_by=performed_by,
-        )
-
-        # --------------------------------------------------------
-        # COMMIT
-        # --------------------------------------------------------
-
-        connection.commit()
-
-        print(
-            f"Order {order_id} updated: "
-            f"{old_order['status']} -> {status}"
-        )
-
-        return response(
-            200,
-            {
-                "message": "Order updated",
-                "order_id": order_id,
-                "old_status": old_order[
-                    "status"
-                ],
-                "status": status,
-            },
-        )
-
-    except Exception as exc:
-
-        if connection:
-            connection.rollback()
-
-        print(
-            f"Update order error: {exc}"
-        )
-
-        return response(
-            500,
-            {
-                "message": (
-                    "Internal server error"
-                ),
-            },
-        )
-
-    finally:
-
-        if connection:
-            connection.close()
-
-
-# ================================================================
-# CANCEL ORDER
-# ================================================================
-
-def cancel_order(
-    order_id,
-    performed_by=None,
-):
-
-    connection = None
-
-    try:
-
-        connection = get_connection()
-
-        with connection.cursor() as cursor:
-
-            # ----------------------------------------------------
-            # LOCK ORDER
-            # ----------------------------------------------------
-
-            cursor.execute(
-                """
-                SELECT
-                    order_id,
-                    customer_id,
-                    status,
-                    total_amount,
-                    created_at,
-                    updated_at
-                FROM orders
-                WHERE order_id = %s
-                FOR UPDATE
-                """,
-                (order_id,),
-            )
-
-            order = cursor.fetchone()
-
-            if not order:
-
-                connection.rollback()
-
-                return response(
-                    404,
-                    {
-                        "message": (
-                            "Order not found"
-                        ),
-                    },
-                )
-
-            # ----------------------------------------------------
-            # ONLY PROCESSING ORDERS CAN BE CANCELLED
-            # ----------------------------------------------------
-
-            if (
-                order["status"]
-                != "PROCESSING"
-            ):
-
-                connection.rollback()
-
-                return response(
-                    400,
-                    {
-                        "message": (
-                            "Order cannot be "
-                            "cancelled because "
-                            "it is no longer "
-                            "processing"
-                        ),
-                        "current_status": (
-                            order["status"]
-                        ),
-                    },
-                )
-
-            now = (
-                datetime.now(
-                    timezone.utc
-                )
-                .replace(tzinfo=None)
-            )
-
-            # ----------------------------------------------------
-            # UPDATE ORDER
-            # ----------------------------------------------------
-
-            cursor.execute(
-                """
-                UPDATE orders
-                SET
-                    status = 'CANCELLED',
-                    updated_at = %s
-                WHERE order_id = %s
-                """,
-                (
-                    now,
-                    order_id,
-                ),
-            )
-
-        # --------------------------------------------------------
-        # AUDIT: ORDER CANCELLED
-        # --------------------------------------------------------
-
-        old_order_snapshot = {
-            "order_id": order[
-                "order_id"
-            ],
-            "customer_id": order[
-                "customer_id"
-            ],
-            "status": order[
-                "status"
-            ],
-            "total_amount": order[
-                "total_amount"
-            ],
-            "created_at": order[
-                "created_at"
-            ],
-            "updated_at": order[
-                "updated_at"
-            ],
-        }
-
-        new_order_snapshot = {
-            "order_id": order[
-                "order_id"
-            ],
-            "customer_id": order[
-                "customer_id"
-            ],
-            "status": "CANCELLED",
-            "total_amount": order[
-                "total_amount"
-            ],
-            "created_at": order[
-                "created_at"
-            ],
-            "updated_at": now,
-        }
-
-        write_audit_log(
-            connection=connection,
-            entity_type="ORDER",
-            entity_id=order_id,
-            action="ORDER_CANCELLED",
-            old_value=old_order_snapshot,
-            new_value=new_order_snapshot,
-            performed_by=performed_by,
-        )
-
-        # --------------------------------------------------------
-        # COMMIT
-        # --------------------------------------------------------
-
-        connection.commit()
-
-        print(
-            f"Order {order_id} cancelled successfully"
-        )
-
-        put_metric(
-            "OrdersCancelled"
-        )
-
-        return response(
-            200,
-            {
-                "message": "Order cancelled",
-                "order_id": order_id,
-                "status": "CANCELLED",
-            },
-        )
-
-    except Exception as exc:
-
-        if connection:
-            connection.rollback()
-
-        print(
-            f"Cancel order error: {exc}"
-        )
-
-        return response(
-            500,
-            {
-                "message": (
-                    "Internal server error"
-                ),
-            },
-        )
-
-    finally:
-
-        if connection:
-            connection.close()
+    print(
+        f"Uploading: s3://{REPORTS_BUCKET}/{key}"
+    )
+
+    s3.put_object(
+        Bucket=REPORTS_BUCKET,
+        Key=key,
+        Body=csv_bytes,
+        ContentType="text/csv",
+        ServerSideEncryption="AES256",
+    )
+
+    print(
+        f"Upload successful: s3://{REPORTS_BUCKET}/{key}"
+    )
+
+    return key
 
 
 # ================================================================
 # LAMBDA HANDLER
 # ================================================================
 
-def lambda_handler(
-    event,
-    context,
-):
+def lambda_handler(event, context):
 
-    if not isinstance(event, dict):
-        event = {}
+    print("CloudMart Report Lambda started")
+    print(f"Event: {event}")
+    print(f"Environment: {ENVIRONMENT}")
+    print(f"Reports bucket: {REPORTS_BUCKET}")
 
-    print(
-        "Order Lambda request: "
-        f"{event.get('httpMethod', '')} "
-        f"{event.get('path', '')}"
-    )
+    try:
 
-    # ============================================================
-    # INTERNAL SCHEMA INITIALIZATION
-    # ============================================================
+        # IMPORTANT:
+        # Use India business date, not UTC date.
+        #
+        # Your EventBridge rule runs at 18:00 UTC,
+        # which is 23:30 IST.
+        #
+        # Therefore the report must be named using the
+        # Asia/Kolkata date so the dashboard can find it.
 
-    if (
-        event.get("action")
-        == "initialize_schema"
-    ):
+        now_local = datetime.now(
+            BUSINESS_TIMEZONE
+        )
+
+        report_date = now_local.date()
 
         print(
-            "Received initialize_schema action"
+            f"Business time: {now_local.isoformat()}"
+        )
+        print(
+            f"Generating report for: "
+            f"{report_date.isoformat()}"
         )
 
-        return initialize_schema()
-
-    # ============================================================
-    # API GATEWAY INFORMATION
-    # ============================================================
-
-    method = (
-        event.get(
-            "httpMethod",
-            "",
-        )
-        .upper()
-    )
-
-    path = event.get(
-        "path",
-        "",
-    )
-
-    path_parameters = (
-        event.get("pathParameters")
-        or {}
-    )
-
-    query_parameters = (
-        event.get(
-            "queryStringParameters"
-        )
-        or {}
-    )
-
-    order_id = path_parameters.get(
-        "orderId"
-    )
-
-    # ============================================================
-    # POST /orders
-    # ============================================================
-
-    if (
-        method == "POST"
-        and not order_id
-    ):
-
-        try:
-
-            body = parse_request_body(
-                event
-            )
-
-            performed_by = (
-                get_performed_by(
-                    event,
-                    body,
-                )
-            )
-
-            return create_order(
-                body,
-                performed_by,
-            )
-
-        except ValueError as exc:
-
-            return response(
-                400,
-                {
-                    "message": str(exc),
-                },
-            )
-
-    # ============================================================
-    # POST /orders/{orderId}/cancel
-    # ============================================================
-
-    if (
-        method == "POST"
-        and order_id
-        and path.endswith(
-            "/cancel"
-        )
-    ):
-
-        performed_by = (
-            get_performed_by(
-                event,
-                {},
-            )
+        row = generate_daily_report(
+            report_date
         )
 
-        return cancel_order(
-            order_id,
-            performed_by,
+        csv_bytes = make_csv(row)
+
+        key = upload_report(
+            report_date,
+            csv_bytes
         )
 
-    # ============================================================
-    # GET /orders/{orderId}
-    # ============================================================
-
-    if (
-        method == "GET"
-        and order_id
-    ):
-
-        return get_order(
-            order_id
+        put_metric(
+            "ReportsGenerated"
         )
 
-    # ============================================================
-    # GET /orders?customer_id=CUST101
-    # ============================================================
-
-    if method == "GET":
-
-        customer_id = (
-            query_parameters.get(
-                "customer_id"
-            )
+        print(
+            "CloudMart Report Lambda completed successfully."
         )
 
-        if not customer_id:
+        return {
+            "statusCode": 200,
+            "message": (
+                "Daily report generated successfully"
+            ),
+            "report_date": (
+                report_date.isoformat()
+            ),
+            "bucket": REPORTS_BUCKET,
+            "key": key,
+            "orders_total": row[
+                "orders_total"
+            ],
+            "orders_confirmed": row[
+                "orders_confirmed"
+            ],
+            "total_revenue": csv_value(
+                row["total_revenue"]
+            ),
+        }
 
-            return response(
-                400,
-                {
-                    "message": (
-                        "customer_id query "
-                        "parameter is required"
-                    ),
-                },
-            )
+    except Exception as exc:
 
-        customer_id = str(
-            customer_id
-        ).strip()
-
-        if not customer_id:
-
-            return response(
-                400,
-                {
-                    "message": (
-                        "customer_id cannot "
-                        "be empty"
-                    ),
-                },
-            )
-
-        return get_customer_orders(
-            customer_id
+        print(
+            "CloudMart Report Lambda FAILED"
         )
 
-    # ============================================================
-    # PUT /orders/{orderId}
-    # ============================================================
+        print(
+            f"{type(exc).__name__}: {exc}"
+        )
 
-    if (
-        method == "PUT"
-        and order_id
-    ):
+        put_metric(
+            "ReportsGenerationFailures"
+        )
 
-        try:
-
-            body = parse_request_body(
-                event
-            )
-
-            performed_by = (
-                get_performed_by(
-                    event,
-                    body,
-                )
-            )
-
-            return update_order(
-                order_id,
-                body,
-                performed_by,
-            )
-
-        except ValueError as exc:
-
-            return response(
-                400,
-                {
-                    "message": str(exc),
-                },
-            )
-
-    # ============================================================
-    # UNKNOWN ROUTE
-    # ============================================================
-
-    return response(
-        404,
-        {
-            "message": "Route not found",
-        },
-    )
+        # Re-raise so Lambda is marked FAILED
+        # and CloudWatch shows the real error.
+        raise

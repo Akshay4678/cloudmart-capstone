@@ -342,6 +342,25 @@ Resources:
 
 
   # ================================================================
+  # LAMBDA -> S3 GATEWAY ENDPOINT
+  # HTTPS 443
+  # Required because the Lambda security group has no default outbound rules.
+  # S3 Gateway Endpoint traffic uses the S3 managed prefix list, not the
+  # interface-endpoint security group.
+  # ================================================================
+
+  LambdaToS3Egress:
+    Type: AWS::EC2::SecurityGroupEgress
+
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: !GetAtt S3VPCEndpoint.PrefixListId
+
+
+  # ================================================================
   # RDS <- LAMBDA
   # TCP 3306
   # ================================================================

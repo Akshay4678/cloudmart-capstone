@@ -592,7 +592,7 @@ Resources:
       Roles:
         - !Ref EC2InstanceRole
 
-  CloudMartEC2:
+  CloudMartEC2V2:
     Type: AWS::EC2::Instance
     DependsOn: AttachGateway
     UpdateReplacePolicy: Delete
@@ -1248,18 +1248,18 @@ Outputs:
 
   EC2InstanceId:
     Description: CloudMart EC2 instance ID
-    Value: !Ref CloudMartEC2
+    Value: !Ref CloudMartEC2V2
     Export:
       Name: cloudmart-ec2-instance-id
 
   EC2PublicIP:
     Description: CloudMart EC2 public IP address
-    Value: !GetAtt CloudMartEC2.PublicIp
+    Value: !GetAtt CloudMartEC2V2.PublicIp
     Export:
       Name: cloudmart-ec2-public-ip
 
   EC2PrivateIP:
     Description: CloudMart EC2 private IP address
-    Value: !GetAtt CloudMartEC2.PrivateIp
+    Value: !GetAtt CloudMartEC2V2.PrivateIp
     Export:
       Name: cloudmart-ec2-private-ip

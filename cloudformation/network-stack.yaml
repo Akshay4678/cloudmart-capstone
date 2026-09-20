@@ -342,14 +342,15 @@ Resources:
 
 
   # ================================================================
-  # LAMBDA -> S3 GATEWAY ENDPOINT
-  # HTTPS 443
-  # Required because the Lambda security group has no default outbound rules.
-  # S3 Gateway Endpoint traffic uses the S3 managed prefix list, not the
-  # interface-endpoint security group.
+  # LAMBDA -> HTTPS
+  # TCP 443
+  # Required for AWS service access including S3.
+  #
+  # S3 is configured as a Gateway Endpoint below. The route table
+  # determines that S3 traffic uses the Gateway Endpoint.
   # ================================================================
 
-  LambdaToS3Egress:
+  LambdaToHTTPS:
     Type: AWS::EC2::SecurityGroupEgress
 
     Properties:
@@ -357,7 +358,7 @@ Resources:
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
-      DestinationPrefixListId: !GetAtt S3VPCEndpoint.PrefixListId
+      CidrIp: 0.0.0.0/0
 
 
   # ================================================================

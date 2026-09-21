@@ -1,15 +1,33 @@
 import csv
 import io
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+import secrets
 from zoneinfo import ZoneInfo
 
 import boto3
 import pymysql
 from botocore.exceptions import BotoCoreError, ClientError
-from flask import Flask, Response, jsonify, redirect, render_template_string, request, url_for
+from flask import Flask, Response, jsonify, redirect, render_template_string, request, session, url_for
 
 app = Flask(__name__)
+
+# ============================================================
+# ADMIN AUTHENTICATION
+# ============================================================
+
+# Flask uses this key to sign the admin session cookie.
+# A persistent FLASK_SECRET_KEY should be supplied by the EC2
+# environment later through CloudFormation/IaC.
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=24)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = False
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# The current dashboard is served over HTTP. Set this to True
+# when the dashboard is moved to HTTPS.
+app.config["SESSION_COOKIE_SECURE"] = False
 
 # ============================================================
 # CONFIGURATION
@@ -73,6 +91,221 @@ def query_db(sql, params=None):
     finally:
         if connection:
             connection.close()
+
+
+# ============================================================
+# ADMIN AUTHENTICATION
+# Uses the existing customers table in RDS.
+# No new database table is required.
+# ============================================================
+
+def hash_admin_token(token):
+    """Create the same SHA-256 hash used by CloudMart auth."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def verify_admin_credentials(admin_id, admin_token):
+    """
+    Verify an admin ID and token against the existing customers table.
+
+    The dashboard only accepts a customer whose role is ADMIN.
+    The database stores auth_token_hash, never the plain token.
+    """
+    admin_id = (admin_id or "").strip()
+    admin_token = (admin_token or "").strip()
+
+    if not admin_id or not admin_token:
+        return None
+
+    rows = query_db(
+        """
+        SELECT customer_id, name, role, auth_token_hash
+        FROM customers
+        WHERE customer_id = %s
+          AND role = 'ADMIN'
+        LIMIT 1
+        """,
+        (admin_id,),
+    )
+
+    if not rows:
+        return None
+
+    admin = rows[0]
+    supplied_hash = hash_admin_token(admin_token)
+    stored_hash = str(admin.get("auth_token_hash") or "")
+
+    # compare_digest avoids a simple string comparison for the secret hash.
+    if not secrets.compare_digest(supplied_hash, stored_hash):
+        return None
+
+    return admin
+
+
+@app.before_request
+def require_admin_login():
+    """Protect every dashboard route except login/logout/health."""
+    public_endpoints = {"login", "health", "static"}
+
+    if request.endpoint in public_endpoints:
+        return None
+
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("login"))
+
+    # The session is permanent and has a fixed 24-hour lifetime.
+    # SESSION_REFRESH_EACH_REQUEST=False prevents activity from extending it.
+    return None
+
+
+# ============================================================
+# ADMIN LOGIN
+# ============================================================
+
+LOGIN_BODY = r"""
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CloudMart · Admin Login</title>
+<style>
+:root {
+    --bg: #f5f7fb;
+    --surface: #ffffff;
+    --text: #101828;
+    --muted: #667085;
+    --line: #d0d5dd;
+    --blue: #2563eb;
+    --red: #d92d20;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: var(--bg);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+                 BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--text);
+}
+.login-card {
+    width: min(420px, 100%);
+    background: var(--surface);
+    border: 1px solid #e4e7ec;
+    border-radius: 16px;
+    padding: 32px;
+    box-shadow: 0 12px 40px rgba(16,24,40,.08);
+}
+.logo {
+    width: 48px; height: 48px; border-radius: 12px;
+    display: grid; place-items: center;
+    background: #101828; color: #fff;
+    font-weight: 900; font-size: 22px;
+    margin-bottom: 18px;
+}
+h1 { margin: 0; font-size: 25px; }
+p { color: var(--muted); font-size: 13px; margin: 7px 0 25px; }
+label { display: block; margin: 15px 0 7px; font-size: 12px; font-weight: 750; }
+input {
+    width: 100%; padding: 11px 12px;
+    border: 1px solid var(--line); border-radius: 9px;
+    font: inherit; outline: none;
+}
+input:focus { border-color: var(--blue); }
+button {
+    width: 100%; margin-top: 22px; padding: 11px;
+    border: 0; border-radius: 9px;
+    background: var(--blue); color: #fff;
+    font: inherit; font-weight: 750; cursor: pointer;
+}
+button:hover { background: #1d4ed8; }
+.error {
+    margin-bottom: 16px; padding: 11px 13px;
+    border-radius: 9px; background: #fef3f2;
+    border: 1px solid #fecdca; color: var(--red);
+    font-size: 12px;
+}
+.note { margin-top: 18px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="login-card">
+    <div class="logo">C</div>
+    <h1>CloudMart Admin</h1>
+    <p>Sign in to access the CloudMart Operations Console.</p>
+
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('login') }}">
+        <label for="admin_id">Admin ID</label>
+        <input id="admin_id" name="admin_id" type="text"
+               autocomplete="username" required autofocus
+               value="{{ admin_id }}">
+
+        <label for="admin_token">Admin Token</label>
+        <input id="admin_token" name="admin_token" type="password"
+               autocomplete="current-password" required>
+
+        <button type="submit">Login</button>
+    </form>
+
+    <div class="note">
+        Only accounts with the <strong>ADMIN</strong> role can access this dashboard.
+        Your session expires automatically after 24 hours.
+    </div>
+</div>
+</body>
+</html>
+"""
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("admin_authenticated"):
+        return redirect(url_for("dashboard"))
+
+    error = None
+    admin_id = ""
+
+    if request.method == "POST":
+        admin_id = request.form.get("admin_id", "").strip()
+        admin_token = request.form.get("admin_token", "")
+
+        try:
+            admin = verify_admin_credentials(admin_id, admin_token)
+        except Exception:
+            # Do not expose database/SSM errors to the login page.
+            admin = None
+            error = "Unable to verify credentials. Please try again."
+
+        if admin:
+            session.clear()
+            session.permanent = True
+            session["admin_authenticated"] = True
+            session["admin_id"] = admin["customer_id"]
+            session["admin_role"] = str(admin["role"]).upper()
+            session["admin_name"] = admin.get("name") or admin["customer_id"]
+            return redirect(url_for("dashboard"))
+
+        if error is None:
+            error = "Invalid Admin ID or Admin Token."
+
+    return render_template_string(
+        LOGIN_BODY,
+        error=error,
+        admin_id=admin_id,
+    )
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 # ============================================================
@@ -1696,7 +1929,13 @@ footer {
         <h1>CloudMart · {{ page_title }}</h1>
         <p>{{ page_subtitle }}</p>
     </div>
-    <div class="env">● DEV</div>
+    <div style="display:flex;align-items:center;gap:10px;">
+        <div class="env">● DEV</div>
+        {% if session.get("admin_authenticated") %}
+            <span style="font-size:12px;color:#667085;">{{ session.get("admin_id") }}</span>
+            <a class="btn" href="{{ url_for('logout') }}">Logout</a>
+        {% endif %}
+    </div>
 </header>
 
 <main class="content" id="page-content">

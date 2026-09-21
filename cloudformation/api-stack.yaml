@@ -337,7 +337,8 @@ Resources:
 
       Protocol: email
 
-      Endpoint: uppu4678@gmail.com
+      Endpoint:
+        !Sub '{{resolve:ssm:/cloudmart/${EnvironmentName}/notification-email}}'
 
 
   # ==============================================================
@@ -454,7 +455,8 @@ Resources:
 
       Protocol: email
 
-      Endpoint: uppu4678@gmail.com
+      Endpoint:
+        !Sub '{{resolve:ssm:/cloudmart/${EnvironmentName}/notification-email}}'
 
 
   # ==============================================================
@@ -565,7 +567,8 @@ Resources:
 
       Protocol: email
 
-      Endpoint: uppu4678@gmail.com
+      Endpoint:
+        !Sub '{{resolve:ssm:/cloudmart/${EnvironmentName}/notification-email}}'
 
 
   # ==============================================================

@@ -96,6 +96,8 @@ jobs:
 
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
+          EMAIL_NOTIFICATION: ${{ secrets.EMAIL_NOTIFICATION }}
+
 
         run: |
 
@@ -123,12 +125,50 @@ jobs:
 
 
 
+          if [ -z "$EMAIL_NOTIFICATION" ]; then
+
+            echo "ERROR: EMAIL_NOTIFICATION secret is missing."
+
+            exit 1
+
+          fi
+
+
+
 
           echo "Required secrets are configured."
 
 
       # ==========================================================
-      # 5. INSTALL CFN-LINT
+      # 5. STORE NOTIFICATION EMAIL IN SSM
+      # ==========================================================
+
+      - name: Store Notification Email in SSM
+
+        env:
+
+          EMAIL_NOTIFICATION: ${{ secrets.EMAIL_NOTIFICATION }}
+
+        run: |
+
+          echo "=================================================="
+          echo "STORING NOTIFICATION EMAIL IN SSM"
+          echo "=================================================="
+
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/notification-email" \
+            --type "String" \
+            --value "$EMAIL_NOTIFICATION" \
+            --overwrite
+
+
+          echo "Notification email stored in SSM."
+
+
+      # ==========================================================
+      # 6. INSTALL CFN-LINT
       # ==========================================================
 
       - name: Install cfn-lint

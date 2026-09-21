@@ -586,13 +586,27 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::cloudmart-lambda-${AWS::AccountId}-${AWS::Region}/*
 
+              - Sid: ReadCloudWatchMetrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                Resource: "*"
+
+              - Sid: DescribeRDSInstances
+                Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                Resource: "*"
+
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
         - !Ref EC2InstanceRole
 
-  CloudMartEC2V2:
+  CloudMartEC2:
     Type: AWS::EC2::Instance
     DependsOn: AttachGateway
     UpdateReplacePolicy: Delete
@@ -792,6 +806,9 @@ Resources:
 
           cat > /etc/cloudmart-dashboard.env <<ENVEOF
           AWS_REGION=$AWS_REGION_VALUE
+          ENVIRONMENT=dev
+          API_NAME=cloudmart-api-dev
+          API_STAGE=dev
           REPORTS_BUCKET=cloudmart-reports-${AWS::AccountId}-${AWS::Region}
           DB_HOST=$DB_HOST_VALUE
           DB_NAME=cloudmart
@@ -1248,18 +1265,18 @@ Outputs:
 
   EC2InstanceId:
     Description: CloudMart EC2 instance ID
-    Value: !Ref CloudMartEC2V2
+    Value: !Ref CloudMartEC2
     Export:
       Name: cloudmart-ec2-instance-id
 
   EC2PublicIP:
     Description: CloudMart EC2 public IP address
-    Value: !GetAtt CloudMartEC2V2.PublicIp
+    Value: !GetAtt CloudMartEC2.PublicIp
     Export:
       Name: cloudmart-ec2-public-ip
 
   EC2PrivateIP:
     Description: CloudMart EC2 private IP address
-    Value: !GetAtt CloudMartEC2V2.PrivateIp
+    Value: !GetAtt CloudMartEC2.PrivateIp
     Export:
       Name: cloudmart-ec2-private-ip

@@ -16,6 +16,7 @@ app = Flask(__name__)
 # ============================================================
 
 AWS_REGION = os.environ.get("AWS_REGION", "ap-south-1")
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
 REPORTS_BUCKET = os.environ.get("REPORTS_BUCKET", "")
 DB_HOST = os.environ.get("DB_HOST", "")
 DB_NAME = os.environ.get("DB_NAME", "cloudmart")
@@ -28,6 +29,8 @@ DB_PASSWORD_PARAMETER = os.environ.get(
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 ssm = boto3.client("ssm", region_name=AWS_REGION)
+cloudwatch = boto3.client("cloudwatch", region_name=AWS_REGION)
+rds = boto3.client("rds", region_name=AWS_REGION)
 
 
 # ============================================================
@@ -200,20 +203,16 @@ def fetch_dashboard_data():
 # ============================================================
 
 def get_report_objects():
-    """
-    List CSV reports from the private reports bucket.
-
-    The Report Lambda may store the CSV either at the bucket root
-    or under a reports/ prefix, so the dashboard intentionally does
-    not assume a particular S3 prefix.
-    """
     if not REPORTS_BUCKET:
         return []
 
     reports = []
     paginator = s3.get_paginator("list_objects_v2")
 
-    for page in paginator.paginate(Bucket=REPORTS_BUCKET):
+    for page in paginator.paginate(
+        Bucket=REPORTS_BUCKET,
+        Prefix="reports/",
+    ):
         for obj in page.get("Contents", []):
             key = obj["Key"]
 
@@ -261,6 +260,167 @@ def read_report_csv(key):
 
 
 # ============================================================
+# AWS MONITORING
+# ============================================================
+
+LAMBDA_FUNCTIONS = [
+    f"cloudmart-product-{ENVIRONMENT}",
+    f"cloudmart-order-{ENVIRONMENT}",
+    f"cloudmart-order-processor-{ENVIRONMENT}",
+    f"cloudmart-report-{ENVIRONMENT}",
+]
+
+API_NAME = os.environ.get("API_NAME", f"cloudmart-api-{ENVIRONMENT}")
+API_STAGE = os.environ.get("API_STAGE", ENVIRONMENT)
+
+
+def get_metric_statistics(
+    namespace,
+    metric_name,
+    dimensions,
+    statistic,
+    period=300,
+    hours=1,
+):
+    end_time = datetime.now().astimezone()
+    start_time = end_time.timestamp() - (hours * 3600)
+
+    response = cloudwatch.get_metric_statistics(
+        Namespace=namespace,
+        MetricName=metric_name,
+        Dimensions=dimensions,
+        StartTime=datetime.fromtimestamp(start_time, tz=end_time.tzinfo),
+        EndTime=end_time,
+        Period=period,
+        Statistics=[statistic],
+    )
+
+    datapoints = response.get("Datapoints", [])
+    if not datapoints:
+        return None
+
+    datapoints.sort(key=lambda item: item["Timestamp"], reverse=True)
+    return datapoints[0].get(statistic)
+
+
+def sum_metric_over_hour(namespace, metric_name, dimensions):
+    end_time = datetime.now().astimezone()
+    start_time = end_time.timestamp() - 3600
+
+    response = cloudwatch.get_metric_statistics(
+        Namespace=namespace,
+        MetricName=metric_name,
+        Dimensions=dimensions,
+        StartTime=datetime.fromtimestamp(start_time, tz=end_time.tzinfo),
+        EndTime=end_time,
+        Period=300,
+        Statistics=["Sum"],
+    )
+
+    return sum(point.get("Sum", 0) for point in response.get("Datapoints", []))
+
+
+def get_rds_identifier():
+    if not DB_HOST:
+        raise RuntimeError("DB_HOST is not configured")
+
+    response = rds.describe_db_instances()
+
+    for instance in response.get("DBInstances", []):
+        endpoint = (instance.get("Endpoint") or {}).get("Address")
+        if endpoint == DB_HOST:
+            return instance["DBInstanceIdentifier"]
+
+    raise RuntimeError("Could not find RDS instance for configured DB_HOST")
+
+
+def fetch_monitoring_data():
+    lambda_rows = []
+
+    for function_name in LAMBDA_FUNCTIONS:
+        dimensions = [
+            {"Name": "FunctionName", "Value": function_name}
+        ]
+
+        errors = sum_metric_over_hour(
+            "AWS/Lambda", "Errors", dimensions
+        )
+        invocations = sum_metric_over_hour(
+            "AWS/Lambda", "Invocations", dimensions
+        )
+        duration = get_metric_statistics(
+            "AWS/Lambda",
+            "Duration",
+            dimensions,
+            "Average",
+            period=300,
+            hours=1,
+        )
+
+        lambda_rows.append(
+            {
+                "name": function_name,
+                "errors": int(errors),
+                "invocations": int(invocations),
+                "duration": round(duration, 2) if duration is not None else 0,
+            }
+        )
+
+    db_identifier = get_rds_identifier()
+    rds_dimensions = [
+        {"Name": "DBInstanceIdentifier", "Value": db_identifier}
+    ]
+
+    rds_cpu = get_metric_statistics(
+        "AWS/RDS", "CPUUtilization", rds_dimensions, "Average"
+    )
+    rds_connections = get_metric_statistics(
+        "AWS/RDS", "DatabaseConnections", rds_dimensions, "Average"
+    )
+    rds_free_storage = get_metric_statistics(
+        "AWS/RDS", "FreeStorageSpace", rds_dimensions, "Average"
+    )
+
+    api_dimensions = [
+        {"Name": "ApiName", "Value": API_NAME},
+        {"Name": "Stage", "Value": API_STAGE},
+    ]
+
+    api_requests = sum_metric_over_hour(
+        "AWS/ApiGateway", "Count", api_dimensions
+    )
+    api_4xx = sum_metric_over_hour(
+        "AWS/ApiGateway", "4XXError", api_dimensions
+    )
+    api_5xx = sum_metric_over_hour(
+        "AWS/ApiGateway", "5XXError", api_dimensions
+    )
+    api_latency = get_metric_statistics(
+        "AWS/ApiGateway", "Latency", api_dimensions, "Average"
+    )
+
+    return {
+        "lambda_rows": lambda_rows,
+        "lambda_errors": sum(row["errors"] for row in lambda_rows),
+        "lambda_invocations": sum(row["invocations"] for row in lambda_rows),
+        "lambda_duration": round(
+            sum(row["duration"] for row in lambda_rows) / len(lambda_rows),
+            2,
+        ) if lambda_rows else 0,
+        "rds_identifier": db_identifier,
+        "rds_cpu": round(rds_cpu, 2) if rds_cpu is not None else 0,
+        "rds_connections": round(rds_connections, 2) if rds_connections is not None else 0,
+        "rds_free_storage_gb": round((rds_free_storage or 0) / (1024 ** 3), 2),
+        "api_name": API_NAME,
+        "api_stage": API_STAGE,
+        "api_requests": int(api_requests),
+        "api_4xx": int(api_4xx),
+        "api_5xx": int(api_5xx),
+        "api_latency": round(api_latency, 2) if api_latency is not None else 0,
+    }
+
+
+# ============================================================
 # HEALTH
 # ============================================================
 
@@ -282,6 +442,8 @@ def health():
 def dashboard():
     data = None
     db_error = None
+    monitoring_data = None
+    monitoring_error = None
 
     try:
         data = fetch_dashboard_data()
@@ -305,6 +467,27 @@ def dashboard():
             "recent_orders": [],
         }
 
+    try:
+        monitoring_data = fetch_monitoring_data()
+    except Exception as exc:
+        monitoring_error = str(exc)
+        monitoring_data = {
+            "lambda_rows": [],
+            "lambda_errors": "—",
+            "lambda_invocations": "—",
+            "lambda_duration": "—",
+            "rds_identifier": "—",
+            "rds_cpu": "—",
+            "rds_connections": "—",
+            "rds_free_storage_gb": "—",
+            "api_name": API_NAME,
+            "api_stage": API_STAGE,
+            "api_requests": "—",
+            "api_4xx": "—",
+            "api_5xx": "—",
+            "api_latency": "—",
+        }
+
     return render_template_string(
         PAGE_HTML,
         page_title="Dashboard",
@@ -314,10 +497,68 @@ def dashboard():
             DASHBOARD_BODY,
             db=data,
             db_error=db_error,
+            monitoring=monitoring_data,
+            monitoring_error=monitoring_error,
         ),
         generated_at=datetime.now().strftime(
             "%d %b %Y, %I:%M %p"
         ),
+    )
+
+
+# ============================================================
+# MONITORING
+# ============================================================
+
+@app.route("/monitoring")
+def monitoring():
+    monitoring_data = None
+    monitoring_error = None
+
+    try:
+        monitoring_data = fetch_monitoring_data()
+    except Exception as exc:
+        monitoring_error = str(exc)
+        monitoring_data = {
+            "lambda_rows": [],
+            "lambda_errors": "—",
+            "lambda_invocations": "—",
+            "lambda_duration": "—",
+            "rds_identifier": "—",
+            "rds_cpu": "—",
+            "rds_connections": "—",
+            "rds_free_storage_gb": "—",
+            "api_name": API_NAME,
+            "api_stage": API_STAGE,
+            "api_requests": "—",
+            "api_4xx": "—",
+            "api_5xx": "—",
+            "api_latency": "—",
+        }
+
+    try:
+        db_data = fetch_dashboard_data()
+        orders_count = db_data["summary"]["total_orders"]
+        inventory_count = db_data["summary"]["total_stock"]
+    except Exception:
+        orders_count = "—"
+        inventory_count = "—"
+
+    body = render_template_string(
+        MONITORING_BODY,
+        monitoring=monitoring_data,
+        monitoring_error=monitoring_error,
+        orders_count=orders_count,
+        inventory_count=inventory_count,
+    )
+
+    return render_template_string(
+        PAGE_HTML,
+        page_title="Monitoring",
+        page_subtitle="CloudMart AWS and application health metrics",
+        active="monitoring",
+        content=body,
+        generated_at=datetime.now().strftime("%d %b %Y, %I:%M %p"),
     )
 
 
@@ -647,6 +888,7 @@ def audit_logs():
     rows = query_db(
         """
         SELECT
+            log_id,
             entity_type,
             entity_id,
             action,
@@ -758,7 +1000,7 @@ def view_report():
 def download_report():
     key = request.args.get("key", "").strip()
 
-    if not key or not key.lower().endswith(".csv") or ".." in key:
+    if not key or not key.startswith("reports/"):
         return "Invalid report", 400
 
     filename = key.rsplit("/", 1)[-1] or "cloudmart-report.csv"
@@ -1437,6 +1679,10 @@ footer {
             <span class="icon">◷</span> Audit Logs
         </a>
 
+        <a class="{% if active == 'monitoring' %}active{% endif %}" href="{{ url_for('monitoring') }}">
+            <span class="icon">◉</span> Monitoring
+        </a>
+
         <a class="{% if active == 'reports' %}active{% endif %}" href="{{ url_for('reports') }}">
             <span class="icon">▤</span> Reports
         </a>
@@ -1667,6 +1913,70 @@ DASHBOARD_BODY = r"""
         <div class="card-sub">audit_logs rows</div>
     </div>
 </div>
+
+<div class="section-title">
+    <div>
+        <h2>AWS Monitoring</h2>
+        <p>CloudWatch health metrics for Lambda, RDS and API Gateway</p>
+    </div>
+    <a class="btn" href="{{ url_for('monitoring') }}">Detailed Monitoring</a>
+</div>
+
+{% if monitoring_error %}
+<div class="error">
+    CloudWatch monitoring unavailable: {{ monitoring_error }}
+</div>
+{% endif %}
+
+<div class="cards">
+    <div class="card">
+        <div class="card-label">Lambda Errors</div>
+        <div class="card-value">{{ monitoring.lambda_errors }}</div>
+        <div class="card-sub">Last 1 hour · all CloudMart Lambdas</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">Lambda Duration</div>
+        <div class="card-value">{{ monitoring.lambda_duration }} ms</div>
+        <div class="card-sub">Latest average across functions</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">Lambda Invocations</div>
+        <div class="card-value">{{ monitoring.lambda_invocations }}</div>
+        <div class="card-sub">Last 1 hour</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">RDS CPU</div>
+        <div class="card-value">{{ monitoring.rds_cpu }}%</div>
+        <div class="card-sub">Latest 5-minute average</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">RDS Connections</div>
+        <div class="card-value">{{ monitoring.rds_connections }}</div>
+        <div class="card-sub">Latest 5-minute average</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">RDS Free Storage</div>
+        <div class="card-value">{{ monitoring.rds_free_storage_gb }} GB</div>
+        <div class="card-sub">Latest 5-minute average</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">API Requests</div>
+        <div class="card-value">{{ monitoring.api_requests }}</div>
+        <div class="card-sub">Last 1 hour</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">API Errors</div>
+        <div class="card-value">{{ monitoring.api_4xx + monitoring.api_5xx }}</div>
+        <div class="card-sub">4XX: {{ monitoring.api_4xx }} · 5XX: {{ monitoring.api_5xx }}</div>
+    </div>
+</div>
 """
 
 
@@ -1708,6 +2018,7 @@ PRODUCTS_BODY = r"""
         <table>
             <thead>
                 <tr>
+                    <th>ID</th>
                     <th>Product</th>
                     <th>Description</th>
                     <th>Price</th>
@@ -1721,6 +2032,8 @@ PRODUCTS_BODY = r"""
             <tbody>
             {% for product in products %}
                 <tr>
+                    <td>{{ product.product_id }}</td>
+
                     <td class="product-name">
                         {{ product.name }}
                     </td>
@@ -2133,6 +2446,7 @@ AUDIT_BODY = r"""
         <table>
             <thead>
                 <tr>
+                    <th>Log ID</th>
                     <th>Entity Type</th>
                     <th>Entity ID</th>
                     <th>Action</th>
@@ -2146,6 +2460,7 @@ AUDIT_BODY = r"""
             <tbody>
             {% for log in logs %}
                 <tr>
+                    <td>{{ log.log_id }}</td>
                     <td>{{ log.entity_type or "—" }}</td>
                     <td>{{ log.entity_id or "—" }}</td>
                     <td>
@@ -2232,16 +2547,8 @@ REPORTS_BODY = r"""
     </div>
     {% else %}
     <div class="empty">
-        <div style="margin-bottom:12px;">
-            Today's CSV has not been generated yet.
-        </div>
-        <span class="btn" style="opacity:.55;cursor:not-allowed;">
-            ↓ Download Today's CSV
-        </span>
-        <div style="margin-top:10px;font-size:11px;color:var(--muted);">
-            The download button becomes active automatically when today's CSV
-            is available in the reports S3 bucket.
-        </div>
+        The daily report will appear here after the scheduled Report Lambda
+        generates today's CSV.
     </div>
     {% endif %}
 </section>
@@ -2291,6 +2598,142 @@ REPORTS_BODY = r"""
 </section>
 """
 
+
+
+# ============================================================
+# MONITORING BODY
+# ============================================================
+
+MONITORING_BODY = r"""
+{% if monitoring_error %}
+<div class="error">
+    CloudWatch monitoring unavailable: {{ monitoring_error }}
+</div>
+{% else %}
+<div class="notice">
+    ✓ CloudWatch metrics loaded successfully. Lambda metrics cover the last 1 hour; RDS and API Gateway cards show the latest 5-minute data point.
+</div>
+{% endif %}
+
+<div class="cards">
+    <div class="card">
+        <div class="card-label">Orders</div>
+        <div class="card-value">{{ orders_count }}</div>
+        <div class="card-sub">Total orders in RDS</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">Inventory Count</div>
+        <div class="card-value">{{ inventory_count }}</div>
+        <div class="card-sub">Total stock_count in products</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">Lambda Errors</div>
+        <div class="card-value">{{ monitoring.lambda_errors }}</div>
+        <div class="card-sub">Last 1 hour · all CloudMart Lambdas</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">Lambda Duration</div>
+        <div class="card-value">{{ monitoring.lambda_duration }} ms</div>
+        <div class="card-sub">Latest average across functions</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">Lambda Invocations</div>
+        <div class="card-value">{{ monitoring.lambda_invocations }}</div>
+        <div class="card-sub">Last 1 hour · all CloudMart Lambdas</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">RDS CPU Utilization</div>
+        <div class="card-value">{{ monitoring.rds_cpu }}%</div>
+        <div class="card-sub">Latest 5-minute average</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">RDS Connections</div>
+        <div class="card-value">{{ monitoring.rds_connections }}</div>
+        <div class="card-sub">Latest 5-minute average</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">RDS Free Storage</div>
+        <div class="card-value">{{ monitoring.rds_free_storage_gb }} GB</div>
+        <div class="card-sub">Latest 5-minute average</div>
+    </div>
+</div>
+
+<div class="section-title">
+    <div>
+        <h2>API Gateway</h2>
+        <p>{{ monitoring.api_name }} · stage {{ monitoring.api_stage }} · CloudWatch</p>
+    </div>
+</div>
+
+<div class="cards">
+    <div class="card">
+        <div class="card-label">API Requests</div>
+        <div class="card-value">{{ monitoring.api_requests }}</div>
+        <div class="card-sub">Last 1 hour</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">API 4XX Errors</div>
+        <div class="card-value">{{ monitoring.api_4xx }}</div>
+        <div class="card-sub">Last 1 hour</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">API 5XX Errors</div>
+        <div class="card-value">{{ monitoring.api_5xx }}</div>
+        <div class="card-sub">Last 1 hour</div>
+    </div>
+
+    <div class="card">
+        <div class="card-label">API Latency</div>
+        <div class="card-value">{{ monitoring.api_latency }} ms</div>
+        <div class="card-sub">Latest 5-minute average</div>
+    </div>
+</div>
+
+<section class="panel" style="margin-top:18px;">
+    <div class="panel-head">
+        <div>
+            <h3>Lambda Details</h3>
+            <span>Errors and invocations are totals from the last 1 hour</span>
+        </div>
+    </div>
+
+    {% if monitoring.lambda_rows %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Lambda Function</th>
+                    <th>Errors</th>
+                    <th>Invocations</th>
+                    <th>Average Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in monitoring.lambda_rows %}
+                <tr>
+                    <td class="product-name">{{ row.name }}</td>
+                    <td>{{ row.errors }}</td>
+                    <td>{{ row.invocations }}</td>
+                    <td>{{ row.duration }} ms</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty">No Lambda metric data is currently available.</div>
+    {% endif %}
+</section>
+"""
 
 
 # ============================================================

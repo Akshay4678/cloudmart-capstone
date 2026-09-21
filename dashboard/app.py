@@ -17,17 +17,11 @@ app = Flask(__name__)
 # ADMIN AUTHENTICATION
 # ============================================================
 
-# Flask uses this key to sign the admin session cookie.
-# A persistent FLASK_SECRET_KEY should be supplied by the EC2
-# environment later through CloudFormation/IaC.
-app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=24)
-app.config["SESSION_REFRESH_EACH_REQUEST"] = False
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-# The current dashboard is served over HTTP. Set this to True
-# when the dashboard is moved to HTTPS.
-app.config["SESSION_COOKIE_SECURE"] = False
+# Flask session configuration is initialized after the AWS clients are created.
+# The secret is loaded from FLASK_SECRET_KEY when supplied. If it is not supplied,
+# a stable secret is derived from the existing encrypted RDS password in SSM.
+# This is intentionally NOT a random value: every Gunicorn worker must use the
+# same secret or the browser session can appear to expire randomly.
 
 # ============================================================
 # CONFIGURATION
@@ -61,6 +55,30 @@ def get_db_password():
         WithDecryption=True,
     )
     return response["Parameter"]["Value"]
+
+
+def get_flask_secret_key():
+    """Return one stable Flask session-signing key for every Gunicorn worker."""
+    configured_key = os.environ.get("FLASK_SECRET_KEY", "").strip()
+    if configured_key:
+        return configured_key
+
+    # No separate secret is required for the current deployment. Derive a
+    # stable application-specific key from the existing encrypted DB password.
+    # The DB password itself is never used directly as the Flask key.
+    db_password = get_db_password()
+    material = f"CloudMartDashboardSession::{db_password}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+app.secret_key = get_flask_secret_key()
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=24)
+app.config["SESSION_REFRESH_EACH_REQUEST"] = False
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# The current dashboard is served over HTTP. Set this to True when the
+# dashboard is moved to HTTPS.
+app.config["SESSION_COOKIE_SECURE"] = False
 
 
 def get_db_connection():

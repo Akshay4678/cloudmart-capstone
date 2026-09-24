@@ -34,6 +34,11 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Latest Amazon Linux 2023 AMI
 
+  LambdaArtifactBucketParameter:
+    Type: String
+    Default: /cloudmart/dev/lambda-artifact-bucket
+    Description: SSM parameter containing the CloudMart Lambda artifact S3 bucket name
+
 
 # ================================================================
 # RESOURCES
@@ -584,7 +589,14 @@ Resources:
                 Action:
                   - s3:GetObject
                 Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-lambda-${AWS::AccountId}-${AWS::Region}/*
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-data-stack-lambdaartifactsbucket-*/*
+
+              - Sid: ReadLambdaArtifactBucketParameter
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${LambdaArtifactBucketParameter}
 
               - Sid: ReadCloudWatchMetrics
                 Effect: Allow
@@ -630,7 +642,7 @@ Resources:
 
           AWS_REGION_VALUE="${AWS::Region}"
           ACCOUNT_ID_VALUE="${AWS::AccountId}"
-          LAMBDA_BUCKET_VALUE="cloudmart-lambda-${AWS::AccountId}-${AWS::Region}"
+          LAMBDA_BUCKET_PARAMETER="${LambdaArtifactBucketParameter}"
           DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
           DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
 
@@ -693,7 +705,7 @@ Resources:
           set -euo pipefail
 
           AWS_REGION_VALUE="$1"
-          LAMBDA_BUCKET_VALUE="$2"
+          LAMBDA_BUCKET_PARAMETER="$2"
           DASHBOARD_KEY="$3"
           DB_HOST_CONFIG_KEY="$4"
 
@@ -705,6 +717,23 @@ Resources:
           mkdir -p "$(dirname "$STATE_FILE")"
 
           echo "Checking dashboard artifact..."
+
+          # The Data Stack creates the Lambda artifact bucket with a
+          # CloudFormation-generated name. Read the actual bucket name from
+          # SSM instead of hardcoding a bucket name in the Network Stack.
+          LAMBDA_BUCKET_VALUE=$(aws ssm get-parameter \
+            --region "$AWS_REGION_VALUE" \
+            --name "$LAMBDA_BUCKET_PARAMETER" \
+            --query "Parameter.Value" \
+            --output text 2>/dev/null || true)
+
+          if [ -z "$LAMBDA_BUCKET_VALUE" ] || [ "$LAMBDA_BUCKET_VALUE" = "None" ]; then
+            echo "Lambda artifact bucket parameter is not available yet."
+            echo "Dashboard deployment will be retried by the update timer."
+            exit 0
+          fi
+
+          echo "Using Lambda artifact bucket: $LAMBDA_BUCKET_VALUE"
 
           ARTIFACT_ETAG=$(aws s3api head-object \
             --region "$AWS_REGION_VALUE" \
@@ -874,7 +903,7 @@ Resources:
 
           [Service]
           Type=oneshot
-          ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_VALUE" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY"
+          ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_PARAMETER" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY"
           UPDATEEOF
 
           cat > /etc/systemd/system/cloudmart-dashboard-update.timer <<TIMEREOF

@@ -530,7 +530,25 @@ jobs:
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
       # ==========================================================
-      # 16. UPLOAD AUTHORIZER PACKAGE
+      # 16. STORE LAMBDA ARTIFACT BUCKET IN SSM
+      # ==========================================================
+      - name: Store Lambda Artifact Bucket in SSM
+        run: |
+          set -euo pipefail
+
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/lambda-artifact-bucket" \
+            --type "String" \
+            --value "$BUCKET" \
+            --overwrite
+
+          echo "Lambda artifact bucket stored in SSM."
+
+      # ==========================================================
+      # 17. UPLOAD AUTHORIZER PACKAGE
       # ==========================================================
       - name: Upload Authorizer Lambda
         run: |

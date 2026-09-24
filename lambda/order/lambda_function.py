@@ -271,18 +271,52 @@ def write_audit_log(
         else None
     )
 
+    # The database schema stores:
+    # customer_id, action, entity_type, entity_id, details, created_at.
+    # performed_by is kept inside details because it may be a service
+    # identity (for example "order-api") and therefore cannot be inserted
+    # into the customers.customer_id foreign key column.
+    customer_id = None
+
+    if performed_by:
+        candidate_customer_id = str(performed_by).strip()
+
+        if candidate_customer_id:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT customer_id
+                    FROM customers
+                    WHERE customer_id = %s
+                    """,
+                    (candidate_customer_id,),
+                )
+
+                customer = cursor.fetchone()
+
+                if customer:
+                    customer_id = candidate_customer_id
+
+    details = json.dumps(
+        {
+            "performed_by": performed_by,
+            "old_value": old_value,
+            "new_value": new_value,
+        },
+        default=json_default,
+    )
+
     with connection.cursor() as cursor:
 
         cursor.execute(
             """
             INSERT INTO audit_logs
             (
+                customer_id,
+                action,
                 entity_type,
                 entity_id,
-                action,
-                old_value,
-                new_value,
-                performed_by,
+                details,
                 created_at
             )
             VALUES
@@ -292,17 +326,15 @@ def write_audit_log(
                 %s,
                 %s,
                 %s,
-                %s,
                 %s
             )
             """,
             (
+                customer_id,
+                action,
                 entity_type,
                 str(entity_id),
-                action,
-                old_json,
-                new_json,
-                performed_by,
+                details,
                 datetime.now(timezone.utc)
                 .replace(tzinfo=None),
             ),
@@ -674,15 +706,13 @@ def initialize_schema():
         connection = get_connection()
 
         # --------------------------------------------------------
-        # PERFORM PRODUCTS STATUS MIGRATION
+        # EXECUTE schema.sql FIRST
         # --------------------------------------------------------
-
-        migrate_products_status(
-            connection
-        )
-
-        # --------------------------------------------------------
-        # EXECUTE schema.sql
+        # IMPORTANT:
+        # The schema creates the products table. Therefore the
+        # products.status migration must NOT run before schema.sql.
+        # Running it first causes:
+        # 1146: Table 'cloudmart.products' doesn't exist
         # --------------------------------------------------------
 
         executed = 0
@@ -769,6 +799,18 @@ def initialize_schema():
                     )
 
                     raise
+
+        # --------------------------------------------------------
+        # PERFORM PRODUCTS STATUS MIGRATION
+        # --------------------------------------------------------
+        # Run this AFTER schema.sql so products is guaranteed to exist.
+        # For a new database, schema.sql already creates status.
+        # For an older database, this adds/synchronizes status safely.
+        # --------------------------------------------------------
+
+        migrate_products_status(
+            connection
+        )
 
         # --------------------------------------------------------
         # COMMIT
@@ -1195,11 +1237,13 @@ def create_order(body, performed_by=None):
                         order_id,
                         product_id,
                         quantity,
-                        price,
+                        unit_price,
+                        subtotal,
                         created_at
                     )
                     VALUES
                     (
+                        %s,
                         %s,
                         %s,
                         %s,
@@ -1216,6 +1260,7 @@ def create_order(body, performed_by=None):
                             "quantity"
                         ],
                         item["price"],
+                        item["price"] * item["quantity"],
                         now,
                     ),
                 )
@@ -1422,7 +1467,7 @@ def get_order(order_id):
                     p.name AS product_name,
                     p.description AS product_description,
                     oi.quantity,
-                    oi.price,
+                    oi.unit_price,
                     oi.created_at
                 FROM order_items oi
                 INNER JOIN products p
@@ -1528,7 +1573,7 @@ def get_customer_orders(customer_id):
                     p.name AS product_name,
                     p.description AS product_description,
                     oi.quantity,
-                    oi.price AS item_price
+                    oi.unit_price AS item_price
 
                 FROM orders o
 

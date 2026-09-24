@@ -26,6 +26,7 @@ USE cloudmart;
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS customers (
+
     customer_id VARCHAR(100) PRIMARY KEY,
 
     name VARCHAR(100) NOT NULL,
@@ -44,7 +45,9 @@ CREATE TABLE IF NOT EXISTS customers (
         ON UPDATE CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_customer_role
-        CHECK (role IN ('USER', 'ADMIN'))
+        CHECK (
+            role IN ('USER', 'ADMIN')
+        )
 );
 
 
@@ -67,7 +70,13 @@ VALUES
     'sultanAdmin',
     'sultanadmin123@admin.com',
     '9666666904',
-    SHA2(CONCAT('sultanadmin123@admin.com', '9666666904'), 256),
+    SHA2(
+        CONCAT(
+            'sultanadmin123@admin.com',
+            '9666666904'
+        ),
+        256
+    ),
     'ADMIN'
 );
 
@@ -91,7 +100,13 @@ VALUES
     'akshay',
     'uppu4678@gmail.com',
     '8891222333',
-    SHA2(CONCAT('uppu4678@gmail.com', '8891222333'), 256),
+    SHA2(
+        CONCAT(
+            'uppu4678@gmail.com',
+            '8891222333'
+        ),
+        256
+    ),
     'USER'
 ),
 (
@@ -99,7 +114,13 @@ VALUES
     'rahul',
     'rahuldhoni07@gmail.com',
     '7791222344',
-    SHA2(CONCAT('rahuldhoni07@gmail.com', '7791222344'), 256),
+    SHA2(
+        CONCAT(
+            'rahuldhoni07@gmail.com',
+            '7791222344'
+        ),
+        256
+    ),
     'USER'
 ),
 (
@@ -107,7 +128,13 @@ VALUES
     'Karthik',
     'karthikpadi09@gmail.com',
     '9848909333',
-    SHA2(CONCAT('karthikpadi09@gmail.com', '9848909333'), 256),
+    SHA2(
+        CONCAT(
+            'karthikpadi09@gmail.com',
+            '9848909333'
+        ),
+        256
+    ),
     'USER'
 );
 
@@ -115,19 +142,9 @@ VALUES
 -- ============================================================
 -- PRODUCTS TABLE
 -- ============================================================
---
--- Existing columns:
--- product_id
--- name
--- description
--- price
--- stock_count
--- status
--- created_at
--- updated_at
--- ============================================================
 
 CREATE TABLE IF NOT EXISTS products (
+
     product_id INT AUTO_INCREMENT PRIMARY KEY,
 
     name VARCHAR(255) NOT NULL,
@@ -142,19 +159,23 @@ CREATE TABLE IF NOT EXISTS products (
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         ON UPDATE CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_product_price
-        CHECK (price >= 0),
+        CHECK (
+            price >= 0
+        ),
 
     CONSTRAINT chk_product_stock
-        CHECK (stock_count >= 0)
+        CHECK (
+            stock_count >= 0
+        )
 );
 
 
 -- ============================================================
--- INSERT SAMPLE PRODUCTS
+-- INSERT SAMPLE PRODUCT: LAPTOP
 -- ============================================================
 
 INSERT INTO products
@@ -179,6 +200,10 @@ WHERE NOT EXISTS
 );
 
 
+-- ============================================================
+-- INSERT SAMPLE PRODUCT: WIRELESS MOUSE
+-- ============================================================
+
 INSERT INTO products
 (
     name,
@@ -200,6 +225,10 @@ WHERE NOT EXISTS
     WHERE name = 'Wireless Mouse'
 );
 
+
+-- ============================================================
+-- INSERT SAMPLE PRODUCT: MECHANICAL KEYBOARD
+-- ============================================================
 
 INSERT INTO products
 (
@@ -223,6 +252,10 @@ WHERE NOT EXISTS
 );
 
 
+-- ============================================================
+-- INSERT SAMPLE PRODUCT: MONITOR
+-- ============================================================
+
 INSERT INTO products
 (
     name,
@@ -244,6 +277,10 @@ WHERE NOT EXISTS
     WHERE name = 'Monitor'
 );
 
+
+-- ============================================================
+-- INSERT SAMPLE PRODUCT: USB-C CABLE
+-- ============================================================
 
 INSERT INTO products
 (
@@ -270,17 +307,9 @@ WHERE NOT EXISTS
 -- ============================================================
 -- ORDERS TABLE
 -- ============================================================
---
--- Existing columns confirmed from your screenshot:
--- order_id
--- customer_id
--- status
--- total_amount
--- created_at
--- updated_at
--- ============================================================
 
 CREATE TABLE IF NOT EXISTS orders (
+
     order_id VARCHAR(50) PRIMARY KEY,
 
     customer_id VARCHAR(100) NOT NULL,
@@ -307,7 +336,9 @@ CREATE TABLE IF NOT EXISTS orders (
         ),
 
     CONSTRAINT chk_order_total
-        CHECK (total_amount >= 0),
+        CHECK (
+            total_amount >= 0
+        ),
 
     CONSTRAINT fk_orders_customer
         FOREIGN KEY (customer_id)
@@ -322,6 +353,7 @@ CREATE TABLE IF NOT EXISTS orders (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS order_items (
+
     order_item_id INT AUTO_INCREMENT PRIMARY KEY,
 
     order_id VARCHAR(50) NOT NULL,
@@ -349,13 +381,19 @@ CREATE TABLE IF NOT EXISTS order_items (
         ON UPDATE CASCADE,
 
     CONSTRAINT chk_order_item_quantity
-        CHECK (quantity > 0),
+        CHECK (
+            quantity > 0
+        ),
 
     CONSTRAINT chk_order_item_unit_price
-        CHECK (unit_price >= 0),
+        CHECK (
+            unit_price >= 0
+        ),
 
     CONSTRAINT chk_order_item_subtotal
-        CHECK (subtotal >= 0)
+        CHECK (
+            subtotal >= 0
+        )
 );
 
 
@@ -364,6 +402,7 @@ CREATE TABLE IF NOT EXISTS order_items (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS audit_logs (
+
     audit_id BIGINT AUTO_INCREMENT PRIMARY KEY,
 
     customer_id VARCHAR(100),

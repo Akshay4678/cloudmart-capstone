@@ -682,7 +682,11 @@ Resources:
           NGINXEOF
 
           nginx -t
+
+          # Start NGINX immediately so HTTP port 80 is available even if
+          # dashboard artifacts are still being uploaded to S3.
           systemctl enable nginx
+          systemctl start nginx
 
           cat > /usr/local/bin/cloudmart-dashboard-deploy.sh <<'DEPLOYEOF'
           #!/bin/bash
@@ -887,13 +891,33 @@ Resources:
           TIMEREOF
 
           systemctl daemon-reload
+
           systemctl enable cloudmart-dashboard-update.service
-          systemctl start cloudmart-dashboard-update.service
+
+          # Try the first dashboard deployment now. If the GitHub Actions
+          # artifacts are not in S3 yet, keep NGINX running and let the
+          # update timer retry automatically.
+          if systemctl start cloudmart-dashboard-update.service; then
+            echo "Initial dashboard deployment completed."
+          else
+            echo "Initial dashboard deployment is not ready yet."
+            echo "The dashboard update timer will retry automatically."
+          fi
+
           systemctl enable --now cloudmart-dashboard-update.timer
-          systemctl enable --now cloudmart-dashboard.service
+
+          # The deployment script starts/restarts Gunicorn only after the
+          # dashboard files and environment are ready.
+          if systemctl is-active --quiet cloudmart-dashboard; then
+            systemctl enable cloudmart-dashboard.service
+          else
+            echo "CloudMart dashboard service is waiting for the next successful artifact deployment."
+          fi
+
+          # NGINX must remain available independently of the Flask deployment.
           systemctl enable --now nginx
 
-          echo "CloudMart dashboard bootstrap completed."
+          echo "CloudMart dashboard bootstrap completed." 
       Tags:
         - Key: Name
           Value: !Sub cloudmart-ec2-${AWS::StackName}

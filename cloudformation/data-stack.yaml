@@ -2,6 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart Data Stack
 
+
 # ================================================================
 # PARAMETERS
 # ================================================================
@@ -150,15 +151,18 @@ Resources:
   #       |
   #       v
   # EC2 Flask Dashboard
+  #
+  # IMPORTANT:
+  # BucketName is intentionally NOT specified.
+  # CloudFormation generates a unique bucket name.
+  # This avoids conflicts when old buckets remain after
+  # a previous stack deletion.
   # ==============================================================
 
   ReportsBucket:
     Type: AWS::S3::Bucket
 
     Properties:
-
-      BucketName:
-        !Sub cloudmart-reports-${AWS::AccountId}-${AWS::Region}
 
       BucketEncryption:
 
@@ -198,15 +202,16 @@ Resources:
 
   # ==============================================================
   # S3 LAMBDA ARTIFACTS BUCKET
+  #
+  # IMPORTANT:
+  # BucketName is intentionally NOT specified.
+  # CloudFormation generates a unique bucket name.
   # ==============================================================
 
   LambdaArtifactsBucket:
     Type: AWS::S3::Bucket
 
     Properties:
-
-      BucketName:
-        !Sub cloudmart-lambda-${AWS::AccountId}-${AWS::Region}
 
       BucketEncryption:
 

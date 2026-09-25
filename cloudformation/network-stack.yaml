@@ -575,8 +575,16 @@ Resources:
                 Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:GetObjectVersion
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::cloudmart-data-stack-lambdaartifactsbucket-*/*
+
+              - Sid: ListLambdaArtifactBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-data-stack-lambdaartifactsbucket-*
 
               - Sid: ReadLambdaArtifactBucketParameter
                 Effect: Allow
@@ -631,40 +639,44 @@ Resources:
           exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
 
           AWS_REGION_VALUE="${AWS::Region}"
-          ACCOUNT_ID_VALUE="${AWS::AccountId}"
           LAMBDA_BUCKET_PARAMETER="${LambdaArtifactBucketParameter}"
           DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
           DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
+          DASHBOARD_DIR="/opt/cloudmart-dashboard"
 
-          echo "Starting CloudMart dashboard bootstrap..."
-
-          # Do not run a full OS update during bootstrap.
-          # It can delay NGINX availability while the EC2 instance initializes.
-          dnf install -y mariadb105 python3 python3-pip unzip awscli-2 nginx amazon-ssm-agent
-
-          # Keep the instance reachable by GitHub Actions through AWS Systems Manager.
-          systemctl enable --now amazon-ssm-agent
-
-          # Amazon Linux 2023 does not guarantee that the AWS CLI is
-          # preinstalled. Install it explicitly before any S3 operations.
-          if ! command -v aws >/dev/null 2>&1; then
-            echo "ERROR: AWS CLI installation failed."
-            dnf install -y awscli-2
-          fi
-
-          if ! command -v aws >/dev/null 2>&1; then
-            echo "ERROR: AWS CLI is still not available after installation."
-            exit 1
-          fi
-
-          echo "AWS CLI detected: $(aws --version)"
-
-          mkdir -p /opt/cloudmart-dashboard
-          chown -R ec2-user:ec2-user /opt/cloudmart-dashboard
+          echo "=================================================="
+          echo "Starting CloudMart Dashboard Bootstrap"
+          echo "=================================================="
 
           # ============================================================
-          # NGINX REVERSE PROXY
-          # HTTP :80 -> Flask/Gunicorn :5000
+          # SYSTEM PACKAGES
+          # ============================================================
+
+          echo "Installing required system packages..."
+
+          dnf install -y \
+            mariadb105 \
+            python3 \
+            python3-pip \
+            unzip \
+            curl \
+            openssl \
+            awscli-2 \
+            nginx \
+            amazon-ssm-agent
+
+          systemctl enable --now amazon-ssm-agent
+
+          command -v aws
+          command -v python3
+          command -v nginx
+          command -v curl
+
+          mkdir -p "$DASHBOARD_DIR"
+
+          # ============================================================
+          # NGINX CONFIGURATION
+          # NGINX IS STARTED ONLY AFTER GUNICORN IS HEALTHY.
           # ============================================================
 
           rm -f /etc/nginx/conf.d/default.conf
@@ -675,6 +687,8 @@ Resources:
               listen [::]:80;
 
               server_name _;
+
+              client_max_body_size 10M;
 
               location / {
                   proxy_pass http://127.0.0.1:5000;
@@ -689,10 +703,9 @@ Resources:
 
           nginx -t
 
-          # Start NGINX immediately so HTTP port 80 is available even if
-          # dashboard artifacts are still being uploaded to S3.
-          systemctl enable nginx
-          systemctl start nginx
+          # ============================================================
+          # DASHBOARD DEPLOYMENT SCRIPT
+          # ============================================================
 
           cat > /usr/local/bin/cloudmart-dashboard-deploy.sh <<'DEPLOYEOF'
           #!/bin/bash
@@ -708,13 +721,14 @@ Resources:
           STATE_FILE="/var/lib/cloudmart-dashboard-state"
           TMP_STATE_FILE="/tmp/cloudmart-dashboard-state.new"
 
+          mkdir -p "$DASHBOARD_DIR"
           mkdir -p "$(dirname "$STATE_FILE")"
 
-          echo "Checking dashboard artifact..."
+          echo "=================================================="
+          echo "CloudMart Dashboard Deployment"
+          echo "=================================================="
 
-          # The Data Stack creates the Lambda artifact bucket with a
-          # CloudFormation-generated name. Read the actual bucket name from
-          # SSM instead of hardcoding a bucket name in the Network Stack.
+          # Read the actual generated artifact bucket name from SSM.
           LAMBDA_BUCKET_VALUE=$(aws ssm get-parameter \
             --region "$AWS_REGION_VALUE" \
             --name "$LAMBDA_BUCKET_PARAMETER" \
@@ -723,73 +737,68 @@ Resources:
 
           if [ -z "$LAMBDA_BUCKET_VALUE" ] || [ "$LAMBDA_BUCKET_VALUE" = "None" ]; then
             echo "Lambda artifact bucket parameter is not available yet."
-            echo "Dashboard deployment will be retried by the update timer."
+            exit 1
+          fi
+
+          echo "Lambda artifact bucket: $LAMBDA_BUCKET_VALUE"
+
+          # ============================================================
+          # WAIT FOR BOTH ARTIFACTS
+          # GitHub Actions uploads these after the infrastructure exists.
+          # ============================================================
+
+          ARTIFACT_ETAG=""
+          DB_CONFIG_ETAG=""
+
+          for attempt in $(seq 1 120); do
+
+            ARTIFACT_ETAG=$(aws s3api head-object \
+              --region "$AWS_REGION_VALUE" \
+              --bucket "$LAMBDA_BUCKET_VALUE" \
+              --key "$DASHBOARD_KEY" \
+              --query "ETag" \
+              --output text 2>/dev/null || true)
+
+            DB_CONFIG_ETAG=$(aws s3api head-object \
+              --region "$AWS_REGION_VALUE" \
+              --bucket "$LAMBDA_BUCKET_VALUE" \
+              --key "$DB_HOST_CONFIG_KEY" \
+              --query "ETag" \
+              --output text 2>/dev/null || true)
+
+            if [ -n "$ARTIFACT_ETAG" ] && [ "$ARTIFACT_ETAG" != "None" ] \
+               && [ -n "$DB_CONFIG_ETAG" ] && [ "$DB_CONFIG_ETAG" != "None" ]; then
+              echo "Dashboard artifacts are available."
+              break
+            fi
+
+            echo "Waiting for dashboard artifacts... attempt $attempt/120"
+            sleep 5
+
+            if [ "$attempt" -eq 120 ]; then
+              echo "ERROR: Dashboard artifacts were not available."
+              exit 1
+            fi
+          done
+
+          # ============================================================
+          # SKIP ONLY IF THE CURRENT DEPLOYMENT IS ALREADY HEALTHY
+          # ============================================================
+
+          if [ -f "$STATE_FILE" ] \
+             && grep -q "^ARTIFACT_ETAG=$ARTIFACT_ETAG$" "$STATE_FILE" 2>/dev/null \
+             && grep -q "^DB_CONFIG_ETAG=$DB_CONFIG_ETAG$" "$STATE_FILE" 2>/dev/null \
+             && systemctl is-active --quiet cloudmart-dashboard; then
+
+            echo "Dashboard is already deployed and healthy."
             exit 0
           fi
 
-          echo "Using Lambda artifact bucket: $LAMBDA_BUCKET_VALUE"
+          # ============================================================
+          # READ DATABASE HOST
+          # ============================================================
 
-          ARTIFACT_ETAG=$(aws s3api head-object \
-            --region "$AWS_REGION_VALUE" \
-            --bucket "$LAMBDA_BUCKET_VALUE" \
-            --key "$DASHBOARD_KEY" \
-            --query "ETag" \
-            --output text 2>/dev/null || true)
-
-          DB_CONFIG_ETAG=$(aws s3api head-object \
-            --region "$AWS_REGION_VALUE" \
-            --bucket "$LAMBDA_BUCKET_VALUE" \
-            --key "$DB_HOST_CONFIG_KEY" \
-            --query "ETag" \
-            --output text 2>/dev/null || true)
-
-          # On first boot, wait for the GitHub Actions artifacts.
-          if [ ! -f "$STATE_FILE" ]; then
-            for i in $(seq 1 60); do
-              if [ -n "$ARTIFACT_ETAG" ] && [ "$ARTIFACT_ETAG" != "None" ] \
-                 && [ -n "$DB_CONFIG_ETAG" ] && [ "$DB_CONFIG_ETAG" != "None" ]; then
-                break
-              fi
-
-              if [ "$i" -eq 60 ]; then
-                echo "ERROR: Dashboard artifacts were not found in S3 after waiting."
-                exit 1
-              fi
-
-              echo "Dashboard artifacts not available yet. Waiting 10 seconds..."
-              sleep 10
-
-              ARTIFACT_ETAG=$(aws s3api head-object \
-                --region "$AWS_REGION_VALUE" \
-                --bucket "$LAMBDA_BUCKET_VALUE" \
-                --key "$DASHBOARD_KEY" \
-                --query "ETag" \
-                --output text 2>/dev/null || true)
-
-              DB_CONFIG_ETAG=$(aws s3api head-object \
-                --region "$AWS_REGION_VALUE" \
-                --bucket "$LAMBDA_BUCKET_VALUE" \
-                --key "$DB_HOST_CONFIG_KEY" \
-                --query "ETag" \
-                --output text 2>/dev/null || true)
-            done
-          else
-            # During periodic checks, do nothing when nothing changed.
-            if [ -n "$ARTIFACT_ETAG" ] && [ -n "$DB_CONFIG_ETAG" ]; then
-              if grep -q "^ARTIFACT_ETAG=$ARTIFACT_ETAG$" "$STATE_FILE" 2>/dev/null \
-                 && grep -q "^DB_CONFIG_ETAG=$DB_CONFIG_ETAG$" "$STATE_FILE" 2>/dev/null; then
-                if systemctl is-active --quiet cloudmart-dashboard; then
-                  echo "Dashboard is already up to date."
-                  exit 0
-                fi
-              fi
-            else
-              echo "Dashboard artifacts are temporarily unavailable. Keeping current deployment."
-              exit 0
-            fi
-          fi
-
-          echo "Reading dashboard database host configuration..."
+          echo "Reading dashboard database host..."
 
           DB_HOST_VALUE=$(aws s3 cp \
             "s3://$LAMBDA_BUCKET_VALUE/$DB_HOST_CONFIG_KEY" \
@@ -803,45 +812,72 @@ Resources:
             exit 1
           fi
 
-          echo "Downloading dashboard artifact..."
+          # ============================================================
+          # DOWNLOAD DASHBOARD PACKAGE
+          # ============================================================
+
+          echo "Downloading dashboard package..."
+
+          rm -f "$ZIP_FILE"
+
           aws s3 cp \
             "s3://$LAMBDA_BUCKET_VALUE/$DASHBOARD_KEY" \
             "$ZIP_FILE" \
             --region "$AWS_REGION_VALUE"
 
-          rm -rf "$DASHBOARD_DIR"/*
+          test -s "$ZIP_FILE"
+
+          echo "Dashboard package downloaded successfully."
+
+          # ============================================================
+          # EXTRACT DASHBOARD
+          # ============================================================
+
+          rm -rf "$DASHBOARD_DIR"
+          mkdir -p "$DASHBOARD_DIR"
+
           unzip -o "$ZIP_FILE" -d "$DASHBOARD_DIR"
           rm -f "$ZIP_FILE"
 
-          if [ ! -f "$DASHBOARD_DIR/app.py" ]; then
-            echo "ERROR: app.py is missing from the dashboard package."
-            exit 1
-          fi
+          test -s "$DASHBOARD_DIR/app.py"
+          test -s "$DASHBOARD_DIR/requirements.txt"
 
-          if [ ! -f "$DASHBOARD_DIR/requirements.txt" ]; then
-            echo "ERROR: requirements.txt is missing from the dashboard package."
-            exit 1
-          fi
+          echo "Dashboard files extracted successfully."
 
-          if [ ! -x "$DASHBOARD_DIR/venv/bin/python" ]; then
-            rm -rf "$DASHBOARD_DIR/venv"
-            python3 -m venv "$DASHBOARD_DIR/venv"
-          fi
+          # ============================================================
+          # CREATE VIRTUAL ENVIRONMENT
+          # ============================================================
 
-          "$DASHBOARD_DIR/venv/bin/pip" install --upgrade pip
-          "$DASHBOARD_DIR/venv/bin/pip" install -r "$DASHBOARD_DIR/requirements.txt"
+          echo "Creating Python virtual environment..."
 
-          # Gunicorn is required by cloudmart-dashboard.service.
-          # Install it explicitly so the service does not depend on
-          # dashboard/requirements.txt containing the web server package.
+          python3 -m venv "$DASHBOARD_DIR/venv"
+
+          test -x "$DASHBOARD_DIR/venv/bin/python"
+
+          "$DASHBOARD_DIR/venv/bin/python" -m pip install --upgrade pip
+
+          "$DASHBOARD_DIR/venv/bin/pip" install \
+            -r "$DASHBOARD_DIR/requirements.txt"
+
+          # Gunicorn MUST be installed explicitly.
           "$DASHBOARD_DIR/venv/bin/pip" install gunicorn
 
-          if [ ! -x "$DASHBOARD_DIR/venv/bin/gunicorn" ]; then
-            echo "ERROR: Gunicorn installation failed."
-            exit 1
-          fi
+          test -x "$DASHBOARD_DIR/venv/bin/gunicorn"
 
-          echo "Gunicorn installed successfully: $("$DASHBOARD_DIR/venv/bin/gunicorn" --version)"
+          echo "Gunicorn installed: $("$DASHBOARD_DIR/venv/bin/gunicorn" --version)"
+
+          # ============================================================
+          # VALIDATE PYTHON
+          # ============================================================
+
+          "$DASHBOARD_DIR/venv/bin/python" \
+            -m py_compile "$DASHBOARD_DIR/app.py"
+
+          echo "app.py syntax validation successful."
+
+          # ============================================================
+          # DASHBOARD ENVIRONMENT
+          # ============================================================
 
           cat > /etc/cloudmart-dashboard.env <<ENVEOF
           AWS_REGION=$AWS_REGION_VALUE
@@ -858,36 +894,14 @@ Resources:
 
           chown root:root /etc/cloudmart-dashboard.env
           chmod 600 /etc/cloudmart-dashboard.env
-          chown -R ec2-user:ec2-user "$DASHBOARD_DIR"
 
-          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\n' \
-            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" > "$TMP_STATE_FILE"
-          mv "$TMP_STATE_FILE" "$STATE_FILE"
-
-          systemctl daemon-reload
-
-          # Verify the exact executable used by systemd exists before starting.
-          if [ ! -x "$DASHBOARD_DIR/venv/bin/gunicorn" ]; then
-            echo "ERROR: $DASHBOARD_DIR/venv/bin/gunicorn does not exist."
-            exit 1
-          fi
-
-          systemctl enable cloudmart-dashboard
-          systemctl restart cloudmart-dashboard
-
-          sleep 3
-
-          if ! systemctl is-active --quiet cloudmart-dashboard; then
-            echo "ERROR: CloudMart dashboard service is not active."
-            systemctl status cloudmart-dashboard --no-pager || true
-            journalctl -u cloudmart-dashboard -n 80 --no-pager || true
-            exit 1
-          fi
-
-          echo "Dashboard deployment completed."
-          DEPLOYEOF
-
-          chmod 755 /usr/local/bin/cloudmart-dashboard-deploy.sh
+          # ============================================================
+          # GUNICORN SERVICE
+          # FOLLOWING THE WORKING FRIEND CODE:
+          # - User=root
+          # - localhost:5000
+          # - restart automatically
+          # ============================================================
 
           cat > /etc/systemd/system/cloudmart-dashboard.service <<'SERVICEEOF'
           [Unit]
@@ -900,13 +914,81 @@ Resources:
           User=root
           WorkingDirectory=/opt/cloudmart-dashboard
           EnvironmentFile=/etc/cloudmart-dashboard.env
-          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 2 --timeout 60 app:app
+          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn \
+            --workers 2 \
+            --bind 127.0.0.1:5000 \
+            --access-logfile - \
+            --error-logfile - \
+            app:app
           Restart=always
           RestartSec=5
 
           [Install]
           WantedBy=multi-user.target
           SERVICEEOF
+
+          systemctl daemon-reload
+
+          # ============================================================
+          # START GUNICORN FIRST
+          # ============================================================
+
+          echo "Starting CloudMart Gunicorn..."
+
+          systemctl enable cloudmart-dashboard
+          systemctl restart cloudmart-dashboard
+
+          sleep 5
+
+          if ! systemctl is-active --quiet cloudmart-dashboard; then
+            echo "ERROR: Gunicorn service failed to start."
+            systemctl status cloudmart-dashboard --no-pager || true
+            journalctl -u cloudmart-dashboard --no-pager -n 100 || true
+            exit 1
+          fi
+
+          echo "Gunicorn service is ACTIVE."
+
+          # ============================================================
+          # GUNICORN HEALTH CHECK
+          # ============================================================
+
+          for attempt in $(seq 1 12); do
+
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:5000/health >/dev/null; then
+
+              echo "Gunicorn /health check passed."
+              break
+            fi
+
+            echo "Waiting for Gunicorn health... attempt $attempt/12"
+            sleep 5
+
+            if [ "$attempt" -eq 12 ]; then
+              echo "ERROR: Gunicorn started but /health is not responding."
+              systemctl status cloudmart-dashboard --no-pager || true
+              journalctl -u cloudmart-dashboard --no-pager -n 100 || true
+              exit 1
+            fi
+          done
+
+          # Save deployment state ONLY after Gunicorn is healthy.
+          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\n' \
+            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" > "$TMP_STATE_FILE"
+
+          mv "$TMP_STATE_FILE" "$STATE_FILE"
+
+          echo "Dashboard deployment completed successfully."
+          DEPLOYEOF
+
+          chmod 755 /usr/local/bin/cloudmart-dashboard-deploy.sh
+
+          # ============================================================
+          # UPDATE TIMER
+          # Keeps the dashboard updated when GitHub Actions uploads
+          # a new dashboard ZIP.
+          # ============================================================
 
           cat > /etc/systemd/system/cloudmart-dashboard-update.service <<UPDATEEOF
           [Unit]
@@ -924,7 +1006,7 @@ Resources:
           Description=Check for CloudMart Dashboard Updates
 
           [Timer]
-          OnBootSec=2min
+          OnBootSec=30sec
           OnUnitActiveSec=1min
           Unit=cloudmart-dashboard-update.service
 
@@ -934,32 +1016,60 @@ Resources:
 
           systemctl daemon-reload
 
-          systemctl enable cloudmart-dashboard-update.service
+          systemctl enable --now cloudmart-dashboard-update.timer
 
-          # Try the first dashboard deployment now. If the GitHub Actions
-          # artifacts are not in S3 yet, keep NGINX running and let the
-          # update timer retry automatically.
+          # ============================================================
+          # FIRST DEPLOYMENT
+          # This waits for GitHub Actions to upload:
+          #   dashboard/cloudmart-dashboard.zip
+          #   dashboard/db-host.txt
+          #
+          # Gunicorn is started and health-checked BEFORE NGINX.
+          # ============================================================
+
+          echo "Starting initial dashboard deployment..."
+
           if systemctl start cloudmart-dashboard-update.service; then
             echo "Initial dashboard deployment completed."
           else
-            echo "Initial dashboard deployment is not ready yet."
-            echo "The dashboard update timer will retry automatically."
+            echo "Initial dashboard deployment is still waiting/retrying."
           fi
 
-          systemctl enable --now cloudmart-dashboard-update.timer
+          # ============================================================
+          # START NGINX ONLY AFTER GUNICORN IS HEALTHY
+          # ============================================================
 
-          # The deployment script starts/restarts Gunicorn only after the
-          # dashboard files and environment are ready.
           if systemctl is-active --quiet cloudmart-dashboard; then
-            systemctl enable cloudmart-dashboard.service
+
+            echo "Starting NGINX..."
+
+            systemctl enable --now nginx
+
+            if ! systemctl is-active --quiet nginx; then
+              echo "ERROR: NGINX failed to start."
+              systemctl status nginx --no-pager || true
+              journalctl -u nginx --no-pager -n 100 || true
+              exit 1
+            fi
+
+            echo "NGINX is ACTIVE."
+
+            if curl --fail --silent --show-error \
+              http://127.0.0.1/health >/dev/null; then
+              echo "NGINX reverse proxy health check passed."
+            else
+              echo "WARNING: NGINX is active but /health check failed."
+            fi
+
           else
-            echo "CloudMart dashboard service is waiting for the next successful artifact deployment."
+            echo "Dashboard is not healthy yet."
+            echo "NGINX will be started by the next successful deployment."
           fi
 
-          # NGINX must remain available independently of the Flask deployment.
-          systemctl enable --now nginx
+          echo "=================================================="
+          echo "CloudMart Dashboard Bootstrap Completed"
+          echo "=================================================="
 
-          echo "CloudMart dashboard bootstrap completed." 
       Tags:
         - Key: Name
           Value: !Sub cloudmart-ec2-${AWS::StackName}

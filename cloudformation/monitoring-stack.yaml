@@ -105,17 +105,6 @@ Resources:
                         "label": "Product Low Stock"
                       }
                     ],
-                    [
-                      "CloudMart/Application",
-                      "LowStockEvents",
-                      "Environment",
-                      "${EnvironmentName}",
-                      "Service",
-                      "OrderProcessing",
-                      {
-                        "label": "Order Processing Low Stock"
-                      }
-                    ]
                   ]
                 }
               },
@@ -364,6 +353,61 @@ Resources:
                 }
               }
 
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 30,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "API Gateway Latency",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Average",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "AWS/ApiGateway",
+                      "Latency",
+                      "ApiName",
+                      "cloudmart-api-${EnvironmentName}",
+                      "Stage",
+                      "${EnvironmentName}"
+                    ]
+                  ],
+                  "yAxis": {
+                    "left": {
+                      "label": "Milliseconds"
+                    }
+                  }
+                }
+              },
+
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 30,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "API Gateway 4XX Errors / Throttling Indicator",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "AWS/ApiGateway",
+                      "4XXError",
+                      "ApiName",
+                      "cloudmart-api-${EnvironmentName}",
+                      "Stage",
+                      "${EnvironmentName}"
+                    ]
+                  ]
+                }
+              }
+
             ]
           }
 
@@ -466,66 +510,6 @@ Resources:
 
           Value:
             Product
-
-      Statistic:
-        Sum
-
-      Period:
-        300
-
-      EvaluationPeriods:
-        1
-
-      Threshold:
-        1
-
-      ComparisonOperator:
-        GreaterThanOrEqualToThreshold
-
-      TreatMissingData:
-        notBreaching
-
-      AlarmActions:
-
-        - Fn::ImportValue:
-            cloudmart-low-stock-topic-arn
-
-
-  # ==============================================================
-  # LOW STOCK EVENTS ALARM - ORDER PROCESSING
-  # ==============================================================
-
-  LowStockEventsOrderProcessingAlarm:
-
-    Type: AWS::CloudWatch::Alarm
-
-    Properties:
-
-      AlarmName:
-        !Sub cloudmart-low-stock-events-order-processing-${EnvironmentName}
-
-      AlarmDescription:
-        Alert when order processing causes stock to enter low stock.
-
-      Namespace:
-        CloudMart/Application
-
-      MetricName:
-        LowStockEvents
-
-      Dimensions:
-
-        - Name:
-            Environment
-
-          Value:
-            !Ref EnvironmentName
-
-        - Name:
-            Service
-
-          Value:
-            OrderProcessing
 
       Statistic:
         Sum
@@ -660,6 +644,126 @@ Resources:
             cloudmart-order-failure-topic-arn
 
 
+  # ==============================================================
+  # API GATEWAY LATENCY ALARM
+  # ==============================================================
+
+  ApiGatewayLatencyAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-api-latency-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when API Gateway latency is high.
+
+      Namespace:
+        AWS/ApiGateway
+
+      MetricName:
+        Latency
+
+      Dimensions:
+
+        - Name:
+            ApiName
+
+          Value:
+            !Sub cloudmart-api-${EnvironmentName}
+
+        - Name:
+            Stage
+
+          Value:
+            !Ref EnvironmentName
+
+      Statistic:
+        Average
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        2500
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue:
+            cloudmart-order-failure-topic-arn
+
+
+  # ==============================================================
+  # API GATEWAY 4XX / THROTTLING INDICATOR ALARM
+  # ==============================================================
+
+  ApiGateway4XXAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-api-4xx-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when API Gateway records client-side 4XX errors. This can include HTTP 429 throttling responses.
+
+      Namespace:
+        AWS/ApiGateway
+
+      MetricName:
+        4XXError
+
+      Dimensions:
+
+        - Name:
+            ApiName
+
+          Value:
+            !Sub cloudmart-api-${EnvironmentName}
+
+        - Name:
+            Stage
+
+          Value:
+            !Ref EnvironmentName
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue:
+            cloudmart-order-failure-topic-arn
+
+
 # ================================================================
 # OUTPUTS
 # ================================================================
@@ -693,15 +797,6 @@ Outputs:
       !Ref LowStockEventsAlarm
 
 
-  LowStockEventsOrderProcessingAlarmName:
-
-    Description:
-      Low stock alarm for order processing
-
-    Value:
-      !Ref LowStockEventsOrderProcessingAlarm
-
-
   OrderProcessorLambdaErrorsAlarmName:
 
     Description:
@@ -718,3 +813,21 @@ Outputs:
 
     Value:
       !Ref RDSCPUAlarm
+
+  ApiGatewayLatencyAlarmName:
+
+    Description:
+      API Gateway latency alarm name
+
+    Value:
+      !Ref ApiGatewayLatencyAlarm
+
+
+  ApiGateway4XXAlarmName:
+
+    Description:
+      API Gateway 4XX/throttling indicator alarm name
+
+    Value:
+      !Ref ApiGateway4XXAlarm
+

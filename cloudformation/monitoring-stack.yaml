@@ -104,7 +104,7 @@ Resources:
                       {
                         "label": "Product Low Stock"
                       }
-                    ],
+                    ]
                   ]
                 }
               },
@@ -351,7 +351,7 @@ Resources:
                     ]
                   ]
                 }
-              }
+              },
 
               {
                 "type": "metric",

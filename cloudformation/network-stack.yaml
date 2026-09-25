@@ -613,7 +613,7 @@ Resources:
       Roles:
         - !Ref EC2InstanceRole
 
-  CloudMartEC2V2:
+  CloudMartEC2V3:
     Type: AWS::EC2::Instance
     DependsOn:
       - AttachGateway
@@ -667,7 +667,6 @@ Resources:
           command -v aws
           command -v python3
           command -v nginx
-          command -v curl
 
           mkdir -p "$DASHBOARD_DIR"
 
@@ -975,8 +974,8 @@ Resources:
 
           for attempt in $(seq 1 12); do
 
-            if curl --fail --silent --show-error \
-              http://127.0.0.1:5000/health >/dev/null; then
+            if python3 -c \
+              'import urllib.request; urllib.request.urlopen("http://127.0.0.1:5000/health", timeout=5)' >/dev/null 2>&1; then
 
               echo "Gunicorn /health check passed."
               break
@@ -1082,8 +1081,8 @@ Resources:
           if systemctl is-active --quiet cloudmart-dashboard; then
             echo "CloudMart Dashboard is ACTIVE."
 
-            if curl --fail --silent --show-error \
-              http://127.0.0.1:5000/health >/dev/null; then
+            if python3 -c \
+              'import urllib.request; urllib.request.urlopen("http://127.0.0.1:5000/health", timeout=5)' >/dev/null 2>&1; then
               echo "Gunicorn /health check passed."
             else
               echo "WARNING: Gunicorn is active but /health failed."
@@ -1477,18 +1476,18 @@ Outputs:
 
   EC2InstanceId:
     Description: CloudMart EC2 instance ID
-    Value: !Ref CloudMartEC2V2
+    Value: !Ref CloudMartEC2V3
     Export:
       Name: cloudmart-ec2-instance-id
 
   EC2PublicIP:
     Description: CloudMart EC2 public IP address
-    Value: !GetAtt CloudMartEC2V2.PublicIp
+    Value: !GetAtt CloudMartEC2V3.PublicIp
     Export:
       Name: cloudmart-ec2-public-ip
 
   EC2PrivateIP:
     Description: CloudMart EC2 private IP address
-    Value: !GetAtt CloudMartEC2V2.PrivateIp
+    Value: !GetAtt CloudMartEC2V3.PrivateIp
     Export:
       Name: cloudmart-ec2-private-ip

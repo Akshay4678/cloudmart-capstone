@@ -562,6 +562,9 @@ Resources:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
 
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
       Policies:
         - PolicyName: CloudMartDashboardAccess
           PolicyDocument:
@@ -649,7 +652,10 @@ Resources:
           echo "Starting CloudMart dashboard bootstrap..."
 
           dnf update -y
-          dnf install -y mariadb105 python3 python3-pip unzip awscli-2 nginx
+          dnf install -y mariadb105 python3 python3-pip unzip awscli-2 nginx amazon-ssm-agent
+
+          # Keep the instance reachable by GitHub Actions through AWS Systems Manager.
+          systemctl enable --now amazon-ssm-agent
 
           # Amazon Linux 2023 does not guarantee that the AWS CLI is
           # preinstalled. Install it explicitly before any S3 operations.
@@ -837,6 +843,18 @@ Resources:
           "$DASHBOARD_DIR/venv/bin/pip" install --upgrade pip
           "$DASHBOARD_DIR/venv/bin/pip" install -r "$DASHBOARD_DIR/requirements.txt"
 
+          # Gunicorn is required by cloudmart-dashboard.service.
+          # Install it explicitly so the service does not depend on
+          # dashboard/requirements.txt containing the web server package.
+          "$DASHBOARD_DIR/venv/bin/pip" install gunicorn
+
+          if [ ! -x "$DASHBOARD_DIR/venv/bin/gunicorn" ]; then
+            echo "ERROR: Gunicorn installation failed."
+            exit 1
+          fi
+
+          echo "Gunicorn installed successfully: $("$DASHBOARD_DIR/venv/bin/gunicorn" --version)"
+
           cat > /etc/cloudmart-dashboard.env <<ENVEOF
           AWS_REGION=$AWS_REGION_VALUE
           ENVIRONMENT=dev
@@ -859,6 +877,13 @@ Resources:
           mv "$TMP_STATE_FILE" "$STATE_FILE"
 
           systemctl daemon-reload
+
+          # Verify the exact executable used by systemd exists before starting.
+          if [ ! -x "$DASHBOARD_DIR/venv/bin/gunicorn" ]; then
+            echo "ERROR: $DASHBOARD_DIR/venv/bin/gunicorn does not exist."
+            exit 1
+          fi
+
           systemctl enable cloudmart-dashboard
           systemctl restart cloudmart-dashboard
 

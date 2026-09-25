@@ -634,7 +634,7 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          set -euo pipefail
+          set -u
 
           exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
 
@@ -655,7 +655,6 @@ Resources:
           echo "Installing required system packages..."
 
           dnf install -y \
-            mariadb105 \
             python3 \
             python3-pip \
             unzip \
@@ -665,7 +664,7 @@ Resources:
             nginx \
             amazon-ssm-agent
 
-          systemctl enable --now amazon-ssm-agent
+          systemctl enable --now amazon-ssm-agent || true
 
           command -v aws
           command -v python3
@@ -702,6 +701,20 @@ Resources:
           NGINXEOF
 
           nginx -t
+
+          # Start NGINX immediately. It will return 502 until Gunicorn
+          # is ready, but port 80 will remain reachable.
+          systemctl enable nginx
+          systemctl restart nginx
+
+          if ! systemctl is-active --quiet nginx; then
+            echo "ERROR: NGINX failed to start."
+            systemctl status nginx --no-pager || true
+            journalctl -u nginx --no-pager -n 100 || true
+            exit 1
+          fi
+
+          echo "NGINX is ACTIVE."
 
           # ============================================================
           # DASHBOARD DEPLOYMENT SCRIPT
@@ -1036,34 +1049,31 @@ Resources:
           fi
 
           # ============================================================
-          # START NGINX ONLY AFTER GUNICORN IS HEALTHY
+          # FINAL STATUS CHECK
+          # NGINX WAS ALREADY STARTED BEFORE DASHBOARD DEPLOYMENT.
           # ============================================================
 
           if systemctl is-active --quiet cloudmart-dashboard; then
-
-            echo "Starting NGINX..."
-
-            systemctl enable --now nginx
-
-            if ! systemctl is-active --quiet nginx; then
-              echo "ERROR: NGINX failed to start."
-              systemctl status nginx --no-pager || true
-              journalctl -u nginx --no-pager -n 100 || true
-              exit 1
-            fi
-
-            echo "NGINX is ACTIVE."
+            echo "CloudMart Dashboard is ACTIVE."
 
             if curl --fail --silent --show-error \
-              http://127.0.0.1/health >/dev/null; then
-              echo "NGINX reverse proxy health check passed."
+              http://127.0.0.1:5000/health >/dev/null; then
+              echo "Gunicorn /health check passed."
             else
-              echo "WARNING: NGINX is active but /health check failed."
+              echo "WARNING: Gunicorn is active but /health failed."
             fi
-
           else
-            echo "Dashboard is not healthy yet."
-            echo "NGINX will be started by the next successful deployment."
+            echo "WARNING: CloudMart Dashboard is not active yet."
+            echo "The dashboard update timer will retry deployment."
+            systemctl status cloudmart-dashboard --no-pager || true
+            journalctl -u cloudmart-dashboard --no-pager -n 50 || true
+          fi
+
+          if systemctl is-active --quiet nginx; then
+            echo "NGINX is ACTIVE."
+          else
+            echo "ERROR: NGINX is not active."
+            systemctl status nginx --no-pager || true
           fi
 
           echo "=================================================="

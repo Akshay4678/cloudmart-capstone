@@ -654,7 +654,7 @@ Resources:
 
           echo "Installing required system packages..."
 
-          dnf install -y \
+          dnf install -y --allowerasing \
             python3 \
             python3-pip \
             unzip \

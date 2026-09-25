@@ -659,7 +659,6 @@ Resources:
             python3-pip \
             unzip \
             openssl \
-            awscli-2 \
             nginx \
             amazon-ssm-agent
 
@@ -701,19 +700,9 @@ Resources:
 
           nginx -t
 
-          # Start NGINX immediately. It will return 502 until Gunicorn
-          # is ready, but port 80 will remain reachable.
-          systemctl enable nginx
-          systemctl restart nginx
-
-          if ! systemctl is-active --quiet nginx; then
-            echo "ERROR: NGINX failed to start."
-            systemctl status nginx --no-pager || true
-            journalctl -u nginx --no-pager -n 100 || true
-            exit 1
-          fi
-
-          echo "NGINX is ACTIVE."
+          # NGINX is configured here but started only after
+          # Gunicorn is installed, running, and healthy.
+          echo "NGINX configuration validated successfully."
 
           # ============================================================
           # DASHBOARD DEPLOYMENT SCRIPT
@@ -803,7 +792,26 @@ Resources:
              && systemctl is-active --quiet cloudmart-dashboard; then
 
             echo "Dashboard is already deployed and healthy."
-            exit 0
+
+            if systemctl is-active --quiet nginx; then
+              echo "NGINX is already active."
+              exit 0
+            fi
+
+            echo "NGINX is not active. Starting NGINX..."
+            nginx -t
+            systemctl enable nginx
+            systemctl restart nginx
+
+            if systemctl is-active --quiet nginx; then
+              echo "NGINX is ACTIVE."
+              exit 0
+            fi
+
+            echo "ERROR: NGINX failed to start."
+            systemctl status nginx --no-pager || true
+            journalctl -u nginx --no-pager -n 100 || true
+            exit 1
           fi
 
           # ============================================================
@@ -985,7 +993,25 @@ Resources:
             fi
           done
 
-          # Save deployment state ONLY after Gunicorn is healthy.
+          # ============================================================
+          # START NGINX ONLY AFTER GUNICORN IS HEALTHY
+          # ============================================================
+
+          echo "Starting NGINX..."
+
+          systemctl enable nginx
+          systemctl restart nginx
+
+          if ! systemctl is-active --quiet nginx; then
+            echo "ERROR: NGINX failed to start."
+            systemctl status nginx --no-pager || true
+            journalctl -u nginx --no-pager -n 100 || true
+            exit 1
+          fi
+
+          echo "NGINX is ACTIVE."
+
+          # Save deployment state ONLY after Gunicorn and NGINX are healthy.
           printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\n' \
             "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" > "$TMP_STATE_FILE"
 
@@ -1049,7 +1075,8 @@ Resources:
 
           # ============================================================
           # FINAL STATUS CHECK
-          # NGINX WAS ALREADY STARTED BEFORE DASHBOARD DEPLOYMENT.
+          # NGINX IS STARTED BY THE DEPLOYMENT SCRIPT AFTER
+          # GUNICORN HEALTH CHECK PASSES.
           # ============================================================
 
           if systemctl is-active --quiet cloudmart-dashboard; then
@@ -1064,6 +1091,7 @@ Resources:
           else
             echo "WARNING: CloudMart Dashboard is not active yet."
             echo "The dashboard update timer will retry deployment."
+            echo "NGINX will start automatically after Gunicorn becomes healthy."
             systemctl status cloudmart-dashboard --no-pager || true
             journalctl -u cloudmart-dashboard --no-pager -n 50 || true
           fi
@@ -1071,8 +1099,7 @@ Resources:
           if systemctl is-active --quiet nginx; then
             echo "NGINX is ACTIVE."
           else
-            echo "ERROR: NGINX is not active."
-            systemctl status nginx --no-pager || true
+            echo "NGINX is not active yet; this is expected until the dashboard deployment succeeds."
           fi
 
           echo "=================================================="

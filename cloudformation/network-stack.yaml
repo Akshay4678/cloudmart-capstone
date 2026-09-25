@@ -498,22 +498,6 @@ Resources:
 
   # ================================================================
   # EC2 DASHBOARD
-  # FLASK 5000
-  # ================================================================
-
-  EC2FlaskIngressV2:
-    Type: AWS::EC2::SecurityGroupIngress
-
-    Properties:
-      GroupId: !Ref EC2SecurityGroup
-      IpProtocol: tcp
-      FromPort: 5000
-      ToPort: 5000
-      CidrIp: !Ref DashboardIngressCidr
-
-
-  # ================================================================
-  # EC2 DASHBOARD
   # HTTP 80
   # NGINX REVERSE PROXY -> FLASK 5000
   # ================================================================
@@ -654,9 +638,19 @@ Resources:
 
           echo "Starting CloudMart dashboard bootstrap..."
 
-          # Do not run a full OS update during bootstrap.
-          # It can delay NGINX availability while the EC2 instance initializes.
-          dnf install -y mariadb105 python3 python3-pip unzip awscli-2 nginx amazon-ssm-agent
+          # Install only the packages required by the dashboard.
+          # Avoid a full OS update during bootstrap because it can delay
+          # dashboard availability.
+          dnf install -y \
+            mariadb105 \
+            python3 \
+            python3-pip \
+            unzip \
+            curl \
+            openssl \
+            awscli-2 \
+            nginx \
+            amazon-ssm-agent
 
           # Keep the instance reachable by GitHub Actions through AWS Systems Manager.
           systemctl enable --now amazon-ssm-agent
@@ -678,9 +672,17 @@ Resources:
           mkdir -p /opt/cloudmart-dashboard
           chown -R ec2-user:ec2-user /opt/cloudmart-dashboard
 
+          # Create a persistent Flask session secret.
+          if [ ! -s /etc/cloudmart-dashboard-secret ]; then
+            umask 077
+            openssl rand -hex 32 > /etc/cloudmart-dashboard-secret
+          fi
+          chmod 600 /etc/cloudmart-dashboard-secret
+
           # ============================================================
           # NGINX REVERSE PROXY
-          # HTTP :80 -> Flask/Gunicorn :5000
+          # HTTP :80 -> NGINX -> Flask/Gunicorn :5000
+          # Gunicorn listens only on localhost.
           # ============================================================
 
           rm -f /etc/nginx/conf.d/default.conf
@@ -705,10 +707,10 @@ Resources:
 
           nginx -t
 
-          # Start NGINX immediately so HTTP port 80 is available even if
-          # dashboard artifacts are still being uploaded to S3.
-          systemctl enable nginx
-          systemctl start nginx
+          # NGINX is configured now, but it is started only after
+          # Gunicorn is successfully deployed and passes its health check.
+          # This prevents a permanent 502 while the dashboard artifact
+          # is still being uploaded to S3.
 
           cat > /usr/local/bin/cloudmart-dashboard-deploy.sh <<'DEPLOYEOF'
           #!/bin/bash
@@ -870,6 +872,8 @@ Resources:
           DB_USER=cloudmartadmin
           DB_PORT=3306
           DB_PASSWORD_PARAMETER=/cloudmart/dev/database/password
+          SESSION_SECRET_FILE=/etc/cloudmart-dashboard-secret
+          SESSION_TIMEOUT_MINUTES=60
           ENVEOF
 
           chown root:root /etc/cloudmart-dashboard.env
@@ -900,6 +904,44 @@ Resources:
             exit 1
           fi
 
+          # Verify Flask/Gunicorn before exposing the dashboard through NGINX.
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error http://127.0.0.1:5000/health >/dev/null 2>&1; then
+              echo "Dashboard health check passed."
+              break
+            fi
+
+            echo "Waiting for Flask/Gunicorn health endpoint... attempt $attempt/12"
+            sleep 5
+
+            if [ "$attempt" -eq 12 ]; then
+              echo "ERROR: Flask dashboard did not become healthy."
+              systemctl status cloudmart-dashboard --no-pager || true
+              journalctl -u cloudmart-dashboard -n 100 --no-pager || true
+              exit 1
+            fi
+          done
+
+          # Start NGINX only after the dashboard backend is healthy.
+          systemctl daemon-reload
+          systemctl enable nginx
+          systemctl restart nginx
+
+          if ! systemctl is-active --quiet nginx; then
+            echo "ERROR: NGINX failed to start."
+            systemctl status nginx --no-pager || true
+            journalctl -u nginx -n 100 --no-pager || true
+            exit 1
+          fi
+
+          # Verify the reverse proxy itself.
+          if ! curl --fail --silent --show-error http://127.0.0.1/health >/dev/null 2>&1; then
+            echo "ERROR: NGINX is running but dashboard is not reachable through port 80."
+            nginx -t || true
+            systemctl status nginx --no-pager || true
+            exit 1
+          fi
+
           echo "Dashboard deployment completed."
           DEPLOYEOF
 
@@ -913,10 +955,10 @@ Resources:
 
           [Service]
           Type=simple
-          User=ec2-user
+          User=root
           WorkingDirectory=/opt/cloudmart-dashboard
           EnvironmentFile=/etc/cloudmart-dashboard.env
-          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 60 app:app
+          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --bind 127.0.0.1:5000 --workers 2 --timeout 60 app:app
           Restart=always
           RestartSec=5
 
@@ -972,10 +1014,15 @@ Resources:
             echo "CloudMart dashboard service is waiting for the next successful artifact deployment."
           fi
 
-          # NGINX must remain available independently of the Flask deployment.
-          systemctl enable --now nginx
+          # NGINX is started by the dashboard deployment script only after
+          # Gunicorn passes its health check.
+          if systemctl is-active --quiet nginx; then
+            echo "NGINX is active and serving the dashboard."
+          else
+            echo "NGINX is waiting for the next successful dashboard deployment."
+          fi
 
-          echo "CloudMart dashboard bootstrap completed." 
+          echo "CloudMart dashboard bootstrap completed."
       Tags:
         - Key: Name
           Value: !Sub cloudmart-ec2-${AWS::StackName}

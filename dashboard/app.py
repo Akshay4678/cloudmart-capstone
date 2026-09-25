@@ -1,27 +1,15 @@
 import csv
 import io
 import os
-from datetime import datetime, timedelta
-import hashlib
-import secrets
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import boto3
 import pymysql
 from botocore.exceptions import BotoCoreError, ClientError
-from flask import Flask, Response, jsonify, redirect, render_template_string, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template_string, request, url_for
 
 app = Flask(__name__)
-
-# ============================================================
-# ADMIN AUTHENTICATION
-# ============================================================
-
-# Flask session configuration is initialized after the AWS clients are created.
-# The secret is loaded from FLASK_SECRET_KEY when supplied. If it is not supplied,
-# a stable secret is derived from the existing encrypted RDS password in SSM.
-# This is intentionally NOT a random value: every Gunicorn worker must use the
-# same secret or the browser session can appear to expire randomly.
 
 # ============================================================
 # CONFIGURATION
@@ -57,30 +45,6 @@ def get_db_password():
     return response["Parameter"]["Value"]
 
 
-def get_flask_secret_key():
-    """Return one stable Flask session-signing key for every Gunicorn worker."""
-    configured_key = os.environ.get("FLASK_SECRET_KEY", "").strip()
-    if configured_key:
-        return configured_key
-
-    # No separate secret is required for the current deployment. Derive a
-    # stable application-specific key from the existing encrypted DB password.
-    # The DB password itself is never used directly as the Flask key.
-    db_password = get_db_password()
-    material = f"CloudMartDashboardSession::{db_password}".encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
-
-
-app.secret_key = get_flask_secret_key()
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=24)
-app.config["SESSION_REFRESH_EACH_REQUEST"] = False
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-# The current dashboard is served over HTTP. Set this to True when the
-# dashboard is moved to HTTPS.
-app.config["SESSION_COOKIE_SECURE"] = False
-
-
 def get_db_connection():
     if not DB_HOST:
         raise RuntimeError("DB_HOST is not configured")
@@ -109,221 +73,6 @@ def query_db(sql, params=None):
     finally:
         if connection:
             connection.close()
-
-
-# ============================================================
-# ADMIN AUTHENTICATION
-# Uses the existing customers table in RDS.
-# No new database table is required.
-# ============================================================
-
-def hash_admin_token(token):
-    """Create the same SHA-256 hash used by CloudMart auth."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def verify_admin_credentials(admin_id, admin_token):
-    """
-    Verify an admin ID and token against the existing customers table.
-
-    The dashboard only accepts a customer whose role is ADMIN.
-    The database stores auth_token_hash, never the plain token.
-    """
-    admin_id = (admin_id or "").strip()
-    admin_token = (admin_token or "").strip()
-
-    if not admin_id or not admin_token:
-        return None
-
-    rows = query_db(
-        """
-        SELECT customer_id, name, role, auth_token_hash
-        FROM customers
-        WHERE customer_id = %s
-          AND role = 'ADMIN'
-        LIMIT 1
-        """,
-        (admin_id,),
-    )
-
-    if not rows:
-        return None
-
-    admin = rows[0]
-    supplied_hash = hash_admin_token(admin_token)
-    stored_hash = str(admin.get("auth_token_hash") or "")
-
-    # compare_digest avoids a simple string comparison for the secret hash.
-    if not secrets.compare_digest(supplied_hash, stored_hash):
-        return None
-
-    return admin
-
-
-@app.before_request
-def require_admin_login():
-    """Protect every dashboard route except login/logout/health."""
-    public_endpoints = {"login", "health", "static"}
-
-    if request.endpoint in public_endpoints:
-        return None
-
-    if not session.get("admin_authenticated"):
-        return redirect(url_for("login"))
-
-    # The session is permanent and has a fixed 24-hour lifetime.
-    # SESSION_REFRESH_EACH_REQUEST=False prevents activity from extending it.
-    return None
-
-
-# ============================================================
-# ADMIN LOGIN
-# ============================================================
-
-LOGIN_BODY = r"""
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CloudMart · Admin Login</title>
-<style>
-:root {
-    --bg: #f5f7fb;
-    --surface: #ffffff;
-    --text: #101828;
-    --muted: #667085;
-    --line: #d0d5dd;
-    --blue: #2563eb;
-    --red: #d92d20;
-}
-* { box-sizing: border-box; }
-body {
-    margin: 0;
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 20px;
-    background: var(--bg);
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system,
-                 BlinkMacSystemFont, "Segoe UI", sans-serif;
-    color: var(--text);
-}
-.login-card {
-    width: min(420px, 100%);
-    background: var(--surface);
-    border: 1px solid #e4e7ec;
-    border-radius: 16px;
-    padding: 32px;
-    box-shadow: 0 12px 40px rgba(16,24,40,.08);
-}
-.logo {
-    width: 48px; height: 48px; border-radius: 12px;
-    display: grid; place-items: center;
-    background: #101828; color: #fff;
-    font-weight: 900; font-size: 22px;
-    margin-bottom: 18px;
-}
-h1 { margin: 0; font-size: 25px; }
-p { color: var(--muted); font-size: 13px; margin: 7px 0 25px; }
-label { display: block; margin: 15px 0 7px; font-size: 12px; font-weight: 750; }
-input {
-    width: 100%; padding: 11px 12px;
-    border: 1px solid var(--line); border-radius: 9px;
-    font: inherit; outline: none;
-}
-input:focus { border-color: var(--blue); }
-button {
-    width: 100%; margin-top: 22px; padding: 11px;
-    border: 0; border-radius: 9px;
-    background: var(--blue); color: #fff;
-    font: inherit; font-weight: 750; cursor: pointer;
-}
-button:hover { background: #1d4ed8; }
-.error {
-    margin-bottom: 16px; padding: 11px 13px;
-    border-radius: 9px; background: #fef3f2;
-    border: 1px solid #fecdca; color: var(--red);
-    font-size: 12px;
-}
-.note { margin-top: 18px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-</style>
-</head>
-<body>
-<div class="login-card">
-    <div class="logo">C</div>
-    <h1>CloudMart Admin</h1>
-    <p>Sign in to access the CloudMart Operations Console.</p>
-
-    {% if error %}
-        <div class="error">{{ error }}</div>
-    {% endif %}
-
-    <form method="post" action="{{ url_for('login') }}">
-        <label for="admin_id">Admin ID</label>
-        <input id="admin_id" name="admin_id" type="text"
-               autocomplete="username" required autofocus
-               value="{{ admin_id }}">
-
-        <label for="admin_token">Admin Token</label>
-        <input id="admin_token" name="admin_token" type="password"
-               autocomplete="current-password" required>
-
-        <button type="submit">Login</button>
-    </form>
-
-    <div class="note">
-        Only accounts with the <strong>ADMIN</strong> role can access this dashboard.
-        Your session expires automatically after 24 hours.
-    </div>
-</div>
-</body>
-</html>
-"""
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if session.get("admin_authenticated"):
-        return redirect(url_for("dashboard"))
-
-    error = None
-    admin_id = ""
-
-    if request.method == "POST":
-        admin_id = request.form.get("admin_id", "").strip()
-        admin_token = request.form.get("admin_token", "")
-
-        try:
-            admin = verify_admin_credentials(admin_id, admin_token)
-        except Exception:
-            # Do not expose database/SSM errors to the login page.
-            admin = None
-            error = "Unable to verify credentials. Please try again."
-
-        if admin:
-            session.clear()
-            session.permanent = True
-            session["admin_authenticated"] = True
-            session["admin_id"] = admin["customer_id"]
-            session["admin_role"] = str(admin["role"]).upper()
-            session["admin_name"] = admin.get("name") or admin["customer_id"]
-            return redirect(url_for("dashboard"))
-
-        if error is None:
-            error = "Invalid Admin ID or Admin Token."
-
-    return render_template_string(
-        LOGIN_BODY,
-        error=error,
-        admin_id=admin_id,
-    )
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
 
 
 # ============================================================
@@ -390,14 +139,14 @@ def fetch_dashboard_data():
     )
 
     # Top 5 products sold during the last 7 days.
-    # order_items uses quantity + price in the actual schema.
+    # order_items uses quantity + unit_price in the actual schema.
     top_products = query_db(
         """
         SELECT
             p.product_id,
             p.name,
             COALESCE(SUM(oi.quantity), 0) AS units_sold,
-            COALESCE(SUM(oi.quantity * oi.price), 0) AS revenue
+            COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS revenue
         FROM orders o
         INNER JOIN order_items oi
             ON o.order_id = oi.order_id
@@ -1069,8 +818,8 @@ def order_details(order_id):
             oi.product_id,
             p.name AS product_name,
             oi.quantity,
-            oi.price AS unit_price,
-            (oi.quantity * oi.price) AS subtotal
+            oi.unit_price AS unit_price,
+            (oi.quantity * oi.unit_price) AS subtotal
         FROM order_items oi
         INNER JOIN products p
             ON oi.product_id = p.product_id
@@ -1107,8 +856,8 @@ def order_items():
             oi.product_id,
             p.name AS product_name,
             oi.quantity,
-            oi.price AS unit_price,
-            (oi.quantity * oi.price) AS subtotal,
+            oi.unit_price AS unit_price,
+            (oi.quantity * oi.unit_price) AS subtotal,
             oi.created_at
         FROM order_items oi
         INNER JOIN products p
@@ -1139,13 +888,12 @@ def audit_logs():
     rows = query_db(
         """
         SELECT
-            log_id,
+            audit_id,
+            customer_id,
+            action,
             entity_type,
             entity_id,
-            action,
-            old_value,
-            new_value,
-            performed_by,
+            details,
             created_at
         FROM audit_logs
         ORDER BY created_at DESC
@@ -1947,13 +1695,7 @@ footer {
         <h1>CloudMart · {{ page_title }}</h1>
         <p>{{ page_subtitle }}</p>
     </div>
-    <div style="display:flex;align-items:center;gap:10px;">
-        <div class="env">● DEV</div>
-        {% if session.get("admin_authenticated") %}
-            <span style="font-size:12px;color:#667085;">{{ session.get("admin_id") }}</span>
-            <a class="btn" href="{{ url_for('logout') }}">Logout</a>
-        {% endif %}
-    </div>
+    <div class="env">● DEV</div>
 </header>
 
 <main class="content" id="page-content">
@@ -2703,13 +2445,12 @@ AUDIT_BODY = r"""
         <table>
             <thead>
                 <tr>
-                    <th>Log ID</th>
+                    <th>Audit ID</th>
+                    <th>Customer ID</th>
+                    <th>Action</th>
                     <th>Entity Type</th>
                     <th>Entity ID</th>
-                    <th>Action</th>
-                    <th>Old Value</th>
-                    <th>New Value</th>
-                    <th>Performed By</th>
+                    <th>Details</th>
                     <th>Created</th>
                 </tr>
             </thead>
@@ -2717,15 +2458,14 @@ AUDIT_BODY = r"""
             <tbody>
             {% for log in logs %}
                 <tr>
-                    <td>{{ log.log_id }}</td>
-                    <td>{{ log.entity_type or "—" }}</td>
-                    <td>{{ log.entity_id or "—" }}</td>
+                    <td>{{ log.audit_id }}</td>
+                    <td>{{ log.customer_id or "—" }}</td>
                     <td>
                         <span class="badge badge-blue">{{ log.action }}</span>
                     </td>
-                    <td class="description">{{ log.old_value or "—" }}</td>
-                    <td class="description">{{ log.new_value or "—" }}</td>
-                    <td>{{ log.performed_by or "—" }}</td>
+                    <td>{{ log.entity_type or "—" }}</td>
+                    <td>{{ log.entity_id or "—" }}</td>
+                    <td class="description">{{ log.details or "—" }}</td>
                     <td>{{ log.created_at }}</td>
                 </tr>
             {% endfor %}

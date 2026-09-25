@@ -623,7 +623,10 @@ Resources:
 
   CloudMartEC2:
     Type: AWS::EC2::Instance
-    DependsOn: AttachGateway
+    DependsOn:
+      - AttachGateway
+      - PublicRoute
+      - PublicSubnetAssociation
     UpdateReplacePolicy: Delete
     DeletionPolicy: Delete
     Properties:
@@ -651,7 +654,8 @@ Resources:
 
           echo "Starting CloudMart dashboard bootstrap..."
 
-          dnf update -y
+          # Do not run a full OS update during bootstrap.
+          # It can delay NGINX availability while the EC2 instance initializes.
           dnf install -y mariadb105 python3 python3-pip unzip awscli-2 nginx amazon-ssm-agent
 
           # Keep the instance reachable by GitHub Actions through AWS Systems Manager.

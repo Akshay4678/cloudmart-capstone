@@ -422,8 +422,6 @@ jobs:
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
-            --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -460,7 +458,6 @@ jobs:
             --stack-name cloudmart-data-stack \
             --template-file cloudformation/data-stack.yaml \
             --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
               "DBPassword=$DB_PASSWORD" \
             --no-fail-on-empty-changeset
 
@@ -972,13 +969,9 @@ jobs:
             exit 1
           fi
 
-          DASHBOARD_NAME="cloudmart-operations-${ENVIRONMENT_NAME}"
-
-          echo "Checking CloudWatch dashboard: $DASHBOARD_NAME"
-
           aws cloudwatch get-dashboard \
             --region "$AWS_REGION" \
-            --dashboard-name "$DASHBOARD_NAME" \
+            --dashboard-name cloudmart-operations \
             >/dev/null
 
           ALARM_COUNT=$(aws cloudformation list-stack-resources \
@@ -987,7 +980,7 @@ jobs:
             --query "length(StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm'])" \
             --output text)
 
-          echo "CloudWatch dashboard: $DASHBOARD_NAME"
+          echo "CloudWatch dashboard: cloudmart-operations"
           echo "CloudWatch alarms: $ALARM_COUNT"
 
           if [ "$ALARM_COUNT" -lt 4 ]; then
@@ -1053,7 +1046,7 @@ jobs:
           echo "=================================================="
 
           if [ -n "${{ steps.milestone5_outputs.outputs.public_ip }}" ]; then
-            echo "Dashboard: http://${{ steps.milestone5_outputs.outputs.public_ip }}"
+            echo "Dashboard: http://${{ steps.milestone5_outputs.outputs.public_ip }}:5000"
           fi
 
           if [ -n "${{ steps.api_url.outputs.url }}" ]; then

@@ -422,6 +422,8 @@ jobs:
             --region "$AWS_REGION" \
             --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
+            --parameter-overrides \
+              "EnvironmentName=$ENVIRONMENT_NAME" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -432,7 +434,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack \
+            --stack-name cloudmart-network-stack\
             --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -458,6 +460,7 @@ jobs:
             --stack-name cloudmart-data-stack \
             --template-file cloudformation/data-stack.yaml \
             --parameter-overrides \
+              "EnvironmentName=$ENVIRONMENT_NAME" \
               "DBPassword=$DB_PASSWORD" \
             --no-fail-on-empty-changeset
 
@@ -969,9 +972,13 @@ jobs:
             exit 1
           fi
 
+          DASHBOARD_NAME="cloudmart-operations-${ENVIRONMENT_NAME}"
+
+          echo "Checking CloudWatch dashboard: $DASHBOARD_NAME"
+
           aws cloudwatch get-dashboard \
             --region "$AWS_REGION" \
-            --dashboard-name cloudmart-operations \
+            --dashboard-name "$DASHBOARD_NAME" \
             >/dev/null
 
           ALARM_COUNT=$(aws cloudformation list-stack-resources \
@@ -980,7 +987,7 @@ jobs:
             --query "length(StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm'])" \
             --output text)
 
-          echo "CloudWatch dashboard: cloudmart-operations"
+          echo "CloudWatch dashboard: $DASHBOARD_NAME"
           echo "CloudWatch alarms: $ALARM_COUNT"
 
           if [ "$ALARM_COUNT" -lt 4 ]; then
@@ -1024,11 +1031,11 @@ jobs:
 
           for stack in \
             cloudmart-network-stack \
-            cloudmart-data-stack \
-            cloudmart-iam-stack \
-            cloudmart-auth-stack \
-            cloudmart-api-stack \
-            cloudmart-monitoring-stack
+            cloudmart-data-stack-$ENVIRONMENT_NAME \
+            cloudmart-iam-stack-$ENVIRONMENT_NAME \
+            cloudmart-auth-stack-$ENVIRONMENT_NAME \
+            cloudmart-api-stack-$ENVIRONMENT_NAME \
+            cloudmart-monitoring-stack-$ENVIRONMENT_NAME
           do
             echo ""
             echo "===== $stack ====="
@@ -1046,7 +1053,7 @@ jobs:
           echo "=================================================="
 
           if [ -n "${{ steps.milestone5_outputs.outputs.public_ip }}" ]; then
-            echo "Dashboard: http://${{ steps.milestone5_outputs.outputs.public_ip }}:5000"
+            echo "Dashboard: http://${{ steps.milestone5_outputs.outputs.public_ip }}"
           fi
 
           if [ -n "${{ steps.api_url.outputs.url }}" ]; then

@@ -264,6 +264,75 @@ Resources:
 
 Outputs:
 
+
+  # ================================================================
+  # LEGACY EXPORTS - TEMPORARY MIGRATION COMPATIBILITY
+  # ================================================================
+
+  LegacyDatabaseIdentifier:
+    Value: !Ref CloudMartDatabase
+    Export:
+      Name: cloudmart-database-identifier
+
+  LegacyDatabaseResourceId:
+    Value: !GetAtt CloudMartDatabase.DbiResourceId
+    Export:
+      Name: cloudmart-database-resource-id
+
+  LegacyDatabaseEndpoint:
+    Value: !GetAtt CloudMartDatabase.Endpoint.Address
+    Export:
+      Name: cloudmart-database-endpoint
+
+  LegacyDatabasePort:
+    Value: !GetAtt CloudMartDatabase.Endpoint.Port
+    Export:
+      Name: cloudmart-database-port
+
+  LegacyDatabaseConnectionEndpoint:
+    Value: !Sub
+      - "${Endpoint}:${Port}"
+      - Endpoint: !GetAtt CloudMartDatabase.Endpoint.Address
+        Port: !GetAtt CloudMartDatabase.Endpoint.Port
+    Export:
+      Name: cloudmart-database-connection-endpoint
+
+  LegacyDatabaseName:
+    Value: !Ref DBName
+    Export:
+      Name: cloudmart-database-name
+
+  LegacyDatabaseUsername:
+    Value: !Ref DBUsername
+    Export:
+      Name: cloudmart-database-username
+
+  LegacyDatabaseSubnetGroup:
+    Value: !Ref RdsSubnetGroup
+    Export:
+      Name: cloudmart-database-subnet-group
+
+  LegacyReportsBucket:
+    Value: !Ref ReportsBucket
+    Export:
+      Name: cloudmart-reports-bucket
+
+  LegacyReportsBucketArn:
+    Value: !GetAtt ReportsBucket.Arn
+    Export:
+      Name: cloudmart-reports-bucket-arn
+
+  LegacyLambdaBucket:
+    Value: !Ref LambdaArtifactsBucket
+    Export:
+      Name: cloudmart-lambda-bucket
+
+  LegacyLambdaBucketArn:
+    Value: !GetAtt LambdaArtifactsBucket.Arn
+    Export:
+      Name: cloudmart-lambda-bucket-arn
+
+
   # ==============================================================
   # DATABASE IDENTIFIER
   # ==============================================================

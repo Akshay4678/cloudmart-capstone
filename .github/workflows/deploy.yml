@@ -530,25 +530,7 @@ jobs:
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
       # ==========================================================
-      # 16. STORE LAMBDA ARTIFACT BUCKET IN SSM
-      # ==========================================================
-      - name: Store Lambda Artifact Bucket in SSM
-        run: |
-          set -euo pipefail
-
-          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
-
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/$ENVIRONMENT_NAME/lambda-artifact-bucket" \
-            --type "String" \
-            --value "$BUCKET" \
-            --overwrite
-
-          echo "Lambda artifact bucket stored in SSM."
-
-      # ==========================================================
-      # 17. UPLOAD AUTHORIZER PACKAGE
+      # 16. UPLOAD AUTHORIZER PACKAGE
       # ==========================================================
       - name: Upload Authorizer Lambda
         run: |
@@ -958,9 +940,13 @@ jobs:
             exit 1
           fi
 
+          DASHBOARD_NAME="cloudmart-operations-${ENVIRONMENT_NAME}"
+
+          echo "Checking CloudWatch dashboard: $DASHBOARD_NAME"
+
           aws cloudwatch get-dashboard \
             --region "$AWS_REGION" \
-            --dashboard-name cloudmart-operations \
+            --dashboard-name "$DASHBOARD_NAME" \
             >/dev/null
 
           ALARM_COUNT=$(aws cloudformation list-stack-resources \
@@ -969,7 +955,7 @@ jobs:
             --query "length(StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm'])" \
             --output text)
 
-          echo "CloudWatch dashboard: cloudmart-operations"
+          echo "CloudWatch dashboard: $DASHBOARD_NAME"
           echo "CloudWatch alarms: $ALARM_COUNT"
 
           if [ "$ALARM_COUNT" -lt 4 ]; then

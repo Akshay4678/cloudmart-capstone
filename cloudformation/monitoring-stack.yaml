@@ -32,7 +32,7 @@ Resources:
 
     Properties:
 
-      DashboardName: !Sub cloudmart-operations-${EnvironmentName}
+      DashboardName: cloudmart-operations
 
       DashboardBody: !Sub
         - |
@@ -412,8 +412,7 @@ Resources:
           }
 
         - DatabaseIdentifier:
-            Fn::ImportValue:
-              !Sub cloudmart-database-identifier-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-identifier
 
 
   # ==============================================================
@@ -473,7 +472,7 @@ Resources:
       AlarmActions:
 
         - Fn::ImportValue:
-            !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
+            cloudmart-order-failure-topic-arn
 
 
   # ==============================================================
@@ -533,7 +532,7 @@ Resources:
       AlarmActions:
 
         - Fn::ImportValue:
-            !Sub cloudmart-low-stock-topic-arn-${EnvironmentName}
+            cloudmart-low-stock-topic-arn
 
 
   # ==============================================================
@@ -587,7 +586,7 @@ Resources:
       AlarmActions:
 
         - Fn::ImportValue:
-            !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
+            cloudmart-order-failure-topic-arn
 
 
   # ==============================================================
@@ -619,7 +618,7 @@ Resources:
 
           Value:
             Fn::ImportValue:
-              !Sub cloudmart-database-identifier-${EnvironmentName}
+              cloudmart-database-identifier
 
       Statistic:
         Average
@@ -642,7 +641,7 @@ Resources:
       AlarmActions:
 
         - Fn::ImportValue:
-            !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
+            cloudmart-order-failure-topic-arn
 
 
   # ==============================================================
@@ -702,7 +701,7 @@ Resources:
       AlarmActions:
 
         - Fn::ImportValue:
-            !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
+            cloudmart-order-failure-topic-arn
 
 
   # ==============================================================
@@ -762,7 +761,7 @@ Resources:
       AlarmActions:
 
         - Fn::ImportValue:
-            !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
+            cloudmart-order-failure-topic-arn
 
 
 # ================================================================

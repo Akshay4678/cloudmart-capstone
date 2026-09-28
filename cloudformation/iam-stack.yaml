@@ -17,12 +17,6 @@ Parameters:
       - dev
       - prod
 
-  MentorConsolePassword:
-    Type: String
-    NoEcho: true
-    MinLength: 8
-    Description: Initial console password for the CloudMart mentor IAM user
-
 
 # ================================================================
 # RESOURCES
@@ -56,25 +50,11 @@ Resources:
             Action:
               - sts:AssumeRole
 
-      Policies:
+      ManagedPolicyArns:
 
-        - PolicyName: LambdaBasicLogging
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: CreateLogGroup
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-authorizer-${EnvironmentName}
-              - Sid: WriteAuthorizerLogs
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-authorizer-${EnvironmentName}:*
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
 
         - PolicyName: AuthorizerRDSAndVPCAccess
 
@@ -83,20 +63,6 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
-              - Sid: ReadUserAuthToken
-                Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                Resource:
-                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/user-token
-
-              - Sid: ReadAdminAuthToken
-                Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                Resource:
-                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/auth/admin-token
 
               # ==================================================
               # VPC NETWORK INTERFACES
@@ -115,14 +81,6 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
 
                 Resource: "*"
-
-                Condition:
-                  StringEquals:
-                    ec2:SubnetID:
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-id-${EnvironmentName}
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
 
 
   # ==============================================================
@@ -151,25 +109,11 @@ Resources:
             Action:
               - sts:AssumeRole
 
-      Policies:
+      ManagedPolicyArns:
 
-        - PolicyName: LambdaBasicLogging
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: CreateLogGroup
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-product-${EnvironmentName}
-              - Sid: WriteLambdaLogs
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-product-${EnvironmentName}:*
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
 
         - PolicyName: ProductPolicy
 
@@ -187,6 +131,21 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
+
+
+              # ==================================================
+              # RDS
+              # ==================================================
+
+              - Sid: ConnectToRDS
+
+                Effect: Allow
+
+                Action:
+                  - rds-db:connect
+
+                Resource: "*"
 
 
               # ==================================================
@@ -221,14 +180,6 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
 
                 Resource: "*"
-
-                Condition:
-                  StringEquals:
-                    ec2:SubnetID:
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-id-${EnvironmentName}
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
 
 
               # ==================================================
@@ -278,25 +229,11 @@ Resources:
             Action:
               - sts:AssumeRole
 
-      Policies:
+      ManagedPolicyArns:
 
-        - PolicyName: LambdaBasicLogging
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: CreateLogGroup
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-order-${EnvironmentName}
-              - Sid: WriteLambdaLogs
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-order-${EnvironmentName}:*
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
 
         - PolicyName: OrderPolicy
 
@@ -314,6 +251,21 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
+
+
+              # ==================================================
+              # RDS
+              # ==================================================
+
+              - Sid: ConnectToRDS
+
+                Effect: Allow
+
+                Action:
+                  - rds-db:connect
+
+                Resource: "*"
 
 
               # ==================================================
@@ -370,14 +322,6 @@ Resources:
 
                 Resource: "*"
 
-                Condition:
-                  StringEquals:
-                    ec2:SubnetID:
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-id-${EnvironmentName}
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
-
 
   # ==============================================================
   # ORDER PROCESSING LAMBDA ROLE
@@ -405,25 +349,11 @@ Resources:
             Action:
               - sts:AssumeRole
 
-      Policies:
+      ManagedPolicyArns:
 
-        - PolicyName: LambdaBasicLogging
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: CreateLogGroup
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-order-processor-${EnvironmentName}
-              - Sid: WriteLambdaLogs
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-order-processor-${EnvironmentName}:*
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
 
         - PolicyName: OrderProcessingPolicy
 
@@ -460,6 +390,20 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:cloudmart-orders-${EnvironmentName}
+
+
+              # ==================================================
+              # RDS
+              # ==================================================
+
+              - Sid: ConnectToRDS
+
+                Effect: Allow
+
+                Action:
+                  - rds-db:connect
+
+                Resource: "*"
 
 
               # ==================================================
@@ -516,14 +460,6 @@ Resources:
 
                 Resource: "*"
 
-                Condition:
-                  StringEquals:
-                    ec2:SubnetID:
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-id-${EnvironmentName}
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
-
 
   # ==============================================================
   # REPORT LAMBDA ROLE
@@ -551,25 +487,11 @@ Resources:
             Action:
               - sts:AssumeRole
 
-      Policies:
+      ManagedPolicyArns:
 
-        - PolicyName: LambdaBasicLogging
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: CreateLogGroup
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-report-${EnvironmentName}
-              - Sid: WriteLambdaLogs
-                Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource:
-                  !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/cloudmart-report-${EnvironmentName}:*
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
 
         - PolicyName: ReportingPolicy
 
@@ -587,6 +509,21 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
+
+
+              # ==================================================
+              # RDS
+              # ==================================================
+
+              - Sid: ConnectToRDS
+
+                Effect: Allow
+
+                Action:
+                  - rds-db:connect
+
+                Resource: "*"
 
 
               # ==================================================
@@ -610,7 +547,7 @@ Resources:
 
                     - ReportsBucketArn:
                         Fn::ImportValue:
-                          !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
+                          cloudmart-reports-bucket-arn
 
 
               # ==================================================
@@ -626,7 +563,7 @@ Resources:
 
                 Resource:
                   Fn::ImportValue:
-                    !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
+                    cloudmart-reports-bucket-arn
 
 
               # ==================================================
@@ -646,104 +583,6 @@ Resources:
                   - ec2:UnassignPrivateIpAddresses
 
                 Resource: "*"
-
-                Condition:
-                  StringEquals:
-                    ec2:SubnetID:
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-id-${EnvironmentName}
-                      - Fn::ImportValue:
-                          !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
-
-
-  # ==============================================================
-  # MENTOR READ-ONLY GROUP
-  # ==============================================================
-
-  MentorReadOnlyGroup:
-    Type: AWS::IAM::Group
-
-    Properties:
-      GroupName: !Sub cloudmart-mentor-readonly-${EnvironmentName}
-      Policies:
-        - PolicyName: !Sub cloudmart-mentor-readonly-${EnvironmentName}
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: ReadCloudMartServices
-                Effect: Allow
-                Action:
-                  - apigateway:GET
-                  - cloudformation:DescribeStacks
-                  - cloudformation:DescribeStackEvents
-                  - cloudformation:DescribeStackResources
-                  - cloudformation:ListStacks
-                  - cloudformation:ListStackResources
-                  - ec2:DescribeInstances
-                  - ec2:DescribeSecurityGroups
-                  - ec2:DescribeSubnets
-                  - ec2:DescribeVpcs
-                  - ec2:DescribeRouteTables
-                  - ec2:DescribeVpcEndpoints
-                  - ec2:DescribeNetworkInterfaces
-                  - lambda:GetFunction
-                  - lambda:GetFunctionConfiguration
-                  - lambda:GetPolicy
-                  - lambda:ListFunctions
-                  - lambda:ListEventSourceMappings
-                  - lambda:ListTags
-                  - lambda:ListAliases
-                  - lambda:ListVersionsByFunction
-                  - rds:DescribeDBInstances
-                  - dynamodb:DescribeTable
-                  - dynamodb:GetItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
-                  - s3:GetBucketLocation
-                  - s3:ListAllMyBuckets
-                  - s3:ListBucket
-                  - s3:GetObject
-                  - sqs:GetQueueAttributes
-                  - sqs:GetQueueUrl
-                  - sns:GetTopicAttributes
-                  - sns:ListSubscriptionsByTopic
-                  - cloudwatch:DescribeAlarms
-                  - cloudwatch:DescribeAlarmHistory
-                  - cloudwatch:GetMetricData
-                  - cloudwatch:GetMetricStatistics
-                  - cloudwatch:GetDashboard
-                  - cloudwatch:ListMetrics
-                  - logs:DescribeLogGroups
-                  - logs:DescribeLogStreams
-                  - logs:GetLogEvents
-                  - logs:FilterLogEvents
-                  - iam:GetUser
-                  - iam:ListMFADevices
-                  - iam:GetLoginProfile
-                Resource: "*"
-
-
-  # ==============================================================
-  # MENTOR IAM USER
-  # ==============================================================
-
-  MentorUser:
-    Type: AWS::IAM::User
-
-    Properties:
-      UserName: !Sub cloudmart-mentor-${EnvironmentName}
-      Groups:
-        - !Ref MentorReadOnlyGroup
-      LoginProfile:
-        Password: !Ref MentorConsolePassword
-        PasswordResetRequired: true
-      Tags:
-        - Key: Application
-          Value: CloudMart
-        - Key: Environment
-          Value: !Ref EnvironmentName
-        - Key: Purpose
-          Value: MentorAccess
 
 
 # ================================================================
@@ -765,7 +604,7 @@ Outputs:
 
     Export:
       Name:
-        !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
+        cloudmart-authorizer-role-arn
 
 
   # ==============================================================
@@ -781,7 +620,7 @@ Outputs:
 
     Export:
       Name:
-        !Sub cloudmart-product-role-arn-${EnvironmentName}
+        cloudmart-product-role-arn
 
 
   # ==============================================================
@@ -797,7 +636,7 @@ Outputs:
 
     Export:
       Name:
-        !Sub cloudmart-order-role-arn-${EnvironmentName}
+        cloudmart-order-role-arn
 
 
   # ==============================================================
@@ -813,7 +652,7 @@ Outputs:
 
     Export:
       Name:
-        !Sub cloudmart-order-processing-role-arn-${EnvironmentName}
+        cloudmart-order-processing-role-arn
 
 
   # ==============================================================
@@ -829,4 +668,4 @@ Outputs:
 
     Export:
       Name:
-        !Sub cloudmart-report-role-arn-${EnvironmentName}
+        cloudmart-report-role-arn

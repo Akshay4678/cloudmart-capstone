@@ -49,8 +49,7 @@ Resources:
       Handler: index.lambda_handler
 
       Role:
-        Fn::ImportValue:
-          !Sub cloudmart-product-role-arn-${EnvironmentName}
+        Fn::ImportValue: cloudmart-product-role-arn
 
       Timeout: 15
 
@@ -61,31 +60,28 @@ Resources:
         SubnetIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-id-${EnvironmentName}
+              cloudmart-private-subnet-id
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-lambda-sg-${EnvironmentName}
+              cloudmart-lambda-sg
 
       Environment:
 
         Variables:
 
           DB_HOST:
-            Fn::ImportValue:
-              !Sub cloudmart-database-endpoint-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-endpoint
 
           DB_NAME:
-            Fn::ImportValue:
-              !Sub cloudmart-database-name-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-name
 
           DB_USER:
-            Fn::ImportValue:
-              !Sub cloudmart-database-username-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-username
 
           DB_PASSWORD_PARAMETER:
             !Sub /cloudmart/${EnvironmentName}/database/password
@@ -99,8 +95,7 @@ Resources:
       Code:
 
         S3Bucket:
-          Fn::ImportValue:
-            !Sub cloudmart-lambda-bucket-${EnvironmentName}
+          Fn::ImportValue: cloudmart-lambda-bucket
 
         S3Key:
           !Sub product/product-lambda-${CodeVersion}.zip
@@ -167,8 +162,7 @@ Resources:
       Handler: index.lambda_handler
 
       Role:
-        Fn::ImportValue:
-          !Sub cloudmart-order-role-arn-${EnvironmentName}
+        Fn::ImportValue: cloudmart-order-role-arn
 
       Timeout: 15
 
@@ -179,31 +173,28 @@ Resources:
         SubnetIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-id-${EnvironmentName}
+              cloudmart-private-subnet-id
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-lambda-sg-${EnvironmentName}
+              cloudmart-lambda-sg
 
       Environment:
 
         Variables:
 
           DB_HOST:
-            Fn::ImportValue:
-              !Sub cloudmart-database-endpoint-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-endpoint
 
           DB_NAME:
-            Fn::ImportValue:
-              !Sub cloudmart-database-name-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-name
 
           DB_USER:
-            Fn::ImportValue:
-              !Sub cloudmart-database-username-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-username
 
           DB_PASSWORD_PARAMETER:
             !Sub /cloudmart/${EnvironmentName}/database/password
@@ -220,8 +211,7 @@ Resources:
       Code:
 
         S3Bucket:
-          Fn::ImportValue:
-            !Sub cloudmart-lambda-bucket-${EnvironmentName}
+          Fn::ImportValue: cloudmart-lambda-bucket
 
         S3Key:
           !Sub order/order-lambda-${CodeVersion}.zip
@@ -248,8 +238,7 @@ Resources:
       Handler: index.lambda_handler
 
       Role:
-        Fn::ImportValue:
-          !Sub cloudmart-order-processing-role-arn-${EnvironmentName}
+        Fn::ImportValue: cloudmart-order-processing-role-arn
 
       Timeout: 30
 
@@ -260,31 +249,28 @@ Resources:
         SubnetIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-id-${EnvironmentName}
+              cloudmart-private-subnet-id
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-lambda-sg-${EnvironmentName}
+              cloudmart-lambda-sg
 
       Environment:
 
         Variables:
 
           DB_HOST:
-            Fn::ImportValue:
-              !Sub cloudmart-database-endpoint-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-endpoint
 
           DB_NAME:
-            Fn::ImportValue:
-              !Sub cloudmart-database-name-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-name
 
           DB_USER:
-            Fn::ImportValue:
-              !Sub cloudmart-database-username-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-username
 
           DB_PASSWORD_PARAMETER:
             !Sub /cloudmart/${EnvironmentName}/database/password
@@ -298,8 +284,7 @@ Resources:
       Code:
 
         S3Bucket:
-          Fn::ImportValue:
-            !Sub cloudmart-lambda-bucket-${EnvironmentName}
+          Fn::ImportValue: cloudmart-lambda-bucket
 
         S3Key:
           !Sub order-processor/order-processor-${CodeVersion}.zip
@@ -698,8 +683,7 @@ Resources:
       Handler: index.lambda_handler
 
       Role:
-        Fn::ImportValue:
-          !Sub cloudmart-report-role-arn-${EnvironmentName}
+        Fn::ImportValue: cloudmart-report-role-arn
 
       Timeout: 60
 
@@ -710,35 +694,31 @@ Resources:
         SubnetIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-id-${EnvironmentName}
+              cloudmart-private-subnet-id
 
           - Fn::ImportValue:
-              !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
+              cloudmart-private-subnet-2-id
 
         SecurityGroupIds:
 
           - Fn::ImportValue:
-              !Sub cloudmart-lambda-sg-${EnvironmentName}
+              cloudmart-lambda-sg
 
       Environment:
 
         Variables:
 
           REPORTS_BUCKET:
-            Fn::ImportValue:
-              !Sub cloudmart-reports-bucket-${EnvironmentName}
+            Fn::ImportValue: cloudmart-reports-bucket
 
           DB_HOST:
-            Fn::ImportValue:
-              !Sub cloudmart-database-endpoint-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-endpoint
 
           DB_NAME:
-            Fn::ImportValue:
-              !Sub cloudmart-database-name-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-name
 
           DB_USER:
-            Fn::ImportValue:
-              !Sub cloudmart-database-username-${EnvironmentName}
+            Fn::ImportValue: cloudmart-database-username
 
           DB_PASSWORD_PARAMETER:
             !Sub /cloudmart/${EnvironmentName}/database/password
@@ -752,8 +732,7 @@ Resources:
       Code:
 
         S3Bucket:
-          Fn::ImportValue:
-            !Sub cloudmart-lambda-bucket-${EnvironmentName}
+          Fn::ImportValue: cloudmart-lambda-bucket
 
         S3Key:
           !Sub report/report-lambda-${CodeVersion}.zip
@@ -855,8 +834,7 @@ Resources:
           - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerArn}/invocations
 
           - AuthorizerArn:
-              Fn::ImportValue:
-                !Sub cloudmart-authorizer-lambda-arn-${EnvironmentName}
+              Fn::ImportValue: cloudmart-authorizer-lambda-arn
 
 
   # ==============================================================
@@ -1398,8 +1376,7 @@ Resources:
         lambda:InvokeFunction
 
       FunctionName:
-        Fn::ImportValue:
-          !Sub cloudmart-authorizer-lambda-arn-${EnvironmentName}
+        Fn::ImportValue: cloudmart-authorizer-lambda-arn
 
       Principal:
         apigateway.amazonaws.com
@@ -1579,7 +1556,7 @@ Outputs:
       !Ref CloudMartApi
 
     Export:
-      Name: !Sub cloudmart-api-id-${EnvironmentName}
+      Name: cloudmart-api-id
 
 
   # ==============================================================
@@ -1592,7 +1569,7 @@ Outputs:
       !Sub https://${CloudMartApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvironmentName}
 
     Export:
-      Name: !Sub cloudmart-api-invoke-url-${EnvironmentName}
+      Name: cloudmart-api-invoke-url
 
 
   # ==============================================================
@@ -1605,7 +1582,7 @@ Outputs:
       !GetAtt ProductLambda.Arn
 
     Export:
-      Name: !Sub cloudmart-product-lambda-arn-${EnvironmentName}
+      Name: cloudmart-product-lambda-arn
 
 
   # ==============================================================
@@ -1618,7 +1595,7 @@ Outputs:
       !GetAtt OrderLambda.Arn
 
     Export:
-      Name: !Sub cloudmart-order-lambda-arn-${EnvironmentName}
+      Name: cloudmart-order-lambda-arn
 
 
   # ==============================================================
@@ -1631,7 +1608,7 @@ Outputs:
       !GetAtt OrderProcessorLambda.Arn
 
     Export:
-      Name: !Sub cloudmart-order-processor-lambda-arn-${EnvironmentName}
+      Name: cloudmart-order-processor-lambda-arn
 
 
   # ==============================================================
@@ -1644,7 +1621,7 @@ Outputs:
       !Ref OrderQueue
 
     Export:
-      Name: !Sub cloudmart-order-queue-url-${EnvironmentName}
+      Name: cloudmart-order-queue-url
 
 
   # ==============================================================
@@ -1657,7 +1634,7 @@ Outputs:
       !GetAtt OrderQueue.Arn
 
     Export:
-      Name: !Sub cloudmart-order-queue-arn-${EnvironmentName}
+      Name: cloudmart-order-queue-arn
 
   # ==============================================================
   # ORDER DLQ ARN
@@ -1669,7 +1646,7 @@ Outputs:
       !GetAtt OrderDeadLetterQueue.Arn
 
     Export:
-      Name: !Sub cloudmart-order-dlq-arn-${EnvironmentName}
+      Name: cloudmart-order-dlq-arn
 
   # ==============================================================
   # ORDER CONFIRMATION SNS ARN
@@ -1681,7 +1658,7 @@ Outputs:
       !Ref OrderConfirmationTopic
 
     Export:
-      Name: !Sub cloudmart-order-confirmation-topic-arn-${EnvironmentName}
+      Name: cloudmart-order-confirmation-topic-arn
 
   # ==============================================================
   # LOW STOCK SNS ARN
@@ -1693,7 +1670,7 @@ Outputs:
       !Ref LowStockTopic
 
     Export:
-      Name: !Sub cloudmart-low-stock-topic-arn-${EnvironmentName}
+      Name: cloudmart-low-stock-topic-arn
 
   # ==============================================================
   # ORDER FAILURE SNS ARN
@@ -1705,7 +1682,7 @@ Outputs:
       !Ref OrderFailureTopic
 
     Export:
-      Name: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
+      Name: cloudmart-order-failure-topic-arn
 
   # ==============================================================
   # REPORT LAMBDA ARN
@@ -1717,7 +1694,7 @@ Outputs:
       !GetAtt ReportLambda.Arn
 
     Export:
-      Name: !Sub cloudmart-report-lambda-arn-${EnvironmentName}
+      Name: cloudmart-report-lambda-arn
 
   # ==============================================================
   # REPORTS BUCKET
@@ -1726,8 +1703,7 @@ Outputs:
   ReportsBucket:
 
     Value:
-      Fn::ImportValue:
-        !Sub cloudmart-reports-bucket-${EnvironmentName}
+      Fn::ImportValue: cloudmart-reports-bucket
 
     Export:
-      Name: !Sub cloudmart-application-reports-bucket-${EnvironmentName}
+      Name: cloudmart-application-reports-bucket

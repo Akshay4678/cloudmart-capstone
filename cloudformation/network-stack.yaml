@@ -9,14 +9,6 @@ Description: CloudMart Network Stack
 
 Parameters:
 
-  EnvironmentName:
-    Type: String
-    Default: dev
-    AllowedValues:
-      - dev
-      - prod
-    Description: CloudMart deployment environment
-
   VpcCIDR:
     Type: String
     Default: 10.0.0.0/16
@@ -42,6 +34,10 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Latest Amazon Linux 2023 AMI
 
+  LambdaArtifactBucketParameter:
+    Type: String
+    Default: /cloudmart/dev/lambda-artifact-bucket
+    Description: SSM parameter containing the CloudMart Lambda artifact S3 bucket name
 
 
 # ================================================================
@@ -65,7 +61,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-vpc-${EnvironmentName}
+          Value: cloudmart-vpc
 
 
   # ================================================================
@@ -78,7 +74,7 @@ Resources:
     Properties:
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-igw-${EnvironmentName}
+          Value: cloudmart-igw
 
 
   # ================================================================
@@ -112,7 +108,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-public-subnet-${EnvironmentName}
+          Value: cloudmart-public-subnet
 
 
   # ================================================================
@@ -133,7 +129,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-private-app-subnet-${EnvironmentName}
+          Value: cloudmart-private-app-subnet
 
 
   # ================================================================
@@ -154,7 +150,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-private-db-subnet-${EnvironmentName}
+          Value: cloudmart-private-db-subnet
 
 
   # ================================================================
@@ -169,7 +165,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-public-route-table-${EnvironmentName}
+          Value: cloudmart-public-route-table
 
 
   # ================================================================
@@ -211,7 +207,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-private-route-table-${EnvironmentName}
+          Value: cloudmart-private-route-table
 
 
   # ================================================================
@@ -255,7 +251,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-lambda-sg-${EnvironmentName}
+          Value: cloudmart-lambda-sg
 
 
   # ================================================================
@@ -274,7 +270,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-vpc-${EnvironmentName}-endpoints-sg
+          Value: cloudmart-vpc-endpoints-sg
 
 
   # ================================================================
@@ -295,7 +291,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-rds-sg-${EnvironmentName}
+          Value: cloudmart-rds-sg
 
 
   # ================================================================
@@ -315,7 +311,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-ec2-sg-${EnvironmentName}
+          Value: cloudmart-ec2-sg
 
 
   # ================================================================
@@ -563,7 +559,7 @@ Resources:
                 Action:
                   - ssm:GetParameter
                 Resource:
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/dev/database/password
 
               - Sid: ReadReportsBucket
                 Effect: Allow
@@ -572,8 +568,8 @@ Resources:
                   - s3:GetObjectVersion
                   - s3:ListBucket
                 Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}/*
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${AWS::AccountId}-${AWS::Region}/*
 
               - Sid: ReadLambdaArtifacts
                 Effect: Allow
@@ -581,21 +577,21 @@ Resources:
                   - s3:GetObject
                   - s3:GetObjectVersion
                 Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}/*
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-data-stack-lambdaartifactsbucket-*/*
 
               - Sid: ListLambdaArtifactBucket
                 Effect: Allow
                 Action:
                   - s3:ListBucket
                 Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-data-stack-lambdaartifactsbucket-*
 
               - Sid: ReadLambdaArtifactBucketParameter
                 Effect: Allow
                 Action:
                   - ssm:GetParameter
                 Resource:
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/lambda-artifact-bucket
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${LambdaArtifactBucketParameter}
 
               - Sid: ReadCloudWatchMetrics
                 Effect: Allow
@@ -643,7 +639,7 @@ Resources:
           exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
 
           AWS_REGION_VALUE="${AWS::Region}"
-          LAMBDA_BUCKET_PARAMETER="/cloudmart/${EnvironmentName}/lambda-artifact-bucket"
+          LAMBDA_BUCKET_PARAMETER="${LambdaArtifactBucketParameter}"
           DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
           DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
@@ -904,15 +900,15 @@ Resources:
 
           cat > /etc/cloudmart-dashboard.env <<ENVEOF
           AWS_REGION=$AWS_REGION_VALUE
-          ENVIRONMENT=${EnvironmentName}
-          API_NAME=cloudmart-api-${EnvironmentName}
-          API_STAGE=${EnvironmentName}
-          REPORTS_BUCKET=cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
+          ENVIRONMENT=dev
+          API_NAME=cloudmart-api-dev
+          API_STAGE=dev
+          REPORTS_BUCKET=cloudmart-reports-${AWS::AccountId}-${AWS::Region}
           DB_HOST=$DB_HOST_VALUE
           DB_NAME=cloudmart
           DB_USER=cloudmartadmin
           DB_PORT=3306
-          DB_PASSWORD_PARAMETER=/cloudmart/${EnvironmentName}/database/password
+          DB_PASSWORD_PARAMETER=/cloudmart/dev/database/password
           ENVEOF
 
           chown root:root /etc/cloudmart-dashboard.env
@@ -1111,7 +1107,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-ec2-${EnvironmentName}
+          Value: !Sub cloudmart-ec2-${AWS::StackName}
 
 
   # ================================================================
@@ -1133,7 +1129,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-s3-vpc-endpoint-${EnvironmentName}
+          Value: cloudmart-s3-vpc-endpoint
 
 
   # ================================================================
@@ -1161,7 +1157,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-ssm-vpc-endpoint-${EnvironmentName}
+          Value: cloudmart-ssm-vpc-endpoint
 
 
   # ================================================================
@@ -1189,7 +1185,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-sns-vpc-endpoint-${EnvironmentName}
+          Value: cloudmart-sns-vpc-endpoint
 
 
   # ================================================================
@@ -1217,7 +1213,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-eventbridge-vpc-endpoint-${EnvironmentName}
+          Value: cloudmart-eventbridge-vpc-endpoint
 
   # ================================================================
   # VPC ENDPOINT - SQS
@@ -1244,7 +1240,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-sqs-vpc-endpoint-${EnvironmentName}
+          Value: cloudmart-sqs-vpc-endpoint
           
   # ================================================================
   # VPC ENDPOINT - CLOUDWATCH LOGS
@@ -1271,7 +1267,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-cloudwatch-logs-vpc-endpoint-${EnvironmentName}
+          Value: cloudmart-cloudwatch-logs-vpc-endpoint
 
 
   # ================================================================
@@ -1299,7 +1295,7 @@ Resources:
 
       Tags:
         - Key: Name
-          Value: !Sub cloudmart-cloudwatch-monitoring-vpc-endpoint-${EnvironmentName}
+          Value: cloudmart-cloudwatch-monitoring-vpc-endpoint
 
 
 # ================================================================
@@ -1318,7 +1314,7 @@ Outputs:
     Value: !Ref CloudMartVPC
 
     Export:
-      Name: !Sub cloudmart-vpc-id-${EnvironmentName}
+      Name: cloudmart-vpc-id
 
 
   # ================================================================
@@ -1330,7 +1326,7 @@ Outputs:
     Value: !Ref PublicSubnet
 
     Export:
-      Name: !Sub cloudmart-public-subnet-id-${EnvironmentName}
+      Name: cloudmart-public-subnet-id
 
 
   # ================================================================
@@ -1342,7 +1338,7 @@ Outputs:
     Value: !Ref PrivateSubnet
 
     Export:
-      Name: !Sub cloudmart-private-subnet-id-${EnvironmentName}
+      Name: cloudmart-private-subnet-id
 
 
   # ================================================================
@@ -1354,7 +1350,7 @@ Outputs:
     Value: !Ref PrivateSubnet2
 
     Export:
-      Name: !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
+      Name: cloudmart-private-subnet-2-id
 
 
   # ================================================================
@@ -1366,7 +1362,7 @@ Outputs:
     Value: !Ref LambdaSecurityGroup
 
     Export:
-      Name: !Sub cloudmart-lambda-sg-${EnvironmentName}
+      Name: cloudmart-lambda-sg
 
 
   # ================================================================
@@ -1378,7 +1374,7 @@ Outputs:
     Value: !Ref RDSSecurityGroup
 
     Export:
-      Name: !Sub cloudmart-rds-sg-${EnvironmentName}
+      Name: cloudmart-rds-sg
 
 
   # ================================================================
@@ -1390,7 +1386,7 @@ Outputs:
     Value: !Ref EC2SecurityGroup
 
     Export:
-      Name: !Sub cloudmart-ec2-sg-${EnvironmentName}
+      Name: cloudmart-ec2-sg
 
 
   # ================================================================
@@ -1402,7 +1398,7 @@ Outputs:
     Value: !Ref VPCEndpointSecurityGroup
 
     Export:
-      Name: !Sub cloudmart-vpc-endpoint-sg-${EnvironmentName}
+      Name: cloudmart-vpc-endpoint-sg
 
 
   # ================================================================
@@ -1414,7 +1410,7 @@ Outputs:
     Value: !Ref EventBridgeVPCEndpoint
 
     Export:
-      Name: !Sub cloudmart-eventbridge-vpc-endpoint-${EnvironmentName}
+      Name: cloudmart-eventbridge-vpc-endpoint
 
 
 
@@ -1428,7 +1424,7 @@ Outputs:
     Value: !Ref S3VPCEndpoint
 
     Export:
-      Name: !Sub cloudmart-s3-vpc-endpoint-${EnvironmentName}
+      Name: cloudmart-s3-vpc-endpoint
 
 
   # ================================================================
@@ -1440,7 +1436,7 @@ Outputs:
     Value: !Ref SSMVPCEndpoint
 
     Export:
-      Name: !Sub cloudmart-ssm-vpc-endpoint-${EnvironmentName}
+      Name: cloudmart-ssm-vpc-endpoint
 
 
   # ================================================================
@@ -1452,7 +1448,7 @@ Outputs:
     Value: !Ref SNSVPCEndpoint
 
     Export:
-      Name: !Sub cloudmart-sns-vpc-endpoint-${EnvironmentName}
+      Name: cloudmart-sns-vpc-endpoint
 
 
   # ================================================================
@@ -1464,7 +1460,7 @@ Outputs:
     Value: !Ref CloudWatchLogsVPCEndpoint
 
     Export:
-      Name: !Sub cloudmart-cloudwatch-logs-vpc-endpoint-${EnvironmentName}
+      Name: cloudmart-cloudwatch-logs-vpc-endpoint
 
 
   # ================================================================
@@ -1476,22 +1472,22 @@ Outputs:
     Value: !Ref CloudWatchMonitoringVPCEndpoint
 
     Export:
-      Name: !Sub cloudmart-cloudwatch-monitoring-vpc-endpoint-${EnvironmentName}
+      Name: cloudmart-cloudwatch-monitoring-vpc-endpoint
 
   EC2InstanceId:
     Description: CloudMart EC2 instance ID
     Value: !Ref CloudMartEC2V3
     Export:
-      Name: !Sub cloudmart-ec2-instance-id-${EnvironmentName}
+      Name: cloudmart-ec2-instance-id
 
   EC2PublicIP:
     Description: CloudMart EC2 public IP address
     Value: !GetAtt CloudMartEC2V3.PublicIp
     Export:
-      Name: !Sub cloudmart-ec2-public-ip-${EnvironmentName}
+      Name: cloudmart-ec2-public-ip
 
   EC2PrivateIP:
     Description: CloudMart EC2 private IP address
     Value: !GetAtt CloudMartEC2V3.PrivateIp
     Export:
-      Name: !Sub cloudmart-ec2-private-ip-${EnvironmentName}
+      Name: cloudmart-ec2-private-ip

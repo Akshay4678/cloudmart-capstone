@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
+      - M3-redobranch
 
 permissions:
   id-token: write
@@ -54,9 +54,6 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
           EMAIL_NOTIFICATION: ${{ secrets.EMAIL_NOTIFICATION }}
-          MENTOR_CONSOLE_PASSWORD: ${{ secrets.MENTOR_CONSOLE_PASSWORD }}
-          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
-          ADMIN_AUTH_TOKEN: ${{ secrets.ADMIN_AUTH_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -79,23 +76,25 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$MENTOR_CONSOLE_PASSWORD" ]; then
-            echo "ERROR: MENTOR_CONSOLE_PASSWORD secret is missing."
-            exit 1
-          fi
-
-          if [ -z "$USER_AUTH_TOKEN" ]; then
-            echo "ERROR: USER_AUTH_TOKEN secret is missing."
-            exit 1
-          fi
-
-          if [ -z "$ADMIN_AUTH_TOKEN" ]; then
-            echo "ERROR: ADMIN_AUTH_TOKEN secret is missing."
-            exit 1
-          fi
-
           echo "Required secrets are configured."
 
+      # ==========================================================
+      # 5. STORE NOTIFICATION EMAIL IN SSM
+      # ==========================================================
+      - name: Store Notification Email in SSM
+        env:
+          EMAIL_NOTIFICATION: ${{ secrets.EMAIL_NOTIFICATION }}
+        run: |
+          set -euo pipefail
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/notification-email" \
+            --type "String" \
+            --value "$EMAIL_NOTIFICATION" \
+            --overwrite
+
+          echo "Notification email stored in SSM."
 
       # ==========================================================
       # 6. INSTALL CFN-LINT
@@ -421,12 +420,8 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
-            --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
-              "UserAuthToken=$USER_AUTH_TOKEN" \
-              "AdminAuthToken=$ADMIN_AUTH_TOKEN" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -437,7 +432,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -451,7 +446,6 @@ jobs:
         id: deploy_data
         env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          EMAIL_NOTIFICATION: ${{ secrets.EMAIL_NOTIFICATION }}
         run: |
           set -euo pipefail
 
@@ -461,12 +455,10 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --template-file cloudformation/data-stack.yaml \
             --parameter-overrides \
-              "EnvironmentName=$ENVIRONMENT_NAME" \
               "DBPassword=$DB_PASSWORD" \
-              "NotificationEmail=$EMAIL_NOTIFICATION" \
             --no-fail-on-empty-changeset
 
           echo "Data stack deployment completed."
@@ -476,7 +468,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -488,8 +480,6 @@ jobs:
       # ==========================================================
       - name: Deploy IAM Stack
         id: deploy_iam
-        env:
-          MENTOR_CONSOLE_PASSWORD: ${{ secrets.MENTOR_CONSOLE_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -499,11 +489,10 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-iam-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-iam-stack \
             --template-file cloudformation/iam-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
-              "MentorConsolePassword=$MENTOR_CONSOLE_PASSWORD" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -514,7 +503,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-iam-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-iam-stack \
             --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -528,7 +517,7 @@ jobs:
 
           BUCKET=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaBucket'].OutputValue" \
             --output text)
 
@@ -676,8 +665,7 @@ jobs:
       - name: Deploy Auth Stack
         id: deploy_auth
         env:
-          USER_AUTH_TOKEN: ${{ secrets.USER_AUTH_TOKEN }}
-          ADMIN_AUTH_TOKEN: ${{ secrets.ADMIN_AUTH_TOKEN }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -687,10 +675,12 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-auth-stack \
             --template-file cloudformation/auth-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
+              "DBPassword=$DB_PASSWORD" \
+              "CodeVersion=${{ github.sha }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
@@ -701,7 +691,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-auth-stack \
             --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -726,7 +716,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-api-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-api-stack \
             --template-file cloudformation/api-stack.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
@@ -741,7 +731,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-api-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-api-stack \
             --query "StackEvents[0:80].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -754,7 +744,7 @@ jobs:
 
           DB_HOST=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" \
             --output text)
 
@@ -839,7 +829,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --template-file cloudformation/monitoring-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
@@ -853,7 +843,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --query "StackEvents[0:80].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -867,25 +857,25 @@ jobs:
 
           REPORTS_BUCKET=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='ReportsBucket'].OutputValue" \
             --output text)
 
           INSTANCE_ID=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
             --output text)
 
           DB_HOST=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" \
             --output text)
 
           PUBLIC_IP=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --query "Stacks[0].Outputs[?OutputKey=='EC2PublicIP'].OutputValue" \
             --output text)
 
@@ -958,7 +948,7 @@ jobs:
 
           STACK_STATUS=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --query "Stacks[0].StackStatus" \
             --output text)
 
@@ -970,16 +960,16 @@ jobs:
 
           aws cloudwatch get-dashboard \
             --region "$AWS_REGION" \
-            --dashboard-name "cloudmart-operations-$ENVIRONMENT_NAME" \
+            --dashboard-name cloudmart-operations \
             >/dev/null
 
           ALARM_COUNT=$(aws cloudformation list-stack-resources \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --query "length(StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm'])" \
             --output text)
 
-          echo "CloudWatch dashboard: cloudmart-operations-$ENVIRONMENT_NAME"
+          echo "CloudWatch dashboard: cloudmart-operations"
           echo "CloudWatch alarms: $ALARM_COUNT"
 
           if [ "$ALARM_COUNT" -lt 4 ]; then
@@ -999,7 +989,7 @@ jobs:
 
           API_URL=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-api-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-api-stack \
             --query "Stacks[0].Outputs[?OutputKey=='ApiInvokeUrl'].OutputValue" \
             --output text)
 
@@ -1022,12 +1012,12 @@ jobs:
           echo "=================================================="
 
           for stack in \
-            "cloudmart-network-stack-$ENVIRONMENT_NAME" \
-            "cloudmart-data-stack-$ENVIRONMENT_NAME" \
-            "cloudmart-iam-stack-$ENVIRONMENT_NAME" \
-            "cloudmart-auth-stack-$ENVIRONMENT_NAME" \
-            "cloudmart-api-stack-$ENVIRONMENT_NAME" \
-            "cloudmart-monitoring-stack-$ENVIRONMENT_NAME"
+            cloudmart-network-stack \
+            cloudmart-data-stack \
+            cloudmart-iam-stack \
+            cloudmart-auth-stack \
+            cloudmart-api-stack \
+            cloudmart-monitoring-stack
           do
             echo ""
             echo "===== $stack ====="

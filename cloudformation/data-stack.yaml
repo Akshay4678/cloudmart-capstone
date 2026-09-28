@@ -9,6 +9,14 @@ Description: CloudMart Data Stack
 
 Parameters:
 
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: CloudMart deployment environment
+
   DBName:
     Type: String
     Default: cloudmart
@@ -24,6 +32,12 @@ Parameters:
     NoEcho: true
     MinLength: 8
     Description: CloudMart RDS master password
+
+  NotificationEmail:
+    Type: String
+    Description: Email address used by CloudMart SNS notification subscriptions
+    AllowedPattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
+    ConstraintDescription: Must be a valid email address
 
 
 # ================================================================
@@ -46,21 +60,21 @@ Resources:
       SubnetIds:
 
         - Fn::ImportValue:
-            cloudmart-private-subnet-id
+            !Sub cloudmart-private-subnet-id-${EnvironmentName}
 
         - Fn::ImportValue:
-            cloudmart-private-subnet-2-id
+            !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
 
       Tags:
 
         - Key: Name
-          Value: cloudmart-rds-subnet-group
+          Value: !Sub cloudmart-rds-subnet-group-${EnvironmentName}
 
         - Key: Application
           Value: CloudMart
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
 
 
   # ==============================================================
@@ -113,7 +127,7 @@ Resources:
       VPCSecurityGroups:
 
         - Fn::ImportValue:
-            cloudmart-rds-sg
+            !Sub cloudmart-rds-sg-${EnvironmentName}
 
       DBSubnetGroupName:
         !Ref RdsSubnetGroup
@@ -129,7 +143,7 @@ Resources:
       Tags:
 
         - Key: Name
-          Value: cloudmart-rds-mysql
+          Value: !Sub cloudmart-rds-mysql-${EnvironmentName}
 
         - Key: Application
           Value: CloudMart
@@ -138,7 +152,7 @@ Resources:
           Value: RDS
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
 
 
   # ==============================================================
@@ -152,17 +166,16 @@ Resources:
   #       v
   # EC2 Flask Dashboard
   #
-  # IMPORTANT:
-  # BucketName is intentionally NOT specified.
-  # CloudFormation generates a unique bucket name.
-  # This avoids conflicts when old buckets remain after
-  # a previous stack deletion.
+  # Bucket names are environment-specific so the same template
+  # can be deployed to dev and prod without naming collisions.
   # ==============================================================
 
   ReportsBucket:
     Type: AWS::S3::Bucket
 
     Properties:
+
+      BucketName: !Sub cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
 
       BucketEncryption:
 
@@ -188,7 +201,7 @@ Resources:
       Tags:
 
         - Key: Name
-          Value: cloudmart-reports
+          Value: !Sub cloudmart-reports-${EnvironmentName}
 
         - Key: Service
           Value: CloudMart
@@ -197,21 +210,22 @@ Resources:
           Value: Reports
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
 
 
   # ==============================================================
   # S3 LAMBDA ARTIFACTS BUCKET
   #
-  # IMPORTANT:
-  # BucketName is intentionally NOT specified.
-  # CloudFormation generates a unique bucket name.
+  # Bucket names are environment-specific so the same template
+  # can be deployed to dev and prod without naming collisions.
   # ==============================================================
 
   LambdaArtifactsBucket:
     Type: AWS::S3::Bucket
 
     Properties:
+
+      BucketName: !Sub cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
 
       BucketEncryption:
 
@@ -237,7 +251,7 @@ Resources:
       Tags:
 
         - Key: Name
-          Value: cloudmart-lambda-artifacts
+          Value: !Sub cloudmart-lambda-artifacts-${EnvironmentName}
 
         - Key: Service
           Value: CloudMart
@@ -246,7 +260,64 @@ Resources:
           Value: LambdaArtifacts
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
+
+
+  # ==============================================================
+  # DATABASE PASSWORD PARAMETER
+  # ==============================================================
+
+  DatabasePasswordParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+      Name: !Sub /cloudmart/${EnvironmentName}/database/password
+      Type: String
+      Value: !Ref DBPassword
+      Description: CloudMart RDS database password
+      Tier: Standard
+      Tags:
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: DatabaseCredentials
+
+
+  # ==============================================================
+  # LAMBDA ARTIFACT BUCKET PARAMETER
+  # ==============================================================
+
+  LambdaArtifactBucketParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+      Name: !Sub /cloudmart/${EnvironmentName}/lambda-artifact-bucket
+      Type: String
+      Value: !Ref LambdaArtifactsBucket
+      Description: CloudMart Lambda artifact bucket name
+      Tier: Standard
+      Tags:
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: LambdaArtifacts
+
+
+  # ==============================================================
+  # NOTIFICATION EMAIL PARAMETER
+  # ==============================================================
+
+  NotificationEmailParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+      Name: !Sub /cloudmart/${EnvironmentName}/notification-email
+      Type: String
+      Value: !Ref NotificationEmail
+      Description: CloudMart SNS notification email address
+      Tier: Standard
+      Tags:
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: NotificationEmail
 
 
 # ================================================================
@@ -267,7 +338,7 @@ Outputs:
       !Ref CloudMartDatabase
 
     Export:
-      Name: cloudmart-database-identifier
+      Name: !Sub cloudmart-database-identifier-${EnvironmentName}
 
 
   # ==============================================================
@@ -282,7 +353,7 @@ Outputs:
       !GetAtt CloudMartDatabase.DbiResourceId
 
     Export:
-      Name: cloudmart-database-resource-id
+      Name: !Sub cloudmart-database-resource-id-${EnvironmentName}
 
 
   # ==============================================================
@@ -297,7 +368,7 @@ Outputs:
       !GetAtt CloudMartDatabase.Endpoint.Address
 
     Export:
-      Name: cloudmart-database-endpoint
+      Name: !Sub cloudmart-database-endpoint-${EnvironmentName}
 
 
   # ==============================================================
@@ -312,7 +383,7 @@ Outputs:
       !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name: cloudmart-database-port
+      Name: !Sub cloudmart-database-port-${EnvironmentName}
 
 
   # ==============================================================
@@ -332,7 +403,7 @@ Outputs:
             !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name: cloudmart-database-connection-endpoint
+      Name: !Sub cloudmart-database-connection-endpoint-${EnvironmentName}
 
 
   # ==============================================================
@@ -347,7 +418,7 @@ Outputs:
       !Ref DBName
 
     Export:
-      Name: cloudmart-database-name
+      Name: !Sub cloudmart-database-name-${EnvironmentName}
 
 
   # ==============================================================
@@ -362,7 +433,7 @@ Outputs:
       !Ref DBUsername
 
     Export:
-      Name: cloudmart-database-username
+      Name: !Sub cloudmart-database-username-${EnvironmentName}
 
 
   # ==============================================================
@@ -377,7 +448,7 @@ Outputs:
       !Ref RdsSubnetGroup
 
     Export:
-      Name: cloudmart-database-subnet-group
+      Name: !Sub cloudmart-database-subnet-group-${EnvironmentName}
 
 
   # ==============================================================
@@ -392,7 +463,7 @@ Outputs:
       !Ref ReportsBucket
 
     Export:
-      Name: cloudmart-reports-bucket
+      Name: !Sub cloudmart-reports-bucket-${EnvironmentName}
 
 
   # ==============================================================
@@ -407,7 +478,7 @@ Outputs:
       !GetAtt ReportsBucket.Arn
 
     Export:
-      Name: cloudmart-reports-bucket-arn
+      Name: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -422,7 +493,7 @@ Outputs:
       !Ref LambdaArtifactsBucket
 
     Export:
-      Name: cloudmart-lambda-bucket
+      Name: !Sub cloudmart-lambda-bucket-${EnvironmentName}
 
 
   # ==============================================================
@@ -437,4 +508,4 @@ Outputs:
       !GetAtt LambdaArtifactsBucket.Arn
 
     Export:
-      Name: cloudmart-lambda-bucket-arn
+      Name: !Sub cloudmart-lambda-bucket-arn-${EnvironmentName}

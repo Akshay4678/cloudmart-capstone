@@ -2,6 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: CloudMart Authentication Stack
 
+
 # ================================================================
 # PARAMETERS
 # ================================================================
@@ -11,25 +12,22 @@ Parameters:
   EnvironmentName:
     Type: String
     Default: dev
-
     AllowedValues:
       - dev
       - prod
-
     Description: CloudMart deployment environment
 
-
-  DBPassword:
+  UserAuthToken:
     Type: String
     NoEcho: true
+    MinLength: 16
+    Description: User authentication token stored in Parameter Store
 
-    Description: RDS database password used by the Lambda authorizer
-
-
-  CodeVersion:
+  AdminAuthToken:
     Type: String
-
-    Description: Version of the Authorizer Lambda deployment package
+    NoEcho: true
+    MinLength: 16
+    Description: Admin authentication token stored in Parameter Store
 
 
 # ================================================================
@@ -38,8 +36,15 @@ Parameters:
 
 Resources:
 
+
   # ==============================================================
-  # SSM APPLICATION ENVIRONMENT
+  # SSM - APPLICATION ENVIRONMENT
+  #
+  # Non-sensitive configuration:
+  # String
+  #
+  # Document:
+  # /cloudmart/${EnvironmentName}/app/environment
   # ==============================================================
 
   EnvironmentParameter:
@@ -47,28 +52,59 @@ Resources:
 
     Properties:
 
-      Name:
-        !Sub /cloudmart/${EnvironmentName}/app/environment
+      Name: !Sub /cloudmart/${EnvironmentName}/app/environment
 
       Type: String
 
-      Value:
-        !Ref EnvironmentName
+      Value: !Ref EnvironmentName
 
-      Description:
-        CloudMart application environment
+      Description: CloudMart application environment
 
-      Tier:
-        Standard
+      Tier: Standard
 
       Tags:
 
         Application: CloudMart
-
-        Environment:
-          !Ref EnvironmentName
-
+        Environment: !Ref EnvironmentName
         Purpose: ApplicationConfiguration
+
+
+  # ==============================================================
+  # USER AUTH TOKEN PARAMETER
+  # ==============================================================
+
+  UserAuthTokenParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+      Name: !Sub /cloudmart/${EnvironmentName}/auth/user-token
+      Type: String
+      Value: !Ref UserAuthToken
+      Description: CloudMart user authentication token
+      Tier: Standard
+      Tags:
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: UserAuthentication
+
+
+  # ==============================================================
+  # ADMIN AUTH TOKEN PARAMETER
+  # ==============================================================
+
+  AdminAuthTokenParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+      Name: !Sub /cloudmart/${EnvironmentName}/auth/admin-token
+      Type: String
+      Value: !Ref AdminAuthToken
+      Description: CloudMart admin authentication token
+      Tier: Standard
+      Tags:
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: AdminAuthentication
 
 
   # ==============================================================
@@ -80,86 +116,244 @@ Resources:
 
     Properties:
 
-      FunctionName:
-        !Sub cloudmart-authorizer-${EnvironmentName}
+      FunctionName: !Sub cloudmart-authorizer-${EnvironmentName}
 
-      Runtime:
-        python3.13
+      Runtime: python3.13
 
-      Handler:
-        index.lambda_handler
+      Handler: index.lambda_handler
 
       Role:
-        Fn::ImportValue: cloudmart-authorizer-role-arn
+        Fn::ImportValue:
+          !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
 
       Timeout: 10
 
-      MemorySize: 256
-
-      # ==========================================================
-      # VPC CONFIGURATION
-      # ==========================================================
-
-      VpcConfig:
-
-        SubnetIds:
-
-          - Fn::ImportValue:
-              cloudmart-private-subnet-id
-
-          - Fn::ImportValue:
-              cloudmart-private-subnet-2-id
-
-        SecurityGroupIds:
-
-          - Fn::ImportValue:
-              cloudmart-lambda-sg
-
-      # ==========================================================
-      # ENVIRONMENT VARIABLES
-      # ==========================================================
+      MemorySize: 128
 
       Environment:
 
         Variables:
 
-          DB_HOST:
-            Fn::ImportValue:
-              cloudmart-database-endpoint
+          USER_AUTH_TOKEN_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/auth/user-token
 
-          DB_NAME:
-            Fn::ImportValue:
-              cloudmart-database-name
+          ADMIN_AUTH_TOKEN_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/auth/admin-token
 
-          DB_USER:
-            Fn::ImportValue:
-              cloudmart-database-username
-
-          DB_PASSWORD:
-            !Ref DBPassword
-
-          DB_PORT:
-            "3306"
-
-          APP_ENVIRONMENT:
-            !Ref EnvironmentName
-
-      # ==========================================================
-      # LAMBDA DEPLOYMENT PACKAGE
-      # ==========================================================
+          APP_ENVIRONMENT_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/app/environment
 
       Code:
 
-        S3Bucket:
-          Fn::ImportValue:
-            cloudmart-lambda-bucket
+        ZipFile: |
 
-        S3Key:
-          !Sub auth/authorizer-lambda-${CodeVersion}.zip
+          import boto3
+          import hmac
+          import os
+
+
+          # =========================================================
+          # AWS CLIENT
+          # =========================================================
+
+          ssm = boto3.client("ssm")
+
+
+          # =========================================================
+          # ENVIRONMENT VARIABLES
+          # =========================================================
+
+          USER_AUTH_TOKEN_PARAMETER = os.environ[
+              "USER_AUTH_TOKEN_PARAMETER"
+          ]
+
+          ADMIN_AUTH_TOKEN_PARAMETER = os.environ[
+              "ADMIN_AUTH_TOKEN_PARAMETER"
+          ]
+
+          APP_ENVIRONMENT_PARAMETER = os.environ[
+              "APP_ENVIRONMENT_PARAMETER"
+          ]
+
+
+          # =========================================================
+          # TOKEN HELPERS
+          # =========================================================
+
+          def normalize_token(value):
+              token = (value or "").strip()
+
+              if token.lower().startswith("bearer "):
+                  token = token[7:].strip()
+
+              return token
+
+
+          def get_parameter_value(parameter_name):
+              parameter = ssm.get_parameter(
+                  Name=parameter_name,
+                  WithDecryption=True
+              )
+
+              return normalize_token(
+                  parameter["Parameter"]["Value"]
+              )
+
+
+          def get_role(authorization):
+              provided_token = normalize_token(authorization)
+
+              if not provided_token:
+                  return None
+
+              user_token = get_parameter_value(
+                  USER_AUTH_TOKEN_PARAMETER
+              )
+
+              if user_token and hmac.compare_digest(
+                  provided_token,
+                  user_token
+              ):
+                  return "user"
+
+              admin_token = get_parameter_value(
+                  ADMIN_AUTH_TOKEN_PARAMETER
+              )
+
+              if admin_token and hmac.compare_digest(
+                  provided_token,
+                  admin_token
+              ):
+                  return "admin"
+
+              return None
+
+
+          # =========================================================
+          # API ACCESS RULES
+          # =========================================================
+
+          def is_allowed(role, method, path):
+              normalized_path = path.rstrip("/") or "/"
+
+              if role == "user":
+                  return (
+                      method == "GET"
+                      and (
+                          normalized_path == "/products"
+                          or normalized_path.startswith("/products/")
+                      )
+                  ) or (
+                      method == "POST"
+                      and normalized_path == "/orders"
+                  )
+
+              if role == "admin":
+                  if normalized_path == "/products":
+                      return method in {"GET", "POST"}
+
+                  if normalized_path.startswith("/products/"):
+                      return method in {"GET", "PUT", "DELETE"}
+
+              return False
+
+
+          # =========================================================
+          # LAMBDA HANDLER
+          # =========================================================
+
+          def lambda_handler(event, context):
+
+              print("========== AUTHORIZER START ==========")
+
+              authorization = event.get(
+                  "authorizationToken",
+                  ""
+              )
+
+              method_arn = event.get(
+                  "methodArn",
+                  ""
+              )
+
+              if not authorization:
+                  print("TOKEN MISSING")
+                  raise Exception("Unauthorized")
+
+              try:
+                  role = get_role(authorization)
+
+                  if role is None:
+                      print("TOKEN INVALID")
+                      raise Exception("Unauthorized")
+
+                  arn_parts = method_arn.split("/")
+
+                  if len(arn_parts) < 3:
+                      print("INVALID METHOD ARN")
+                      raise Exception("Unauthorized")
+
+                  method = arn_parts[2].upper()
+                  path = (
+                      "/" + "/".join(arn_parts[3:])
+                      if len(arn_parts) > 3
+                      else "/"
+                  )
+
+                  if not is_allowed(role, method, path):
+                      print(
+                          f"ACCESS DENIED: role={role}, "
+                          f"method={method}, path={path}"
+                      )
+                      raise Exception("Unauthorized")
+
+                  print(
+                      f"AUTHORIZATION SUCCESS: role={role}, "
+                      f"method={method}, path={path}"
+                  )
+
+                  return {
+                      "principalId":
+                          f"cloudmart-{role}",
+
+                      "policyDocument": {
+                          "Version": "2012-10-17",
+                          "Statement": [
+                              {
+                                  "Action":
+                                      "execute-api:Invoke",
+                                  "Effect": "Allow",
+                                  "Resource": method_arn
+                              }
+                          ]
+                      },
+
+                      "context": {
+                          "role": role,
+                          "user":
+                              f"cloudmart-{role}",
+                          "environment":
+                              APP_ENVIRONMENT_PARAMETER
+                      }
+                  }
+
+              except Exception as exc:
+
+                  print(
+                      "========== AUTHORIZER ERROR =========="
+                  )
+
+                  print(
+                      "Authorization failed:",
+                      type(exc).__name__
+                  )
+
+                  raise Exception("Unauthorized")
+
 
 
   # ==============================================================
-  # API GATEWAY AUTHORIZER PERMISSION
+  # API GATEWAY -> AUTHORIZE LAMBDA PERMISSION
   # ==============================================================
 
   AuthorizerPermission:
@@ -183,40 +377,69 @@ Resources:
 
 Outputs:
 
+
   # ==============================================================
-  # AUTHORIZER LAMBDA ARN
+  # AUTHORIZE LAMBDA ARN
   # ==============================================================
 
   AuthorizerLambdaArn:
 
-    Description:
-      CloudMart Authorizer Lambda ARN
+    Description: CloudMart Authorizer Lambda ARN
 
     Value:
       !GetAtt AuthorizerLambda.Arn
 
     Export:
-
       Name:
-        cloudmart-authorizer-lambda-arn
+        !Sub cloudmart-authorizer-lambda-arn-${EnvironmentName}
 
 
   # ==============================================================
-  # AUTHORIZER LAMBDA NAME
+  # AUTHORIZE LAMBDA NAME
   # ==============================================================
 
   AuthorizerLambdaName:
 
-    Description:
-      CloudMart Authorizer Lambda Name
+    Description: CloudMart Authorizer Lambda Name
 
     Value:
       !Ref AuthorizerLambda
 
     Export:
-
       Name:
-        cloudmart-authorizer-lambda-name
+        !Sub cloudmart-authorizer-lambda-name-${EnvironmentName}
+
+
+  # ==============================================================
+  # USER AUTH TOKEN PARAMETER NAME
+  # ==============================================================
+
+  UserAuthTokenParameterName:
+
+    Description: SSM parameter name for the CloudMart user authentication token
+
+    Value:
+      !Sub /cloudmart/${EnvironmentName}/auth/user-token
+
+    Export:
+      Name:
+        !Sub cloudmart-user-auth-token-parameter-${EnvironmentName}
+
+
+  # ==============================================================
+  # ADMIN AUTH TOKEN PARAMETER NAME
+  # ==============================================================
+
+  AdminAuthTokenParameterName:
+
+    Description: SSM parameter name for the CloudMart admin authentication token
+
+    Value:
+      !Sub /cloudmart/${EnvironmentName}/auth/admin-token
+
+    Export:
+      Name:
+        !Sub cloudmart-admin-auth-token-parameter-${EnvironmentName}
 
 
   # ==============================================================
@@ -225,13 +448,11 @@ Outputs:
 
   EnvironmentParameterName:
 
-    Description:
-      SSM parameter containing the CloudMart environment
+    Description: SSM parameter containing the CloudMart environment
 
     Value:
       !Ref EnvironmentParameter
 
     Export:
-
       Name:
-        cloudmart-environment-parameter
+        !Sub cloudmart-environment-parameter-${EnvironmentName}

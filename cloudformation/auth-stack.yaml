@@ -90,7 +90,7 @@ Resources:
         index.lambda_handler
 
       Role:
-        Fn::ImportValue: cloudmart-authorizer-role-arn
+        Fn::ImportValue: cloudmart-authorizer-role-arn-${EnvironmentName}
 
       Timeout: 10
 
@@ -105,15 +105,15 @@ Resources:
         SubnetIds:
 
           - Fn::ImportValue:
-              cloudmart-private-subnet-id
+              cloudmart-private-subnet-id-${EnvironmentName}
 
           - Fn::ImportValue:
-              cloudmart-private-subnet-2-id
+              cloudmart-private-subnet-2-id-${EnvironmentName}
 
         SecurityGroupIds:
 
           - Fn::ImportValue:
-              cloudmart-lambda-sg
+              cloudmart-lambda-sg-${EnvironmentName}
 
       # ==========================================================
       # ENVIRONMENT VARIABLES
@@ -125,15 +125,15 @@ Resources:
 
           DB_HOST:
             Fn::ImportValue:
-              cloudmart-database-endpoint
+              cloudmart-database-endpoint-${EnvironmentName}
 
           DB_NAME:
             Fn::ImportValue:
-              cloudmart-database-name
+              cloudmart-database-name-${EnvironmentName}
 
           DB_USER:
             Fn::ImportValue:
-              cloudmart-database-username
+              cloudmart-database-username-${EnvironmentName}
 
           DB_PASSWORD:
             !Ref DBPassword
@@ -152,7 +152,7 @@ Resources:
 
         S3Bucket:
           Fn::ImportValue:
-            cloudmart-lambda-bucket
+            cloudmart-lambda-bucket-${EnvironmentName}
 
         S3Key:
           !Sub auth/authorizer-lambda-${CodeVersion}.zip
@@ -198,7 +198,7 @@ Outputs:
     Export:
 
       Name:
-        cloudmart-authorizer-lambda-arn
+        cloudmart-authorizer-lambda-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -216,7 +216,7 @@ Outputs:
     Export:
 
       Name:
-        cloudmart-authorizer-lambda-name
+        cloudmart-authorizer-lambda-name-${EnvironmentName}
 
 
   # ==============================================================
@@ -234,4 +234,4 @@ Outputs:
     Export:
 
       Name:
-        cloudmart-environment-parameter
+        cloudmart-environment-parameter-${EnvironmentName}

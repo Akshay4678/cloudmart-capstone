@@ -9,6 +9,14 @@ Description: CloudMart Data Stack
 
 Parameters:
 
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: CloudMart deployment environment
+
   DBName:
     Type: String
     Default: cloudmart
@@ -46,21 +54,21 @@ Resources:
       SubnetIds:
 
         - Fn::ImportValue:
-            cloudmart-private-subnet-id
+            cloudmart-private-subnet-id-${EnvironmentName}
 
         - Fn::ImportValue:
-            cloudmart-private-subnet-2-id
+            cloudmart-private-subnet-2-id-${EnvironmentName}
 
       Tags:
 
         - Key: Name
-          Value: cloudmart-rds-subnet-group
+          Value: !Sub cloudmart-rds-subnet-group-${EnvironmentName}
 
         - Key: Application
           Value: CloudMart
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
 
 
   # ==============================================================
@@ -113,7 +121,7 @@ Resources:
       VPCSecurityGroups:
 
         - Fn::ImportValue:
-            cloudmart-rds-sg
+            cloudmart-rds-sg-${EnvironmentName}
 
       DBSubnetGroupName:
         !Ref RdsSubnetGroup
@@ -129,7 +137,7 @@ Resources:
       Tags:
 
         - Key: Name
-          Value: cloudmart-rds-mysql
+          Value: !Sub cloudmart-rds-mysql-${EnvironmentName}
 
         - Key: Application
           Value: CloudMart
@@ -138,7 +146,7 @@ Resources:
           Value: RDS
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
 
 
   # ==============================================================
@@ -164,6 +172,8 @@ Resources:
 
     Properties:
 
+      BucketName: !Sub cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
+
       BucketEncryption:
 
         ServerSideEncryptionConfiguration:
@@ -188,7 +198,7 @@ Resources:
       Tags:
 
         - Key: Name
-          Value: cloudmart-reports
+          Value: !Sub cloudmart-reports-${EnvironmentName}
 
         - Key: Service
           Value: CloudMart
@@ -197,7 +207,7 @@ Resources:
           Value: Reports
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
 
 
   # ==============================================================
@@ -213,6 +223,8 @@ Resources:
 
     Properties:
 
+      BucketName: !Sub cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
+
       BucketEncryption:
 
         ServerSideEncryptionConfiguration:
@@ -237,7 +249,7 @@ Resources:
       Tags:
 
         - Key: Name
-          Value: cloudmart-lambda-artifacts
+          Value: !Sub cloudmart-lambda-artifacts-${EnvironmentName}
 
         - Key: Service
           Value: CloudMart
@@ -246,7 +258,7 @@ Resources:
           Value: LambdaArtifacts
 
         - Key: Environment
-          Value: dev
+          Value: !Ref EnvironmentName
 
 
 # ================================================================
@@ -267,7 +279,7 @@ Outputs:
       !Ref CloudMartDatabase
 
     Export:
-      Name: cloudmart-database-identifier
+      Name: cloudmart-database-identifier-${EnvironmentName}
 
 
   # ==============================================================
@@ -282,7 +294,7 @@ Outputs:
       !GetAtt CloudMartDatabase.DbiResourceId
 
     Export:
-      Name: cloudmart-database-resource-id
+      Name: cloudmart-database-resource-id-${EnvironmentName}
 
 
   # ==============================================================
@@ -297,7 +309,7 @@ Outputs:
       !GetAtt CloudMartDatabase.Endpoint.Address
 
     Export:
-      Name: cloudmart-database-endpoint
+      Name: cloudmart-database-endpoint-${EnvironmentName}
 
 
   # ==============================================================
@@ -312,7 +324,7 @@ Outputs:
       !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name: cloudmart-database-port
+      Name: cloudmart-database-port-${EnvironmentName}
 
 
   # ==============================================================
@@ -332,7 +344,7 @@ Outputs:
             !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name: cloudmart-database-connection-endpoint
+      Name: cloudmart-database-connection-endpoint-${EnvironmentName}
 
 
   # ==============================================================
@@ -347,7 +359,7 @@ Outputs:
       !Ref DBName
 
     Export:
-      Name: cloudmart-database-name
+      Name: cloudmart-database-name-${EnvironmentName}
 
 
   # ==============================================================
@@ -362,7 +374,7 @@ Outputs:
       !Ref DBUsername
 
     Export:
-      Name: cloudmart-database-username
+      Name: cloudmart-database-username-${EnvironmentName}
 
 
   # ==============================================================
@@ -377,7 +389,7 @@ Outputs:
       !Ref RdsSubnetGroup
 
     Export:
-      Name: cloudmart-database-subnet-group
+      Name: cloudmart-database-subnet-group-${EnvironmentName}
 
 
   # ==============================================================
@@ -392,7 +404,7 @@ Outputs:
       !Ref ReportsBucket
 
     Export:
-      Name: cloudmart-reports-bucket
+      Name: cloudmart-reports-bucket-${EnvironmentName}
 
 
   # ==============================================================
@@ -407,7 +419,7 @@ Outputs:
       !GetAtt ReportsBucket.Arn
 
     Export:
-      Name: cloudmart-reports-bucket-arn
+      Name: cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -422,7 +434,7 @@ Outputs:
       !Ref LambdaArtifactsBucket
 
     Export:
-      Name: cloudmart-lambda-bucket
+      Name: cloudmart-lambda-bucket-${EnvironmentName}
 
 
   # ==============================================================
@@ -437,4 +449,4 @@ Outputs:
       !GetAtt LambdaArtifactsBucket.Arn
 
     Export:
-      Name: cloudmart-lambda-bucket-arn
+      Name: cloudmart-lambda-bucket-arn-${EnvironmentName}

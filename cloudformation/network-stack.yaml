@@ -42,11 +42,6 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Latest Amazon Linux 2023 AMI
 
-  LambdaArtifactBucketParameter:
-    Type: String
-    Default: /cloudmart/dev/lambda-artifact-bucket
-    Description: SSM parameter containing the CloudMart Lambda artifact S3 bucket name
-
 
 # ================================================================
 # RESOURCES
@@ -599,7 +594,7 @@ Resources:
                 Action:
                   - ssm:GetParameter
                 Resource:
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${LambdaArtifactBucketParameter}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/lambda-artifact-bucket
 
               - Sid: ReadCloudWatchMetrics
                 Effect: Allow
@@ -647,7 +642,7 @@ Resources:
           exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
 
           AWS_REGION_VALUE="${AWS::Region}"
-          LAMBDA_BUCKET_PARAMETER="${LambdaArtifactBucketParameter}"
+          LAMBDA_BUCKET_PARAMETER="/cloudmart/${EnvironmentName}/lambda-artifact-bucket"
           DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
           DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
           DASHBOARD_DIR="/opt/cloudmart-dashboard"

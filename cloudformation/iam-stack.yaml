@@ -122,6 +122,7 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -131,7 +132,6 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
-
 
 
               # ==================================================
@@ -242,6 +242,7 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -251,7 +252,6 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
-
 
 
               # ==================================================
@@ -362,6 +362,7 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -371,7 +372,6 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
-
 
 
               # ==================================================
@@ -500,6 +500,7 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
+
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -509,7 +510,6 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
-
 
 
               # ==================================================
@@ -601,8 +601,7 @@ Outputs:
       !GetAtt AuthorizerLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-authorizer-role-arn-${EnvironmentName}
+      Name: !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -617,8 +616,7 @@ Outputs:
       !GetAtt ProductLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-product-role-arn-${EnvironmentName}
+      Name: !Sub cloudmart-product-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -633,8 +631,7 @@ Outputs:
       !GetAtt OrderLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-order-role-arn-${EnvironmentName}
+      Name: !Sub cloudmart-order-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -649,8 +646,7 @@ Outputs:
       !GetAtt OrderProcessingLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-order-processing-role-arn-${EnvironmentName}
+      Name: !Sub cloudmart-order-processing-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -665,5 +661,4 @@ Outputs:
       !GetAtt ReportLambdaRole.Arn
 
     Export:
-      Name:
-        cloudmart-report-role-arn-${EnvironmentName}
+      Name: !Sub cloudmart-report-role-arn-${EnvironmentName}

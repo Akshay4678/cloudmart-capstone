@@ -53,11 +53,9 @@ Resources:
 
       SubnetIds:
 
-        - Fn::ImportValue:
-            cloudmart-private-subnet-id-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-private-subnet-id-${EnvironmentName}
 
-        - Fn::ImportValue:
-            cloudmart-private-subnet-2-id-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
 
       Tags:
 
@@ -120,8 +118,7 @@ Resources:
 
       VPCSecurityGroups:
 
-        - Fn::ImportValue:
-            cloudmart-rds-sg-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-rds-sg-${EnvironmentName}
 
       DBSubnetGroupName:
         !Ref RdsSubnetGroup
@@ -279,7 +276,7 @@ Outputs:
       !Ref CloudMartDatabase
 
     Export:
-      Name: cloudmart-database-identifier-${EnvironmentName}
+      Name: !Sub cloudmart-database-identifier-${EnvironmentName}
 
 
   # ==============================================================
@@ -294,7 +291,7 @@ Outputs:
       !GetAtt CloudMartDatabase.DbiResourceId
 
     Export:
-      Name: cloudmart-database-resource-id-${EnvironmentName}
+      Name: !Sub cloudmart-database-resource-id-${EnvironmentName}
 
 
   # ==============================================================
@@ -309,7 +306,7 @@ Outputs:
       !GetAtt CloudMartDatabase.Endpoint.Address
 
     Export:
-      Name: cloudmart-database-endpoint-${EnvironmentName}
+      Name: !Sub cloudmart-database-endpoint-${EnvironmentName}
 
 
   # ==============================================================
@@ -324,7 +321,7 @@ Outputs:
       !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name: cloudmart-database-port-${EnvironmentName}
+      Name: !Sub cloudmart-database-port-${EnvironmentName}
 
 
   # ==============================================================
@@ -344,7 +341,7 @@ Outputs:
             !GetAtt CloudMartDatabase.Endpoint.Port
 
     Export:
-      Name: cloudmart-database-connection-endpoint-${EnvironmentName}
+      Name: !Sub cloudmart-database-connection-endpoint-${EnvironmentName}
 
 
   # ==============================================================
@@ -359,7 +356,7 @@ Outputs:
       !Ref DBName
 
     Export:
-      Name: cloudmart-database-name-${EnvironmentName}
+      Name: !Sub cloudmart-database-name-${EnvironmentName}
 
 
   # ==============================================================
@@ -374,7 +371,7 @@ Outputs:
       !Ref DBUsername
 
     Export:
-      Name: cloudmart-database-username-${EnvironmentName}
+      Name: !Sub cloudmart-database-username-${EnvironmentName}
 
 
   # ==============================================================
@@ -389,7 +386,7 @@ Outputs:
       !Ref RdsSubnetGroup
 
     Export:
-      Name: cloudmart-database-subnet-group-${EnvironmentName}
+      Name: !Sub cloudmart-database-subnet-group-${EnvironmentName}
 
 
   # ==============================================================
@@ -404,7 +401,7 @@ Outputs:
       !Ref ReportsBucket
 
     Export:
-      Name: cloudmart-reports-bucket-${EnvironmentName}
+      Name: !Sub cloudmart-reports-bucket-${EnvironmentName}
 
 
   # ==============================================================
@@ -419,7 +416,7 @@ Outputs:
       !GetAtt ReportsBucket.Arn
 
     Export:
-      Name: cloudmart-reports-bucket-arn-${EnvironmentName}
+      Name: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -434,7 +431,7 @@ Outputs:
       !Ref LambdaArtifactsBucket
 
     Export:
-      Name: cloudmart-lambda-bucket-${EnvironmentName}
+      Name: !Sub cloudmart-lambda-bucket-${EnvironmentName}
 
 
   # ==============================================================
@@ -449,4 +446,4 @@ Outputs:
       !GetAtt LambdaArtifactsBucket.Arn
 
     Export:
-      Name: cloudmart-lambda-bucket-arn-${EnvironmentName}
+      Name: !Sub cloudmart-lambda-bucket-arn-${EnvironmentName}

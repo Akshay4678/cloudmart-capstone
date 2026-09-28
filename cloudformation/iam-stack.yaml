@@ -546,8 +546,7 @@ Resources:
                     - ${ReportsBucketArn}/*
 
                     - ReportsBucketArn:
-                        Fn::ImportValue:
-                          cloudmart-reports-bucket-arn-${EnvironmentName}
+                        Fn::ImportValue: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
               # ==================================================
@@ -562,8 +561,7 @@ Resources:
                   - s3:ListBucket
 
                 Resource:
-                  Fn::ImportValue:
-                    cloudmart-reports-bucket-arn-${EnvironmentName}
+                  Fn::ImportValue: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
               # ==================================================

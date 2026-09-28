@@ -420,7 +420,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --template-file cloudformation/network-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
@@ -434,7 +434,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --query "StackEvents[0:40].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -457,7 +457,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --template-file cloudformation/data-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
@@ -471,7 +471,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -492,7 +492,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-iam-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-iam-stack \
             --template-file cloudformation/iam-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
@@ -506,7 +506,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-iam-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-iam-stack \
             --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -520,7 +520,7 @@ jobs:
 
           BUCKET=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaBucket'].OutputValue" \
             --output text)
 
@@ -689,7 +689,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-auth-stack \
             --template-file cloudformation/auth-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
@@ -705,7 +705,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-auth-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-auth-stack \
             --query "StackEvents[0:60].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -730,7 +730,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-api-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-api-stack \
             --template-file cloudformation/api-stack.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
@@ -745,7 +745,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-api-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-api-stack \
             --query "StackEvents[0:80].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -758,7 +758,7 @@ jobs:
 
           DB_HOST=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" \
             --output text)
 
@@ -843,7 +843,7 @@ jobs:
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --template-file cloudformation/monitoring-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
@@ -857,7 +857,7 @@ jobs:
         run: |
           aws cloudformation describe-stack-events \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --query "StackEvents[0:80].[Timestamp,LogicalResourceId,ResourceStatus,ResourceStatusReason]" \
             --output table || true
 
@@ -871,25 +871,25 @@ jobs:
 
           REPORTS_BUCKET=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='ReportsBucket'].OutputValue" \
             --output text)
 
           INSTANCE_ID=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
             --output text)
 
           DB_HOST=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-data-stack \
             --query "Stacks[0].Outputs[?OutputKey=='DatabaseEndpoint'].OutputValue" \
             --output text)
 
           PUBLIC_IP=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-network-stack \
             --query "Stacks[0].Outputs[?OutputKey=='EC2PublicIP'].OutputValue" \
             --output text)
 
@@ -962,7 +962,7 @@ jobs:
 
           STACK_STATUS=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --query "Stacks[0].StackStatus" \
             --output text)
 
@@ -983,7 +983,7 @@ jobs:
 
           ALARM_COUNT=$(aws cloudformation list-stack-resources \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-monitoring-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-monitoring-stack \
             --query "length(StackResourceSummaries[?ResourceType=='AWS::CloudWatch::Alarm'])" \
             --output text)
 
@@ -1007,7 +1007,7 @@ jobs:
 
           API_URL=$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-api-stack-$ENVIRONMENT_NAME \
+            --stack-name cloudmart-api-stack \
             --query "Stacks[0].Outputs[?OutputKey=='ApiInvokeUrl'].OutputValue" \
             --output text)
 
@@ -1030,12 +1030,12 @@ jobs:
           echo "=================================================="
 
           for stack in \
-            cloudmart-network-stack-$ENVIRONMENT_NAME \
-            cloudmart-data-stack-$ENVIRONMENT_NAME \
-            cloudmart-iam-stack-$ENVIRONMENT_NAME \
-            cloudmart-auth-stack-$ENVIRONMENT_NAME \
-            cloudmart-api-stack-$ENVIRONMENT_NAME \
-            cloudmart-monitoring-stack-$ENVIRONMENT_NAME
+            cloudmart-network-stack \
+            cloudmart-data-stack \
+            cloudmart-iam-stack \
+            cloudmart-auth-stack \
+            cloudmart-api-stack \
+            cloudmart-monitoring-stack
           do
             echo ""
             echo "===== $stack ====="

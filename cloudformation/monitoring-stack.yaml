@@ -353,6 +353,7 @@ Resources:
                 }
               },
 
+
               {
                 "type": "metric",
                 "x": 0,
@@ -383,6 +384,7 @@ Resources:
                 }
               },
 
+
               {
                 "type": "metric",
                 "x": 12,
@@ -412,7 +414,7 @@ Resources:
           }
 
         - DatabaseIdentifier:
-            Fn::ImportValue: cloudmart-database-identifier-${EnvironmentName}
+            Fn::ImportValue: !Sub cloudmart-database-identifier-${EnvironmentName}
 
 
   # ==============================================================
@@ -471,8 +473,7 @@ Resources:
 
       AlarmActions:
 
-        - Fn::ImportValue:
-            cloudmart-order-failure-topic-arn-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -531,8 +532,7 @@ Resources:
 
       AlarmActions:
 
-        - Fn::ImportValue:
-            cloudmart-low-stock-topic-arn-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-low-stock-topic-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -585,8 +585,7 @@ Resources:
 
       AlarmActions:
 
-        - Fn::ImportValue:
-            cloudmart-order-failure-topic-arn-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -617,8 +616,7 @@ Resources:
             DBInstanceIdentifier
 
           Value:
-            Fn::ImportValue:
-              cloudmart-database-identifier-${EnvironmentName}
+            Fn::ImportValue: !Sub cloudmart-database-identifier-${EnvironmentName}
 
       Statistic:
         Average
@@ -640,8 +638,7 @@ Resources:
 
       AlarmActions:
 
-        - Fn::ImportValue:
-            cloudmart-order-failure-topic-arn-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -700,8 +697,7 @@ Resources:
 
       AlarmActions:
 
-        - Fn::ImportValue:
-            cloudmart-order-failure-topic-arn-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -760,8 +756,7 @@ Resources:
 
       AlarmActions:
 
-        - Fn::ImportValue:
-            cloudmart-order-failure-topic-arn-${EnvironmentName}
+        - Fn::ImportValue: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
 
 
 # ================================================================
@@ -814,6 +809,7 @@ Outputs:
     Value:
       !Ref RDSCPUAlarm
 
+
   ApiGatewayLatencyAlarmName:
 
     Description:
@@ -830,4 +826,3 @@ Outputs:
 
     Value:
       !Ref ApiGateway4XXAlarm
-

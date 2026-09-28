@@ -1031,11 +1031,11 @@ jobs:
 
           for stack in \
             cloudmart-network-stack \
-            cloudmart-data-stack-$ENVIRONMENT_NAME \
-            cloudmart-iam-stack-$ENVIRONMENT_NAME \
-            cloudmart-auth-stack-$ENVIRONMENT_NAME \
-            cloudmart-api-stack-$ENVIRONMENT_NAME \
-            cloudmart-monitoring-stack-$ENVIRONMENT_NAME
+            cloudmart-data-stack \
+            cloudmart-iam-stack \
+            cloudmart-auth-stack \
+            cloudmart-api-stack \
+            cloudmart-monitoring-stack
           do
             echo ""
             echo "===== $stack ====="

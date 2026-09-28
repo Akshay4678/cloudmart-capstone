@@ -43,7 +43,6 @@ Parameters:
     Description: Latest Amazon Linux 2023 AMI
 
 
-
 # ================================================================
 # RESOURCES
 # ================================================================
@@ -653,6 +652,33 @@ Resources:
           echo "=================================================="
 
           # ============================================================
+          # LOW-MEMORY EC2 PROTECTION
+          # ============================================================
+          # t3.micro has limited RAM. Create 1 GB swap automatically.
+          # This is infrastructure bootstrap, not a manual installation.
+
+          if ! swapon --show | grep -q "/swapfile"; then
+            if [ ! -f /swapfile ]; then
+              dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+              chmod 600 /swapfile
+              mkswap /swapfile
+            fi
+            swapon /swapfile
+          fi
+
+          if ! grep -q "^/swapfile " /etc/fstab; then
+            echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
+          fi
+
+          echo "Memory after swap setup:"
+          free -h
+
+          # Use disk-backed temporary storage instead of the small /tmp tmpfs.
+          mkdir -p /var/tmp/cloudmart-pip
+          chmod 1777 /var/tmp/cloudmart-pip
+          export TMPDIR=/var/tmp/cloudmart-pip
+
+          # ============================================================
           # SYSTEM PACKAGES
           # ============================================================
 
@@ -701,10 +727,33 @@ Resources:
           }
           NGINXEOF
 
+          # Replace the Amazon Linux default server configuration so there is
+          # only one server listening on port 80.
+          cat > /etc/nginx/nginx.conf <<'NGINXCONFEOF'
+          user nginx;
+          worker_processes auto;
+          error_log /var/log/nginx/error.log notice;
+          pid /run/nginx.pid;
+
+          events {
+              worker_connections 1024;
+          }
+
+          http {
+              include /etc/nginx/mime.types;
+              default_type application/octet-stream;
+              log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                              '$status $body_bytes_sent "$http_referer" '
+                              '"$http_user_agent" "$http_x_forwarded_for"';
+              access_log /var/log/nginx/access.log main;
+              sendfile on;
+              keepalive_timeout 65;
+              include /etc/nginx/conf.d/*.conf;
+          }
+          NGINXCONFEOF
+
           nginx -t
 
-          # NGINX is configured here but started only after
-          # Gunicorn is installed, running, and healthy.
           echo "NGINX configuration validated successfully."
 
           # ============================================================
@@ -877,17 +926,15 @@ Resources:
 
           test -x "$DASHBOARD_DIR/venv/bin/python"
 
-          "$DASHBOARD_DIR/venv/bin/python" -m pip install --upgrade pip
-
           "$DASHBOARD_DIR/venv/bin/pip" install \
+            --no-cache-dir \
+            --disable-pip-version-check \
             -r "$DASHBOARD_DIR/requirements.txt"
-
-          # Gunicorn MUST be installed explicitly.
-          "$DASHBOARD_DIR/venv/bin/pip" install gunicorn
 
           test -x "$DASHBOARD_DIR/venv/bin/gunicorn"
 
           echo "Gunicorn installed: $("$DASHBOARD_DIR/venv/bin/gunicorn" --version)"
+          rm -rf /var/tmp/cloudmart-pip/* /tmp/pip-* 2>/dev/null || true
 
           # ============================================================
           # VALIDATE PYTHON
@@ -1302,104 +1349,11 @@ Resources:
           Value: !Sub cloudmart-cloudwatch-monitoring-vpc-endpoint-${EnvironmentName}
 
 
-
 # ================================================================
 # OUTPUTS
 # ================================================================
 
 Outputs:
-
-  # ================================================================
-  # LEGACY EXPORTS - TEMPORARY MIGRATION COMPATIBILITY
-  # These keep existing consumers working while they migrate to
-  # environment-specific exports.
-  # ================================================================
-
-  LegacyVPCId:
-    Value: !Ref CloudMartVPC
-    Export:
-      Name: cloudmart-vpc-id
-
-  LegacyPublicSubnetId:
-    Value: !Ref PublicSubnet
-    Export:
-      Name: cloudmart-public-subnet-id
-
-  LegacyPrivateSubnetId:
-    Value: !Ref PrivateSubnet
-    Export:
-      Name: cloudmart-private-subnet-id
-
-  LegacyPrivateSubnet2Id:
-    Value: !Ref PrivateSubnet2
-    Export:
-      Name: cloudmart-private-subnet-2-id
-
-  LegacyLambdaSG:
-    Value: !Ref LambdaSecurityGroup
-    Export:
-      Name: cloudmart-lambda-sg
-
-  LegacyRDSSG:
-    Value: !Ref RDSSecurityGroup
-    Export:
-      Name: cloudmart-rds-sg
-
-  LegacyEC2SG:
-    Value: !Ref EC2SecurityGroup
-    Export:
-      Name: cloudmart-ec2-sg
-
-  LegacyVPCEndpointSG:
-    Value: !Ref VPCEndpointSecurityGroup
-    Export:
-      Name: cloudmart-vpc-endpoint-sg
-
-  LegacyEventBridgeEndpointId:
-    Value: !Ref EventBridgeVPCEndpoint
-    Export:
-      Name: cloudmart-eventbridge-vpc-endpoint
-
-  LegacyS3EndpointId:
-    Value: !Ref S3VPCEndpoint
-    Export:
-      Name: cloudmart-s3-vpc-endpoint
-
-  LegacySSMEndpointId:
-    Value: !Ref SSMVPCEndpoint
-    Export:
-      Name: cloudmart-ssm-vpc-endpoint
-
-  LegacySNSEndpointId:
-    Value: !Ref SNSVPCEndpoint
-    Export:
-      Name: cloudmart-sns-vpc-endpoint
-
-  LegacyCloudWatchLogsEndpointId:
-    Value: !Ref CloudWatchLogsVPCEndpoint
-    Export:
-      Name: cloudmart-cloudwatch-logs-vpc-endpoint
-
-  LegacyCloudWatchMonitoringEndpointId:
-    Value: !Ref CloudWatchMonitoringVPCEndpoint
-    Export:
-      Name: cloudmart-cloudwatch-monitoring-vpc-endpoint
-
-  LegacyEC2InstanceId:
-    Value: !Ref CloudMartEC2V3
-    Export:
-      Name: cloudmart-ec2-instance-id
-
-  LegacyEC2PublicIP:
-    Value: !GetAtt CloudMartEC2V3.PublicIp
-    Export:
-      Name: cloudmart-ec2-public-ip
-
-  LegacyEC2PrivateIP:
-    Value: !GetAtt CloudMartEC2V3.PrivateIp
-    Export:
-      Name: cloudmart-ec2-private-ip
-
 
 
   # ================================================================

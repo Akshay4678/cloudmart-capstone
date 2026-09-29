@@ -157,19 +157,14 @@ Resources:
   #       v
   # EC2 Flask Dashboard
   #
-  # IMPORTANT:
-  # BucketName is intentionally NOT specified.
-  # CloudFormation generates a unique bucket name.
-  # This avoids conflicts when old buckets remain after
-  # a previous stack deletion.
+  # CloudFormation generates a unique physical bucket name.
+  # This avoids conflicts with buckets left by previous deployments.
   # ==============================================================
 
   ReportsBucket:
     Type: AWS::S3::Bucket
 
     Properties:
-
-      BucketName: !Sub cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
 
       BucketEncryption:
 
@@ -210,17 +205,13 @@ Resources:
   # ==============================================================
   # S3 LAMBDA ARTIFACTS BUCKET
   #
-  # IMPORTANT:
-  # BucketName is intentionally NOT specified.
-  # CloudFormation generates a unique bucket name.
+  # CloudFormation generates a unique physical bucket name.
   # ==============================================================
 
   LambdaArtifactsBucket:
     Type: AWS::S3::Bucket
 
     Properties:
-
-      BucketName: !Sub cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
 
       BucketEncryption:
 

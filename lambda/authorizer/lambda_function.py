@@ -1,5 +1,7 @@
 import os
 import hashlib
+
+import boto3
 import pymysql
 
 
@@ -13,7 +15,7 @@ DB_NAME = os.environ["DB_NAME"]
 
 DB_USER = os.environ["DB_USER"]
 
-DB_PASSWORD = os.environ["DB_PASSWORD"]
+DB_PASSWORD_PARAMETER = os.environ["DB_PASSWORD_PARAMETER"]
 
 DB_PORT = int(
     os.environ.get(
@@ -27,6 +29,8 @@ APP_ENVIRONMENT = os.environ.get(
     "dev"
 )
 
+ssm_client = boto3.client("ssm")
+
 
 # =========================================================
 # DATABASE CONNECTION
@@ -38,13 +42,20 @@ def get_connection():
     Creates a connection to the RDS MySQL database.
     """
 
+    parameter = ssm_client.get_parameter(
+        Name=DB_PASSWORD_PARAMETER,
+        WithDecryption=True
+    )
+
+    db_password = parameter["Parameter"]["Value"]
+
     return pymysql.connect(
 
         host=DB_HOST,
 
         user=DB_USER,
 
-        password=DB_PASSWORD,
+        password=db_password,
 
         database=DB_NAME,
 
@@ -65,6 +76,7 @@ def get_connection():
 # =========================================================
 
 def normalize_token(token):
+
     """
     Extract the token from the Authorization header.
 
@@ -136,7 +148,6 @@ def get_customer_by_token(authorization):
     )
 
     if not provided_token:
-
         return None
 
     token_hash = hash_token(
@@ -201,6 +212,9 @@ def is_allowed(role, method, path):
 
         PATCH is not allowed for users.
 
+        GET    /customers/{customerId}
+        PUT    /customers/{customerId}
+
     ADMIN permissions:
 
         GET    /products
@@ -216,6 +230,9 @@ def is_allowed(role, method, path):
         GET    /orders/{orderId}
         PUT    /orders/{orderId}
         PATCH  /orders/{orderId}
+
+        GET    /customers/{customerId}
+        PUT    /customers/{customerId}
     """
 
     role = (
@@ -285,6 +302,20 @@ def is_allowed(role, method, path):
 
 
         # -------------------------------------------------
+        # Customers
+        # -------------------------------------------------
+
+        if normalized_path.startswith(
+            "/customers/"
+        ):
+
+            return method in {
+                "GET",
+                "PUT"
+            }
+
+
+        # -------------------------------------------------
         # Unknown USER path
         # -------------------------------------------------
 
@@ -342,6 +373,20 @@ def is_allowed(role, method, path):
                 "GET",
                 "PUT",
                 "PATCH"
+            }
+
+
+        # -------------------------------------------------
+        # Customers
+        # -------------------------------------------------
+
+        if normalized_path.startswith(
+            "/customers/"
+        ):
+
+            return method in {
+                "GET",
+                "PUT"
             }
 
 
@@ -409,7 +454,6 @@ def parse_method_arn(method_arn):
     else:
 
         path = "/"
-
 
     return method, path
 

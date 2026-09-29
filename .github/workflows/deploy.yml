@@ -79,7 +79,41 @@ jobs:
           echo "Required secrets are configured."
 
       # ==========================================================
-      # 5. STORE NOTIFICATION EMAIL IN SSM
+      # 5. STORE DATABASE PASSWORD IN SSM
+      #
+      # Order/Product/Report Lambdas read the database password
+      # from this environment-specific SecureString.
+      # This must exist before any Lambda is invoked.
+      # ==========================================================
+      - name: Store Database Password in SSM
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/database/password" \
+            --type "SecureString" \
+            --value "$DB_PASSWORD" \
+            --overwrite
+
+          STORED_PARAMETER=$(aws ssm get-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/database/password" \
+            --with-decryption \
+            --query "Parameter.Value" \
+            --output text)
+
+          if [ -z "$STORED_PARAMETER" ] || [ "$STORED_PARAMETER" = "None" ]; then
+            echo "ERROR: Database password SSM parameter was not created."
+            exit 1
+          fi
+
+          echo "Database password SSM parameter created and verified."
+
+      # ==========================================================
+      # 29. STORE NOTIFICATION EMAIL IN SSM
       # ==========================================================
       - name: Store Notification Email in SSM
         env:
@@ -97,7 +131,7 @@ jobs:
           echo "Notification email stored in SSM."
 
       # ==========================================================
-      # 6. INSTALL CFN-LINT
+      # 29. INSTALL CFN-LINT
       # ==========================================================
       - name: Install cfn-lint
         run: |
@@ -106,7 +140,7 @@ jobs:
           pip install cfn-lint
 
       # ==========================================================
-      # 7. VALIDATE CLOUDFORMATION TEMPLATES
+      # 29. VALIDATE CLOUDFORMATION TEMPLATES
       # ==========================================================
       - name: Validate CloudFormation Templates
         run: |
@@ -136,7 +170,7 @@ jobs:
           done
 
       # ==========================================================
-      # 8. CHECK SOURCE FILES
+      # 29. CHECK SOURCE FILES
       # ==========================================================
       - name: Check Source Files
         run: |
@@ -182,7 +216,7 @@ jobs:
           echo "All required source files are present and Python syntax is valid."
 
       # ==========================================================
-      # 9. VERIFY LAMBDA REQUIREMENTS
+      # 29. VERIFY LAMBDA REQUIREMENTS
       # ==========================================================
       - name: Verify Lambda Requirements
         run: |
@@ -226,7 +260,7 @@ jobs:
           echo "Lambda requirements verified."
 
       # ==========================================================
-      # 10. PACKAGE ALL LAMBDA FUNCTIONS
+      # 29. PACKAGE ALL LAMBDA FUNCTIONS
       # ==========================================================
       - name: Package Lambda Functions
         run: |
@@ -374,7 +408,7 @@ jobs:
           echo "All Lambda packages created."
 
       # ==========================================================
-      # 11. VERIFY PACKAGES
+      # 29. VERIFY PACKAGES
       # ==========================================================
       - name: Verify Lambda Packages
         run: |
@@ -407,7 +441,7 @@ jobs:
           echo "All Lambda packages verified."
 
       # ==========================================================
-      # 12. DEPLOY NETWORK
+      # 29. DEPLOY NETWORK
       # ==========================================================
       - name: Deploy Network Stack
         id: deploy_network
@@ -439,7 +473,7 @@ jobs:
             --output table || true
 
       # ==========================================================
-      # 13. DEPLOY DATA
+      # 29. DEPLOY DATA
       #
       # REQUIRED BEFORE IAM because IAM imports:
       # cloudmart-reports-bucket-arn
@@ -476,7 +510,7 @@ jobs:
             --output table || true
 
       # ==========================================================
-      # 14. DEPLOY IAM
+      # 29. DEPLOY IAM
       #
       # DATA MUST EXIST FIRST because iam-stack.yaml imports:
       # cloudmart-reports-bucket-arn
@@ -511,7 +545,7 @@ jobs:
             --output table || true
 
       # ==========================================================
-      # 15. GET LAMBDA ARTIFACT BUCKET
+      # 29. GET LAMBDA ARTIFACT BUCKET
       # ==========================================================
       - name: Get Lambda Artifact Bucket
         id: lambda_bucket
@@ -533,7 +567,7 @@ jobs:
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
       # ==========================================================
-      # 16. STORE LAMBDA ARTIFACT BUCKET IN SSM
+      # 29. STORE LAMBDA ARTIFACT BUCKET IN SSM
       # ==========================================================
       - name: Store Lambda Artifact Bucket in SSM
         run: |
@@ -562,7 +596,7 @@ jobs:
           echo "Lambda artifact bucket stored and verified in SSM."
 
       # ==========================================================
-      # 17. UPLOAD AUTHORIZER PACKAGE
+      # 29. UPLOAD AUTHORIZER PACKAGE
       # ==========================================================
       - name: Upload Authorizer Lambda
         run: |
@@ -575,7 +609,7 @@ jobs:
           echo "Authorizer Lambda uploaded."
 
       # ==========================================================
-      # 17. UPLOAD PRODUCT
+      # 29. UPLOAD PRODUCT
       # ==========================================================
       - name: Upload Product Lambda
         run: |
@@ -588,7 +622,7 @@ jobs:
           echo "Product Lambda uploaded."
 
       # ==========================================================
-      # 18. UPLOAD ORDER
+      # 29. UPLOAD ORDER
       # ==========================================================
       - name: Upload Order Lambda
         run: |
@@ -601,7 +635,7 @@ jobs:
           echo "Order Lambda uploaded."
 
       # ==========================================================
-      # 19. UPLOAD ORDER PROCESSOR
+      # 29. UPLOAD ORDER PROCESSOR
       # ==========================================================
       - name: Upload Order Processor Lambda
         run: |
@@ -614,7 +648,7 @@ jobs:
           echo "Order Processor Lambda uploaded."
 
       # ==========================================================
-      # 20. UPLOAD REPORT
+      # 29. UPLOAD REPORT
       # ==========================================================
       - name: Upload Report Lambda
         run: |
@@ -627,7 +661,7 @@ jobs:
           echo "Report Lambda uploaded."
 
       # ==========================================================
-      # 21. PACKAGE DASHBOARD
+      # 29. PACKAGE DASHBOARD
       # ==========================================================
       - name: Package Dashboard
         run: |
@@ -650,7 +684,7 @@ jobs:
           echo "Dashboard package created."
 
       # ==========================================================
-      # 22. UPLOAD DASHBOARD
+      # 29. UPLOAD DASHBOARD
       # ==========================================================
       - name: Upload Dashboard Package
         run: |
@@ -668,7 +702,7 @@ jobs:
           echo "Dashboard package uploaded."
 
       # ==========================================================
-      # 23. DEPLOY AUTH
+      # 29. DEPLOY AUTH
       #
       # AUTH REQUIRES:
       # - Network exports
@@ -710,7 +744,7 @@ jobs:
             --output table || true
 
       # ==========================================================
-      # 24. DEPLOY APPLICATION
+      # 29. DEPLOY APPLICATION
       #
       # API REQUIRES:
       # - Network exports
@@ -750,7 +784,7 @@ jobs:
             --output table || true
 
       # ==========================================================
-      # 25. UPLOAD DASHBOARD DATABASE HOST CONFIG
+      # 29. UPLOAD DASHBOARD DATABASE HOST CONFIG
       # ==========================================================
       - name: Upload Dashboard Database Host Config
         run: |
@@ -779,7 +813,7 @@ jobs:
           echo "Dashboard database host configuration uploaded."
 
       # ==========================================================
-      # 26. INITIALIZE RDS DATABASE SCHEMA
+      # 29. INITIALIZE RDS DATABASE SCHEMA
       # ==========================================================
       - name: Initialize RDS Database Schema
         id: initialize_schema
@@ -828,7 +862,7 @@ jobs:
           echo "Database schema initialized successfully."
 
       # ==========================================================
-      # 27. DEPLOY MONITORING
+      # 29. DEPLOY MONITORING
       #
       # Monitoring imports Data/API outputs, so it must be LAST.
       # ==========================================================
@@ -862,7 +896,7 @@ jobs:
             --output table || true
 
       # ==========================================================
-      # 28. GET MILESTONE 5 OUTPUTS
+      # 29. GET MILESTONE 5 OUTPUTS
       # ==========================================================
       - name: Get Milestone 5 Outputs
         id: milestone5_outputs

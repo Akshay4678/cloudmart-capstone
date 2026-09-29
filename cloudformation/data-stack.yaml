@@ -249,6 +249,47 @@ Resources:
           Value: !Ref EnvironmentName
 
 
+  # ==============================================================
+  # LAMBDA ARTIFACTS BUCKET POLICY
+  # Allows only the CloudMart EC2 instance role to list this bucket
+  # and read objects from it.
+  # ==============================================================
+
+  LambdaArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+
+    Properties:
+
+      Bucket: !Ref LambdaArtifactsBucket
+
+      PolicyDocument:
+
+        Version: '2012-10-17'
+
+        Statement:
+
+          - Sid: AllowDashboardEC2ReadObjects
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource:
+              - !Sub '${LambdaArtifactsBucket.Arn}/*'
+
+          - Sid: AllowDashboardEC2ListBucket
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
+            Action:
+              - s3:ListBucket
+            Resource:
+              - !GetAtt LambdaArtifactsBucket.Arn
+
+
 # ================================================================
 # OUTPUTS
 # ================================================================

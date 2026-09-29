@@ -574,21 +574,6 @@ Resources:
                   - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
                   - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}/*
 
-              - Sid: ReadLambdaArtifacts
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}/*
-
-              - Sid: ListLambdaArtifactBucket
-                Effect: Allow
-                Action:
-                  - s3:ListBucket
-                Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
-
               - Sid: ReadLambdaArtifactBucketParameter
                 Effect: Allow
                 Action:
@@ -1524,6 +1509,19 @@ Outputs:
 
     Export:
       Name: !Sub cloudmart-cloudwatch-monitoring-vpc-endpoint-${EnvironmentName}
+
+
+
+  # ================================================================
+  # EC2 INSTANCE ROLE ARN
+  # Used by the Data Stack S3 bucket policy.
+  # ================================================================
+
+  EC2InstanceRoleArn:
+    Description: CloudMart EC2 Instance Role ARN
+    Value: !GetAtt EC2InstanceRole.Arn
+    Export:
+      Name: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
 
   EC2InstanceId:
     Description: CloudMart EC2 instance ID

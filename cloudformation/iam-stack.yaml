@@ -565,6 +565,27 @@ Resources:
 
 
               # ==================================================
+              # CLOUDWATCH CUSTOM METRICS
+              # ==================================================
+
+              - Sid: PublishReportMetrics
+
+                Effect: Allow
+
+                Action:
+                  - cloudwatch:PutMetricData
+
+                Resource: "*"
+
+                Condition:
+
+                  StringEquals:
+
+                    cloudwatch:namespace:
+                      - CloudMart/Application
+
+
+              # ==================================================
               # VPC NETWORK INTERFACES
               # ==================================================
 

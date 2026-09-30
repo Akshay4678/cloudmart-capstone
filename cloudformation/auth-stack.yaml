@@ -19,13 +19,6 @@ Parameters:
     Description: CloudMart deployment environment
 
 
-  DBPassword:
-    Type: String
-    NoEcho: true
-
-    Description: RDS database password used by the Lambda authorizer
-
-
   CodeVersion:
     Type: String
 
@@ -90,7 +83,8 @@ Resources:
         index.lambda_handler
 
       Role:
-        Fn::ImportValue: !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
+        Fn::ImportValue:
+          !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
 
       Timeout: 10
 
@@ -104,13 +98,16 @@ Resources:
 
         SubnetIds:
 
-          - Fn::ImportValue: !Sub cloudmart-private-subnet-id-${EnvironmentName}
+          - Fn::ImportValue:
+              !Sub cloudmart-private-subnet-id-${EnvironmentName}
 
-          - Fn::ImportValue: !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
+          - Fn::ImportValue:
+              !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
 
         SecurityGroupIds:
 
-          - Fn::ImportValue: !Sub cloudmart-lambda-sg-${EnvironmentName}
+          - Fn::ImportValue:
+              !Sub cloudmart-lambda-sg-${EnvironmentName}
 
 
       # ==========================================================
@@ -121,22 +118,54 @@ Resources:
 
         Variables:
 
+          # ------------------------------------------------------
+          # RDS DATABASE HOST
+          # ------------------------------------------------------
+
           DB_HOST:
-            Fn::ImportValue: !Sub cloudmart-database-endpoint-${EnvironmentName}
+            Fn::ImportValue:
+              !Sub cloudmart-database-endpoint-${EnvironmentName}
+
+
+          # ------------------------------------------------------
+          # RDS DATABASE NAME
+          # ------------------------------------------------------
 
           DB_NAME:
-            Fn::ImportValue: !Sub cloudmart-database-name-${EnvironmentName}
+            Fn::ImportValue:
+              !Sub cloudmart-database-name-${EnvironmentName}
+
+
+          # ------------------------------------------------------
+          # RDS DATABASE USER
+          # ------------------------------------------------------
 
           DB_USER:
-            Fn::ImportValue: !Sub cloudmart-database-username-${EnvironmentName}
+            Fn::ImportValue:
+              !Sub cloudmart-database-username-${EnvironmentName}
 
-          DB_PASSWORD:
-            !Ref DBPassword
+
+          # ------------------------------------------------------
+          # SSM PARAMETER CONTAINING DATABASE PASSWORD
+          # ------------------------------------------------------
+
+          DB_PASSWORD_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/database/password
+
+
+          # ------------------------------------------------------
+          # DATABASE PORT
+          # ------------------------------------------------------
 
           DB_PORT:
             "3306"
 
-          APP_ENVIRONMENT:
+
+          # ------------------------------------------------------
+          # APPLICATION ENVIRONMENT
+          # ------------------------------------------------------
+
+          ENVIRONMENT:
             !Ref EnvironmentName
 
 
@@ -147,7 +176,8 @@ Resources:
       Code:
 
         S3Bucket:
-          Fn::ImportValue: !Sub cloudmart-lambda-bucket-${EnvironmentName}
+          Fn::ImportValue:
+            !Sub cloudmart-lambda-bucket-${EnvironmentName}
 
         S3Key:
           !Sub auth/authorizer-lambda-${CodeVersion}.zip
@@ -192,7 +222,8 @@ Outputs:
 
     Export:
 
-      Name: !Sub cloudmart-authorizer-lambda-arn-${EnvironmentName}
+      Name:
+        !Sub cloudmart-authorizer-lambda-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -209,7 +240,8 @@ Outputs:
 
     Export:
 
-      Name: !Sub cloudmart-authorizer-lambda-name-${EnvironmentName}
+      Name:
+        !Sub cloudmart-authorizer-lambda-name-${EnvironmentName}
 
 
   # ==============================================================
@@ -226,4 +258,5 @@ Outputs:
 
     Export:
 
-      Name: !Sub cloudmart-environment-parameter-${EnvironmentName}
+      Name:
+        !Sub cloudmart-environment-parameter-${EnvironmentName}

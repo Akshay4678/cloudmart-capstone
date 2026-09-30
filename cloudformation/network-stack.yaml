@@ -42,6 +42,16 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Latest Amazon Linux 2023 AMI
 
+  LambdaArtifactBucketParameter:
+    Type: String
+    Default: /cloudmart/dev/lambda-artifact-bucket
+    Description: SSM parameter containing the CloudMart Lambda artifact S3 bucket name
+
+  ReportsBucketParameter:
+    Type: String
+    Default: /cloudmart/dev/reports-bucket
+    Description: SSM parameter containing the CloudMart Reports S3 bucket name
+
 
 # ================================================================
 # RESOURCES
@@ -564,15 +574,12 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
 
-              - Sid: ReadReportsBucket
+              - Sid: ReadReportsBucketParameter
                 Effect: Allow
                 Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                  - s3:ListBucket
+                  - ssm:GetParameter
                 Resource:
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
-                  - !Sub arn:${AWS::Partition}:s3:::cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}/*
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ReportsBucketParameter}
 
               - Sid: ReadLambdaArtifactBucketParameter
                 Effect: Allow
@@ -627,9 +634,10 @@ Resources:
           exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
 
           AWS_REGION_VALUE="${AWS::Region}"
-          LAMBDA_BUCKET_PARAMETER="/cloudmart/${EnvironmentName}/lambda-artifact-bucket"
+          LAMBDA_BUCKET_PARAMETER="${LambdaArtifactBucketParameter}"
           DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
           DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
+          REPORTS_BUCKET_PARAMETER="${ReportsBucketParameter}"
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
 
           echo "=================================================="
@@ -753,6 +761,7 @@ Resources:
           LAMBDA_BUCKET_PARAMETER="$2"
           DASHBOARD_KEY="$3"
           DB_HOST_CONFIG_KEY="$4"
+          REPORTS_BUCKET_PARAMETER="$5"
 
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
           ZIP_FILE="/tmp/cloudmart-dashboard.zip"
@@ -815,6 +824,37 @@ Resources:
 
             if [ "$attempt" -eq 120 ]; then
               echo "ERROR: Dashboard artifacts were not available."
+              exit 1
+            fi
+          done
+
+          # ============================================================
+          # READ THE ACTUAL GENERATED REPORTS BUCKET NAME
+          # The Data Stack creates the physical bucket name dynamically.
+          # CloudFormation stores that actual name in SSM.
+          # ============================================================
+
+          REPORTS_BUCKET_VALUE=""
+
+          for attempt in $(seq 1 60); do
+            REPORTS_BUCKET_VALUE=$(aws ssm get-parameter \
+              --region "$AWS_REGION_VALUE" \
+              --name "$REPORTS_BUCKET_PARAMETER" \
+              --query "Parameter.Value" \
+              --output text 2>/dev/null || true)
+
+            if [ -n "$REPORTS_BUCKET_VALUE" ] && [ "$REPORTS_BUCKET_VALUE" != "None" ]; then
+              echo "Reports bucket parameter is available."
+              echo "Reports bucket: $REPORTS_BUCKET_VALUE"
+              break
+            fi
+
+            echo "Waiting for Reports bucket parameter... attempt $attempt/60"
+            sleep 5
+
+            if [ "$attempt" -eq 60 ]; then
+              echo "ERROR: Reports bucket parameter was not available."
+              echo "Parameter: $REPORTS_BUCKET_PARAMETER"
               exit 1
             fi
           done
@@ -939,7 +979,7 @@ Resources:
           ENVIRONMENT=${EnvironmentName}
           API_NAME=cloudmart-api-${EnvironmentName}
           API_STAGE=${EnvironmentName}
-          REPORTS_BUCKET=cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
+          REPORTS_BUCKET=$REPORTS_BUCKET_VALUE
           DB_HOST=$DB_HOST_VALUE
           DB_NAME=cloudmart
           DB_USER=cloudmartadmin
@@ -1071,7 +1111,7 @@ Resources:
 
           [Service]
           Type=oneshot
-          ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_PARAMETER" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY"
+          ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_PARAMETER" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY" "$REPORTS_BUCKET_PARAMETER"
           UPDATEEOF
 
           cat > /etc/systemd/system/cloudmart-dashboard-update.timer <<TIMEREOF

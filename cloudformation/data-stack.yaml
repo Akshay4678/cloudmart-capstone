@@ -203,6 +203,20 @@ Resources:
 
 
   # ==============================================================
+  # SSM PARAMETER - REPORTS BUCKET NAME
+  # Stores the actual CloudFormation-generated physical bucket name.
+  # ==============================================================
+
+  ReportsBucketNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /cloudmart/${EnvironmentName}/reports-bucket
+      Type: String
+      Value: !Ref ReportsBucket
+      Description: !Sub CloudMart ${EnvironmentName} Reports S3 bucket name
+
+
+  # ==============================================================
   # S3 LAMBDA ARTIFACTS BUCKET
   #
   # CloudFormation generates a unique physical bucket name.
@@ -247,6 +261,44 @@ Resources:
 
         - Key: Environment
           Value: !Ref EnvironmentName
+
+
+  # ==============================================================
+  # REPORTS BUCKET POLICY
+  # Allows only the CloudMart EC2 dashboard role to list and read
+  # objects from the actual CloudFormation-generated reports bucket.
+  # ==============================================================
+
+  ReportsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+
+    Properties:
+      Bucket: !Ref ReportsBucket
+
+      PolicyDocument:
+        Version: '2012-10-17'
+
+        Statement:
+          - Sid: AllowDashboardEC2ListReports
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
+            Action:
+              - s3:ListBucket
+            Resource:
+              - !GetAtt ReportsBucket.Arn
+
+          - Sid: AllowDashboardEC2ReadReports
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource:
+              - !Sub '${ReportsBucket.Arn}/*'
 
 
   # ==============================================================

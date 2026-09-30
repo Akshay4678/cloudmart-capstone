@@ -578,7 +578,7 @@ Resources:
 
                 Resource:
                   Fn::ImportValue:
-                    cloudmart-reports-bucket-arn-${EnvironmentName}
+                      !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
               # ==================================================
@@ -619,7 +619,7 @@ Outputs:
 
     Export:
       Name:
-        cloudmart-authorizer-role-arn-${EnvironmentName}
+        !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -635,7 +635,7 @@ Outputs:
 
     Export:
       Name:
-        cloudmart-product-role-arn-${EnvironmentName}
+        !Sub cloudmart-product-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -651,7 +651,7 @@ Outputs:
 
     Export:
       Name:
-        cloudmart-order-role-arn-${EnvironmentName}
+        !Sub cloudmart-order-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -667,7 +667,7 @@ Outputs:
 
     Export:
       Name:
-        cloudmart-order-processing-role-arn-${EnvironmentName}
+        !Sub cloudmart-order-processing-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -683,4 +683,4 @@ Outputs:
 
     Export:
       Name:
-        cloudmart-report-role-arn-${EnvironmentName}
+        !Sub cloudmart-report-role-arn-${EnvironmentName}

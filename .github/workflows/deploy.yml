@@ -986,6 +986,10 @@ jobs:
       # ==========================================================
       # 29. DEPLOY DASHBOARD TO EC2 USING SSM
       # No separate .sh file is used.
+      #
+      # IMPORTANT:
+      # The multiline shell script is converted to a JSON array
+      # before being passed to AWS SSM.
       # ==========================================================
       - name: Deploy Dashboard to EC2
         id: deploy_dashboard
@@ -1010,12 +1014,14 @@ jobs:
             exit 1
           fi
 
-          COMMANDS=$(cat <<EOF
+          # Build the complete remote EC2 script without allowing the
+          # GitHub Actions shell to expand remote variables.
+          COMMANDS=$(cat <<'SCRIPT'
           set -euo pipefail
 
-          AWS_REGION="$AWS_REGION"
-          ENVIRONMENT_NAME="$ENVIRONMENT_NAME"
-          DASHBOARD_BUCKET="$DASHBOARD_BUCKET"
+          AWS_REGION="__AWS_REGION__"
+          ENVIRONMENT_NAME="__ENVIRONMENT_NAME__"
+          DASHBOARD_BUCKET="__DASHBOARD_BUCKET__"
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
           DASHBOARD_ZIP="/tmp/cloudmart-dashboard.zip"
 
@@ -1023,68 +1029,81 @@ jobs:
           chmod 1777 /var/tmp/cloudmart-pip
           export TMPDIR=/var/tmp/cloudmart-pip
 
-          echo "Reading database host..."
-          DB_HOST_VALUE=\$(aws s3 cp \
-            "s3://\$DASHBOARD_BUCKET/dashboard/db-host.txt" \
-            - \
-            --region "\$AWS_REGION")
-          DB_HOST_VALUE=\$(printf '%s' "\$DB_HOST_VALUE" | tr -d '\\r\\n')
+          echo "=================================================="
+          echo "CloudMart Dashboard Deployment"
+          echo "=================================================="
 
-          if [ -z "\$DB_HOST_VALUE" ]; then
+          echo "Reading database host..."
+
+          DB_HOST_VALUE=$(aws s3 cp \
+            "s3://$DASHBOARD_BUCKET/dashboard/db-host.txt" \
+            - \
+            --region "$AWS_REGION")
+
+          DB_HOST_VALUE=$(printf '%s' "$DB_HOST_VALUE" | tr -d '\r\n')
+
+          if [ -z "$DB_HOST_VALUE" ]; then
             echo "ERROR: Database host is empty."
             exit 1
           fi
 
-          REPORTS_BUCKET_VALUE=\$(aws ssm get-parameter \
-            --region "\$AWS_REGION" \
-            --name "/cloudmart/\$ENVIRONMENT_NAME/reports-bucket" \
+          REPORTS_BUCKET_VALUE=$(aws ssm get-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/reports-bucket" \
             --query "Parameter.Value" \
             --output text)
 
-          if [ -z "\$REPORTS_BUCKET_VALUE" ] || [ "\$REPORTS_BUCKET_VALUE" = "None" ]; then
+          if [ -z "$REPORTS_BUCKET_VALUE" ] || [ "$REPORTS_BUCKET_VALUE" = "None" ]; then
             echo "ERROR: Reports bucket parameter is unavailable."
             exit 1
           fi
 
-          rm -f "\$DASHBOARD_ZIP"
-          rm -rf "\$DASHBOARD_DIR"
-          mkdir -p "\$DASHBOARD_DIR"
+          rm -f "$DASHBOARD_ZIP"
+          rm -rf "$DASHBOARD_DIR"
+          mkdir -p "$DASHBOARD_DIR"
+
+          echo "Downloading dashboard package..."
 
           aws s3 cp \
-            "s3://\$DASHBOARD_BUCKET/dashboard/cloudmart-dashboard.zip" \
-            "\$DASHBOARD_ZIP" \
-            --region "\$AWS_REGION"
+            "s3://$DASHBOARD_BUCKET/dashboard/cloudmart-dashboard.zip" \
+            "$DASHBOARD_ZIP" \
+            --region "$AWS_REGION"
 
-          test -s "\$DASHBOARD_ZIP"
-          unzip -o "\$DASHBOARD_ZIP" -d "\$DASHBOARD_DIR"
-          rm -f "\$DASHBOARD_ZIP"
+          test -s "$DASHBOARD_ZIP"
 
-          test -s "\$DASHBOARD_DIR/app.py"
-          test -s "\$DASHBOARD_DIR/requirements.txt"
+          unzip -o "$DASHBOARD_ZIP" -d "$DASHBOARD_DIR"
+          rm -f "$DASHBOARD_ZIP"
 
-          python3 -m venv "\$DASHBOARD_DIR/venv"
+          test -s "$DASHBOARD_DIR/app.py"
+          test -s "$DASHBOARD_DIR/requirements.txt"
 
-          "\$DASHBOARD_DIR/venv/bin/pip" install \
+          echo "Creating Python virtual environment..."
+
+          python3 -m venv "$DASHBOARD_DIR/venv"
+
+          test -x "$DASHBOARD_DIR/venv/bin/python"
+
+          "$DASHBOARD_DIR/venv/bin/pip" install \
             --no-cache-dir \
             --disable-pip-version-check \
-            -r "\$DASHBOARD_DIR/requirements.txt"
+            -r "$DASHBOARD_DIR/requirements.txt"
 
-          test -x "\$DASHBOARD_DIR/venv/bin/gunicorn"
+          test -x "$DASHBOARD_DIR/venv/bin/gunicorn"
 
-          "\$DASHBOARD_DIR/venv/bin/python" \
-            -m py_compile "\$DASHBOARD_DIR/app.py"
+          "$DASHBOARD_DIR/venv/bin/python" \
+            -m py_compile "$DASHBOARD_DIR/app.py"
 
           cat > /etc/cloudmart-dashboard.env <<ENVEOF
-          AWS_REGION=\$AWS_REGION
-          ENVIRONMENT=\$ENVIRONMENT_NAME
-          API_NAME=cloudmart-api-\$ENVIRONMENT_NAME
-          API_STAGE=\$ENVIRONMENT_NAME
-          REPORTS_BUCKET=\$REPORTS_BUCKET_VALUE
-          DB_HOST=\$DB_HOST_VALUE
+          AWS_REGION=$AWS_REGION
+          ENVIRONMENT=$ENVIRONMENT_NAME
+          API_NAME=cloudmart-api-$ENVIRONMENT_NAME
+          API_STAGE=$ENVIRONMENT_NAME
+          REPORTS_BUCKET=$REPORTS_BUCKET_VALUE
+          DB_HOST=$DB_HOST_VALUE
           DB_NAME=cloudmart
           DB_USER=cloudmartadmin
           DB_PORT=3306
-          DB_PASSWORD_PARAMETER=/cloudmart/\$ENVIRONMENT_NAME/database/password
+          DB_PASSWORD_PARAMETER=/cloudmart/$ENVIRONMENT_NAME/database/password
           ENVEOF
 
           chmod 600 /etc/cloudmart-dashboard.env
@@ -1109,21 +1128,41 @@ jobs:
           SERVICEEOF
 
           nginx -t
+
           systemctl daemon-reload
           systemctl enable cloudmart-dashboard
           systemctl restart cloudmart-dashboard
 
-          for attempt in \$(seq 1 12); do
+          for attempt in $(seq 1 12); do
+
+            if systemctl is-active --quiet cloudmart-dashboard; then
+              echo "Gunicorn service is active."
+              break
+            fi
+
+            echo "Waiting for Gunicorn service... attempt $attempt/12"
+            sleep 5
+
+            if [ "$attempt" -eq 12 ]; then
+              echo "ERROR: Gunicorn service failed to start."
+              systemctl status cloudmart-dashboard --no-pager || true
+              journalctl -u cloudmart-dashboard --no-pager -n 100 || true
+              exit 1
+            fi
+          done
+
+          for attempt in $(seq 1 12); do
+
             if curl -fsS --max-time 5 \
               "http://127.0.0.1:5000/health" >/dev/null 2>&1; then
               echo "Gunicorn /health check passed."
               break
             fi
 
-            echo "Waiting for Gunicorn health... attempt \$attempt/12"
+            echo "Waiting for Gunicorn health... attempt $attempt/12"
             sleep 5
 
-            if [ "\$attempt" -eq 12 ]; then
+            if [ "$attempt" -eq 12 ]; then
               echo "ERROR: Gunicorn /health check failed."
               systemctl status cloudmart-dashboard --no-pager || true
               journalctl -u cloudmart-dashboard --no-pager -n 100 || true
@@ -1142,21 +1181,39 @@ jobs:
           fi
 
           echo "CloudMart Dashboard deployed successfully."
-          EOF
+          SCRIPT
           )
+
+          COMMANDS="${COMMANDS//__AWS_REGION__/$AWS_REGION}"
+          COMMANDS="${COMMANDS//__ENVIRONMENT_NAME__/$ENVIRONMENT_NAME}"
+          COMMANDS="${COMMANDS//__DASHBOARD_BUCKET__/$DASHBOARD_BUCKET}"
+
+          # Convert the complete multiline command into the JSON structure
+          # required by AWS SSM. This is the critical fix for ParamValidation.
+          jq -n \
+            --arg command "$COMMANDS" \
+            '{commands: [$command]}' \
+            > /tmp/ssm-parameters.json
+
+          jq -e '.commands | length == 1' /tmp/ssm-parameters.json >/dev/null
+
+          echo "SSM parameters JSON created successfully."
 
           COMMAND_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy CloudMart dashboard" \
-            --parameters commands="$COMMANDS" \
+            --parameters file:///tmp/ssm-parameters.json \
             --query "Command.CommandId" \
             --output text)
 
           echo "SSM command ID: $COMMAND_ID"
 
+          FINAL_STATUS="Pending"
+
           for attempt in $(seq 1 60); do
+
             STATUS=$(aws ssm get-command-invocation \
               --region "$AWS_REGION" \
               --command-id "$COMMAND_ID" \
@@ -1167,33 +1224,58 @@ jobs:
             echo "Dashboard deployment status: $STATUS"
 
             case "$STATUS" in
+
               Success)
+                FINAL_STATUS="Success"
+
                 aws ssm get-command-invocation \
                   --region "$AWS_REGION" \
                   --command-id "$COMMAND_ID" \
                   --instance-id "$INSTANCE_ID" \
                   --query "StandardOutputContent" \
                   --output text || true
-                echo "Dashboard deployment completed successfully."
-                exit 0
+
+                break
                 ;;
-              Failed|TimedOut|Cancelled|Cancelling)
-                echo "ERROR: Dashboard deployment failed with status: $STATUS"
-                aws ssm get-command-invocation \
-                  --region "$AWS_REGION" \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id "$INSTANCE_ID" \
-                  --query "[StandardOutputContent,StandardErrorContent]" \
-                  --output text || true
-                exit 1
+
+              Failed|TimedOut|Cancelled|Cancelling|Undeliverable|Terminated)
+                FINAL_STATUS="$STATUS"
+                break
+                ;;
+
+              *)
+                sleep 5
                 ;;
             esac
-
-            sleep 5
           done
 
-          echo "ERROR: Dashboard deployment timed out waiting for SSM."
-          exit 1
+          if [ "$FINAL_STATUS" != "Success" ]; then
+
+            echo "=================================================="
+            echo "ERROR: DASHBOARD DEPLOYMENT FAILED"
+            echo "STATUS: $FINAL_STATUS"
+            echo "=================================================="
+
+            aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "StandardOutputContent" \
+              --output text || true
+
+            echo "---------------- STANDARD ERROR ----------------"
+
+            aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "StandardErrorContent" \
+              --output text || true
+
+            exit 1
+          fi
+
+          echo "Dashboard deployment completed successfully."
 
       # ==========================================================
       # 29. INITIALIZE RDS DATABASE SCHEMA

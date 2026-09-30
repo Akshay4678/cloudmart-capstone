@@ -199,7 +199,6 @@ jobs:
 
             "dashboard/app.py"
             "dashboard/requirements.txt"
-            "dashboard/cloudmart-dashboard-deploy.sh"
           )
 
           for file in "${required_files[@]}"; do
@@ -217,8 +216,6 @@ jobs:
             lambda/report/lambda_function.py \
             lambda/customer/lambda_function.py \
             dashboard/app.py
-
-          bash -n dashboard/cloudmart-dashboard-deploy.sh
 
           echo "All required source files are present and syntax is valid."
 
@@ -835,31 +832,6 @@ jobs:
           echo "All Lambda artifacts exist in the exact S3 keys expected by CloudFormation."
 
       # ==========================================================
-      # 29. UPLOAD DASHBOARD DEPLOYMENT SCRIPT
-      #
-      # The Network Stack EC2 UserData is intentionally kept below
-      # the EC2 16 KB UserData limit. The full dashboard deployment
-      # script is stored in the Lambda artifact bucket and downloaded
-      # by EC2 after the infrastructure and SSM parameter exist.
-      # ==========================================================
-      - name: Upload Dashboard Deployment Script
-        run: |
-          set -euo pipefail
-
-          SCRIPT_FILE="dashboard/cloudmart-dashboard-deploy.sh"
-          DASHBOARD_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
-
-          test -s "$SCRIPT_FILE"
-          bash -n "$SCRIPT_FILE"
-
-          aws s3 cp \
-            "$SCRIPT_FILE" \
-            "s3://$DASHBOARD_BUCKET/dashboard/cloudmart-dashboard-deploy.sh" \
-            --region "$AWS_REGION"
-
-          echo "Dashboard deployment script uploaded."
-
-      # ==========================================================
       # 29. PACKAGE DASHBOARD
       # ==========================================================
       - name: Package Dashboard
@@ -1010,6 +982,218 @@ jobs:
           rm -f /tmp/cloudmart-db-host.txt
 
           echo "Dashboard database host configuration uploaded."
+
+      # ==========================================================
+      # 29. DEPLOY DASHBOARD TO EC2 USING SSM
+      # No separate .sh file is used.
+      # ==========================================================
+      - name: Deploy Dashboard to EC2
+        id: deploy_dashboard
+        run: |
+          set -euo pipefail
+
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-network-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='EC2InstanceId'].OutputValue" \
+            --output text)
+
+          DASHBOARD_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: EC2 instance ID was not found."
+            exit 1
+          fi
+
+          if [ -z "$DASHBOARD_BUCKET" ] || [ "$DASHBOARD_BUCKET" = "None" ]; then
+            echo "ERROR: Dashboard artifact bucket was not found."
+            exit 1
+          fi
+
+          COMMANDS=$(cat <<EOF
+          set -euo pipefail
+
+          AWS_REGION="$AWS_REGION"
+          ENVIRONMENT_NAME="$ENVIRONMENT_NAME"
+          DASHBOARD_BUCKET="$DASHBOARD_BUCKET"
+          DASHBOARD_DIR="/opt/cloudmart-dashboard"
+          DASHBOARD_ZIP="/tmp/cloudmart-dashboard.zip"
+
+          mkdir -p /var/tmp/cloudmart-pip
+          chmod 1777 /var/tmp/cloudmart-pip
+          export TMPDIR=/var/tmp/cloudmart-pip
+
+          echo "Reading database host..."
+          DB_HOST_VALUE=\$(aws s3 cp \
+            "s3://\$DASHBOARD_BUCKET/dashboard/db-host.txt" \
+            - \
+            --region "\$AWS_REGION")
+          DB_HOST_VALUE=\$(printf '%s' "\$DB_HOST_VALUE" | tr -d '\\r\\n')
+
+          if [ -z "\$DB_HOST_VALUE" ]; then
+            echo "ERROR: Database host is empty."
+            exit 1
+          fi
+
+          REPORTS_BUCKET_VALUE=\$(aws ssm get-parameter \
+            --region "\$AWS_REGION" \
+            --name "/cloudmart/\$ENVIRONMENT_NAME/reports-bucket" \
+            --query "Parameter.Value" \
+            --output text)
+
+          if [ -z "\$REPORTS_BUCKET_VALUE" ] || [ "\$REPORTS_BUCKET_VALUE" = "None" ]; then
+            echo "ERROR: Reports bucket parameter is unavailable."
+            exit 1
+          fi
+
+          rm -f "\$DASHBOARD_ZIP"
+          rm -rf "\$DASHBOARD_DIR"
+          mkdir -p "\$DASHBOARD_DIR"
+
+          aws s3 cp \
+            "s3://\$DASHBOARD_BUCKET/dashboard/cloudmart-dashboard.zip" \
+            "\$DASHBOARD_ZIP" \
+            --region "\$AWS_REGION"
+
+          test -s "\$DASHBOARD_ZIP"
+          unzip -o "\$DASHBOARD_ZIP" -d "\$DASHBOARD_DIR"
+          rm -f "\$DASHBOARD_ZIP"
+
+          test -s "\$DASHBOARD_DIR/app.py"
+          test -s "\$DASHBOARD_DIR/requirements.txt"
+
+          python3 -m venv "\$DASHBOARD_DIR/venv"
+
+          "\$DASHBOARD_DIR/venv/bin/pip" install \
+            --no-cache-dir \
+            --disable-pip-version-check \
+            -r "\$DASHBOARD_DIR/requirements.txt"
+
+          test -x "\$DASHBOARD_DIR/venv/bin/gunicorn"
+
+          "\$DASHBOARD_DIR/venv/bin/python" \
+            -m py_compile "\$DASHBOARD_DIR/app.py"
+
+          cat > /etc/cloudmart-dashboard.env <<ENVEOF
+          AWS_REGION=\$AWS_REGION
+          ENVIRONMENT=\$ENVIRONMENT_NAME
+          API_NAME=cloudmart-api-\$ENVIRONMENT_NAME
+          API_STAGE=\$ENVIRONMENT_NAME
+          REPORTS_BUCKET=\$REPORTS_BUCKET_VALUE
+          DB_HOST=\$DB_HOST_VALUE
+          DB_NAME=cloudmart
+          DB_USER=cloudmartadmin
+          DB_PORT=3306
+          DB_PASSWORD_PARAMETER=/cloudmart/\$ENVIRONMENT_NAME/database/password
+          ENVEOF
+
+          chmod 600 /etc/cloudmart-dashboard.env
+
+          cat > /etc/systemd/system/cloudmart-dashboard.service <<SERVICEEOF
+          [Unit]
+          Description=CloudMart Flask Dashboard
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/cloudmart-dashboard
+          EnvironmentFile=/etc/cloudmart-dashboard.env
+          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:5000 --access-logfile - --error-logfile - app:app
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICEEOF
+
+          nginx -t
+          systemctl daemon-reload
+          systemctl enable cloudmart-dashboard
+          systemctl restart cloudmart-dashboard
+
+          for attempt in \$(seq 1 12); do
+            if curl -fsS --max-time 5 \
+              "http://127.0.0.1:5000/health" >/dev/null 2>&1; then
+              echo "Gunicorn /health check passed."
+              break
+            fi
+
+            echo "Waiting for Gunicorn health... attempt \$attempt/12"
+            sleep 5
+
+            if [ "\$attempt" -eq 12 ]; then
+              echo "ERROR: Gunicorn /health check failed."
+              systemctl status cloudmart-dashboard --no-pager || true
+              journalctl -u cloudmart-dashboard --no-pager -n 100 || true
+              exit 1
+            fi
+          done
+
+          systemctl enable nginx
+          systemctl restart nginx
+
+          if ! systemctl is-active --quiet nginx; then
+            echo "ERROR: NGINX failed to start."
+            systemctl status nginx --no-pager || true
+            journalctl -u nginx --no-pager -n 100 || true
+            exit 1
+          fi
+
+          echo "CloudMart Dashboard deployed successfully."
+          EOF
+          )
+
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy CloudMart dashboard" \
+            --parameters commands="$COMMANDS" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM command ID: $COMMAND_ID"
+
+          for attempt in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "Status" \
+              --output text 2>/dev/null || true)
+
+            echo "Dashboard deployment status: $STATUS"
+
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation \
+                  --region "$AWS_REGION" \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query "StandardOutputContent" \
+                  --output text || true
+                echo "Dashboard deployment completed successfully."
+                exit 0
+                ;;
+              Failed|TimedOut|Cancelled|Cancelling)
+                echo "ERROR: Dashboard deployment failed with status: $STATUS"
+                aws ssm get-command-invocation \
+                  --region "$AWS_REGION" \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query "[StandardOutputContent,StandardErrorContent]" \
+                  --output text || true
+                exit 1
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          echo "ERROR: Dashboard deployment timed out waiting for SSM."
+          exit 1
 
       # ==========================================================
       # 29. INITIALIZE RDS DATABASE SCHEMA

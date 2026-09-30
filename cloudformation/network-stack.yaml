@@ -47,12 +47,6 @@ Parameters:
     Default: /cloudmart/dev/lambda-artifact-bucket
     Description: SSM parameter containing the CloudMart Lambda artifact S3 bucket name
 
-  ReportsBucketParameter:
-    Type: String
-    Default: /cloudmart/dev/reports-bucket
-    Description: SSM parameter containing the CloudMart Reports S3 bucket name
-
-
 # ================================================================
 # RESOURCES
 # ================================================================
@@ -579,7 +573,7 @@ Resources:
                 Action:
                   - ssm:GetParameter
                 Resource:
-                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ReportsBucketParameter}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/reports-bucket
 
               - Sid: ReadLambdaArtifactBucketParameter
                 Effect: Allow
@@ -637,7 +631,7 @@ Resources:
           LAMBDA_BUCKET_PARAMETER="${LambdaArtifactBucketParameter}"
           DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
           DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
-          REPORTS_BUCKET_PARAMETER="${ReportsBucketParameter}"
+          REPORTS_BUCKET_PARAMETER="/cloudmart/${EnvironmentName}/reports-bucket"
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
 
           echo "=================================================="
@@ -831,7 +825,8 @@ Resources:
           # ============================================================
           # READ THE ACTUAL GENERATED REPORTS BUCKET NAME
           # The Data Stack creates the physical bucket name dynamically.
-          # CloudFormation stores that actual name in SSM.
+          # CloudFormation stores that actual name in:
+          # /cloudmart/${EnvironmentName}/reports-bucket
           # ============================================================
 
           REPORTS_BUCKET_VALUE=""
@@ -860,12 +855,35 @@ Resources:
           done
 
           # ============================================================
+          # VERIFY THE REPORTS BUCKET ACTUALLY EXISTS AND IS READABLE
+          # ============================================================
+          # This prevents the dashboard from continuing with a stale
+          # or deleted bucket name stored in SSM.
+
+          for attempt in $(seq 1 30); do
+            if aws s3api head-bucket               --region "$AWS_REGION_VALUE"               --bucket "$REPORTS_BUCKET_VALUE" >/dev/null 2>&1; then
+              echo "Reports bucket exists and is accessible."
+              break
+            fi
+
+            echo "Waiting for Reports bucket to become accessible... attempt $attempt/30"
+            sleep 5
+
+            if [ "$attempt" -eq 30 ]; then
+              echo "ERROR: Reports bucket does not exist or is not accessible."
+              echo "Reports bucket: $REPORTS_BUCKET_VALUE"
+              exit 1
+            fi
+          done
+
+          # ============================================================
           # SKIP ONLY IF THE CURRENT DEPLOYMENT IS ALREADY HEALTHY
           # ============================================================
 
           if [ -f "$STATE_FILE" ] \
              && grep -q "^ARTIFACT_ETAG=$ARTIFACT_ETAG$" "$STATE_FILE" 2>/dev/null \
              && grep -q "^DB_CONFIG_ETAG=$DB_CONFIG_ETAG$" "$STATE_FILE" 2>/dev/null \
+             && grep -q "^REPORTS_BUCKET=$REPORTS_BUCKET_VALUE$" "$STATE_FILE" 2>/dev/null \
              && systemctl is-active --quiet cloudmart-dashboard; then
 
             echo "Dashboard is already deployed and healthy."
@@ -1087,8 +1105,8 @@ Resources:
           echo "NGINX is ACTIVE."
 
           # Save deployment state ONLY after Gunicorn and NGINX are healthy.
-          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\n' \
-            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" > "$TMP_STATE_FILE"
+          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\nREPORTS_BUCKET=%s\n' \
+            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" "$REPORTS_BUCKET_VALUE" > "$TMP_STATE_FILE"
 
           mv "$TMP_STATE_FILE" "$STATE_FILE"
 

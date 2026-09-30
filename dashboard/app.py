@@ -1166,6 +1166,86 @@ def order_items():
 # AUDIT LOGS
 # ============================================================
 
+def format_audit_value(value, indent=0):
+    """Format audit values as readable plain text instead of JSON."""
+
+    prefix = " " * indent
+
+    if value is None:
+        return "None"
+
+    if isinstance(value, dict):
+        lines = []
+
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                lines.append(f"{prefix}{key}:")
+                lines.append(format_audit_value(item, indent + 2))
+            else:
+                lines.append(f"{prefix}{key}: {item}")
+
+        return "\n".join(lines)
+
+    if isinstance(value, list):
+        lines = []
+
+        for item in value:
+            if isinstance(item, (dict, list)):
+                lines.append(format_audit_value(item, indent + 2))
+            else:
+                lines.append(f"{prefix}- {item}")
+
+        return "\n".join(lines)
+
+    return str(value)
+
+
+def format_audit_details(details):
+    """Convert the stored audit details JSON into readable text."""
+
+    if not details:
+        return "No additional details"
+
+    try:
+        data = json.loads(details) if isinstance(details, str) else details
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return str(details)
+
+    if not isinstance(data, dict):
+        return format_audit_value(data)
+
+    lines = []
+
+    if "performed_by" in data:
+        lines.append(f"1. Performed By: {data.get('performed_by') or '—'}")
+
+    if "old_value" in data:
+        old_value = data.get("old_value")
+        if isinstance(old_value, (dict, list)):
+            lines.append("2. Old Value:")
+            lines.append(format_audit_value(old_value, 4))
+        else:
+            lines.append(f"2. Old Value: {format_audit_value(old_value)}")
+
+    if "new_value" in data:
+        new_value = data.get("new_value")
+        if isinstance(new_value, (dict, list)):
+            lines.append("3. New Value:")
+            lines.append(format_audit_value(new_value, 4))
+        else:
+            lines.append(f"3. New Value: {format_audit_value(new_value)}")
+
+    for key, value in data.items():
+        if key not in {"performed_by", "old_value", "new_value"}:
+            if isinstance(value, (dict, list)):
+                lines.append(f"{key}:")
+                lines.append(format_audit_value(value, 2))
+            else:
+                lines.append(f"{key}: {format_audit_value(value)}")
+
+    return "\n".join(lines) if lines else "No additional details"
+
+
 @app.route("/audit-logs")
 def audit_logs():
     rows = query_db(
@@ -1183,6 +1263,11 @@ def audit_logs():
         LIMIT 200
         """
     )
+
+    for log in rows:
+        log["display_details"] = format_audit_details(
+            log.get("details")
+        )
 
     return render_template_string(
         PAGE_HTML,
@@ -1621,10 +1706,21 @@ tbody tr:hover {
 
 .description {
     max-width: 270px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     color: var(--muted);
+}
+
+.audit-details-box {
+    min-width: 360px;
+    max-width: 650px;
+    padding: 12px 14px;
+    border: 1px solid #dbe3ef;
+    border-radius: 10px;
+    background: #f8fafc;
+    color: #344054;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.6;
+    font-size: 13px;
 }
 
 .money {
@@ -2756,7 +2852,9 @@ AUDIT_BODY = r"""
                     </td>
                     <td>{{ log.entity_type or "—" }}</td>
                     <td>{{ log.entity_id or "—" }}</td>
-                    <td class="description">{{ log.details or "—" }}</td>
+                    <td>
+                        <div class="audit-details-box">{{ log.display_details }}</div>
+                    </td>
                     <td>{{ log.created_at }}</td>
                 </tr>
             {% endfor %}

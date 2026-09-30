@@ -354,6 +354,36 @@ Resources:
               },
 
 
+
+
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 36,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "title": "Report Generation Failures",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}",
+                  "stat": "Sum",
+                  "period": 300,
+                  "metrics": [
+                    [
+                      "CloudMart/Application",
+                      "ReportsGenerationFailures",
+                      "Environment",
+                      "${EnvironmentName}",
+                      "Service",
+                      "Report",
+                      {
+                        "label": "Report Generation Failures"
+                      }
+                    ]
+                  ]
+                }
+              },
+
               {
                 "type": "metric",
                 "x": 0,
@@ -759,11 +789,80 @@ Resources:
         - Fn::ImportValue: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
 
 
+
+  # ==============================================================
+  # REPORT GENERATION FAILURES ALARM
+  # ==============================================================
+
+  ReportsGenerationFailuresAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName:
+        !Sub cloudmart-report-generation-failures-${EnvironmentName}
+
+      AlarmDescription:
+        Alert when the Report Lambda fails to generate a daily report.
+
+      Namespace:
+        CloudMart/Application
+
+      MetricName:
+        ReportsGenerationFailures
+
+      Dimensions:
+
+        - Name:
+            Environment
+
+          Value:
+            !Ref EnvironmentName
+
+        - Name:
+            Service
+
+          Value:
+            Report
+
+      Statistic:
+        Sum
+
+      Period:
+        300
+
+      EvaluationPeriods:
+        1
+
+      Threshold:
+        1
+
+      ComparisonOperator:
+        GreaterThanOrEqualToThreshold
+
+      TreatMissingData:
+        notBreaching
+
+      AlarmActions:
+
+        - Fn::ImportValue: !Sub cloudmart-order-failure-topic-arn-${EnvironmentName}
+
+
 # ================================================================
 # OUTPUTS
 # ================================================================
 
 Outputs:
+
+  ReportsGenerationFailuresAlarmName:
+
+    Description:
+      Report generation failures alarm name
+
+    Value:
+      !Ref ReportsGenerationFailuresAlarm
+
 
   OperationsDashboardName:
 

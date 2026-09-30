@@ -99,6 +99,71 @@ Resources:
 
 
   # ==============================================================
+  # CUSTOMER LAMBDA
+  # ==============================================================
+
+  CustomerLambda:
+    Type: AWS::Lambda::Function
+
+    Properties:
+
+      FunctionName:
+        !Sub cloudmart-customer-${EnvironmentName}
+
+      Runtime: python3.13
+
+      Handler: index.lambda_handler
+
+      Role:
+        Fn::ImportValue: !Sub cloudmart-customer-role-arn-${EnvironmentName}
+
+      Timeout: 15
+
+      MemorySize: 256
+
+      VpcConfig:
+
+        SubnetIds:
+
+          - Fn::ImportValue: !Sub cloudmart-private-subnet-id-${EnvironmentName}
+          - Fn::ImportValue: !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
+
+        SecurityGroupIds:
+
+          - Fn::ImportValue: !Sub cloudmart-lambda-sg-${EnvironmentName}
+
+      Environment:
+
+        Variables:
+
+          DB_HOST:
+            Fn::ImportValue: !Sub cloudmart-database-endpoint-${EnvironmentName}
+
+          DB_NAME:
+            Fn::ImportValue: !Sub cloudmart-database-name-${EnvironmentName}
+
+          DB_USER:
+            Fn::ImportValue: !Sub cloudmart-database-username-${EnvironmentName}
+
+          DB_PASSWORD_PARAMETER:
+            !Sub /cloudmart/${EnvironmentName}/database/password
+
+          DB_PORT:
+            "3306"
+
+          ENVIRONMENT:
+            !Ref EnvironmentName
+
+      Code:
+
+        S3Bucket:
+          Fn::ImportValue: !Sub cloudmart-lambda-bucket-${EnvironmentName}
+
+        S3Key:
+          !Sub customer/customer-lambda-${CodeVersion}.zip
+
+
+  # ==============================================================
   # ORDER DEAD LETTER QUEUE
   # ==============================================================
 
@@ -1087,6 +1152,153 @@ Resources:
 
 
   # ==============================================================
+  # /customers
+  # ==============================================================
+
+  CustomersResource:
+    Type: AWS::ApiGateway::Resource
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ParentId:
+        !GetAtt CloudMartApi.RootResourceId
+
+      PathPart: customers
+
+
+  # ==============================================================
+  # POST /customers
+  # Public customer registration
+  # ==============================================================
+
+  CustomersPostMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref CustomersResource
+
+      HttpMethod: POST
+
+      AuthorizationType: NONE
+
+      Integration:
+
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt CustomerLambda.Arn
+
+
+  # ==============================================================
+  # /customers/{customerId}
+  # ==============================================================
+
+  CustomerIdResource:
+    Type: AWS::ApiGateway::Resource
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ParentId:
+        !Ref CustomersResource
+
+      PathPart: "{customerId}"
+
+
+  # ==============================================================
+  # GET /customers/{customerId}
+  # ==============================================================
+
+  CustomerIdGetMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref CustomerIdResource
+
+      HttpMethod: GET
+
+      AuthorizationType: CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt CustomerLambda.Arn
+
+
+  # ==============================================================
+  # PUT /customers/{customerId}
+  # ==============================================================
+
+  CustomerIdPutMethod:
+    Type: AWS::ApiGateway::Method
+
+    Properties:
+
+      RestApiId:
+        !Ref CloudMartApi
+
+      ResourceId:
+        !Ref CustomerIdResource
+
+      HttpMethod: PUT
+
+      AuthorizationType: CUSTOM
+
+      AuthorizerId:
+        !Ref CloudMartAuthorizer
+
+      Integration:
+
+        Type: AWS_PROXY
+
+        IntegrationHttpMethod: POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt CustomerLambda.Arn
+
+  # ==============================================================
   # /orders
   # ==============================================================
 
@@ -1415,6 +1627,39 @@ Resources:
 
 
   # ==============================================================
+  # API GATEWAY -> CUSTOMER LAMBDA
+  # ==============================================================
+
+  CustomerLambdaApiPermission:
+    Type: AWS::Lambda::Permission
+
+    Properties:
+
+      Action: lambda:InvokeFunction
+
+      FunctionName: !Ref CustomerLambda
+
+      Principal: apigateway.amazonaws.com
+
+      SourceArn:
+        !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CloudMartApi}/*/*
+
+
+  # ==============================================================
+  # CLOUDWATCH LOG GROUP - CUSTOMER
+  # ==============================================================
+
+  CustomerLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+
+    Properties:
+
+      LogGroupName:
+        !Sub /aws/lambda/${CustomerLambda}
+
+      RetentionInDays: 14
+
+  # ==============================================================
   # CLOUDWATCH LOG GROUP - PRODUCT
   # ==============================================================
 
@@ -1495,6 +1740,9 @@ Resources:
       - OrderIdPutMethod
       - OrderIdPatchMethod
       - OrderIdDeleteMethod
+      - CustomersPostMethod
+      - CustomerIdGetMethod
+      - CustomerIdPutMethod
 
     Properties:
 

@@ -83,7 +83,7 @@ Resources:
         index.lambda_handler
 
       Role:
-        Fn::ImportValue: cloudmart-authorizer-role-arn-${EnvironmentName}
+        Fn::ImportValue: !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
 
       Timeout: 10
 
@@ -98,15 +98,15 @@ Resources:
         SubnetIds:
 
           - Fn::ImportValue:
-              cloudmart-private-subnet-id-${EnvironmentName}
+              !Sub cloudmart-private-subnet-id-${EnvironmentName}
 
           - Fn::ImportValue:
-              cloudmart-private-subnet-2-id-${EnvironmentName}
+              !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
 
         SecurityGroupIds:
 
           - Fn::ImportValue:
-              cloudmart-lambda-sg-${EnvironmentName}
+              !Sub cloudmart-lambda-sg-${EnvironmentName}
 
       # ==========================================================
       # ENVIRONMENT VARIABLES
@@ -118,15 +118,15 @@ Resources:
 
           DB_HOST:
             Fn::ImportValue:
-              cloudmart-database-endpoint-${EnvironmentName}
+              !Sub cloudmart-database-endpoint-${EnvironmentName}
 
           DB_NAME:
             Fn::ImportValue:
-              cloudmart-database-name-${EnvironmentName}
+              !Sub cloudmart-database-name-${EnvironmentName}
 
           DB_USER:
             Fn::ImportValue:
-              cloudmart-database-username-${EnvironmentName}
+              !Sub cloudmart-database-username-${EnvironmentName}
 
           DB_PASSWORD_PARAMETER:
             !Sub /cloudmart/${EnvironmentName}/database/password
@@ -145,7 +145,7 @@ Resources:
 
         S3Bucket:
           Fn::ImportValue:
-            cloudmart-lambda-bucket-${EnvironmentName}
+            !Sub cloudmart-lambda-bucket-${EnvironmentName}
 
         S3Key:
           !Sub auth/authorizer-lambda-${CodeVersion}.zip
@@ -191,7 +191,7 @@ Outputs:
     Export:
 
       Name:
-        cloudmart-authorizer-lambda-arn-${EnvironmentName}
+        !Sub cloudmart-authorizer-lambda-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -209,7 +209,7 @@ Outputs:
     Export:
 
       Name:
-        cloudmart-authorizer-lambda-name-${EnvironmentName}
+        !Sub cloudmart-authorizer-lambda-name-${EnvironmentName}
 
 
   # ==============================================================
@@ -227,4 +227,4 @@ Outputs:
     Export:
 
       Name:
-        cloudmart-environment-parameter-${EnvironmentName}
+        !Sub cloudmart-environment-parameter-${EnvironmentName}

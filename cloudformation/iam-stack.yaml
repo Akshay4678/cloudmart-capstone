@@ -219,6 +219,76 @@ Resources:
 
 
   # ==============================================================
+  # CUSTOMER LAMBDA ROLE
+  # ==============================================================
+
+  CustomerLambdaRole:
+    Type: AWS::IAM::Role
+
+    Properties:
+
+      RoleName:
+        !Sub cloudmart-customer-role-${EnvironmentName}
+
+      AssumeRolePolicyDocument:
+
+        Version: '2012-10-17'
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+              Service: lambda.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
+
+        - PolicyName: CustomerPolicy
+
+          PolicyDocument:
+
+            Version: '2012-10-17'
+
+            Statement:
+
+              - Sid: ReadDatabasePassword
+
+                Effect: Allow
+
+                Action:
+                  - ssm:GetParameter
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
+
+              # ==================================================
+              # VPC NETWORK INTERFACES
+              # ==================================================
+
+              - Sid: ManageLambdaNetworkInterfaces
+
+                Effect: Allow
+
+                Action:
+
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+
+                Resource: "*"
+
+
+  # ==============================================================
   # ORDER LAMBDA ROLE
   # ==============================================================
 
@@ -562,7 +632,7 @@ Resources:
 
                     - ReportsBucketArn:
                         Fn::ImportValue:
-                          cloudmart-reports-bucket-arn-${EnvironmentName}
+                          !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
               # ==================================================
@@ -636,6 +706,22 @@ Outputs:
     Export:
       Name:
         !Sub cloudmart-product-role-arn-${EnvironmentName}
+
+
+  # ==============================================================
+  # CUSTOMER ROLE
+  # ==============================================================
+
+  CustomerRoleArn:
+
+    Description: CloudMart Customer Lambda IAM Role ARN
+
+    Value:
+      !GetAtt CustomerLambdaRole.Arn
+
+    Export:
+      Name:
+        !Sub cloudmart-customer-role-arn-${EnvironmentName}
 
 
   # ==============================================================

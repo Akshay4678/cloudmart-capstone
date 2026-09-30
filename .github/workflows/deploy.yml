@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - M3-redobranch
+      - master
 
 permissions:
   id-token: write
@@ -194,8 +194,12 @@ jobs:
             "lambda/report/lambda_function.py"
             "lambda/report/requirements.txt"
 
+            "lambda/customer/lambda_function.py"
+            "lambda/customer/requirements.txt"
+
             "dashboard/app.py"
             "dashboard/requirements.txt"
+            "dashboard-deploy.sh"
           )
 
           for file in "${required_files[@]}"; do
@@ -205,12 +209,15 @@ jobs:
             fi
           done
 
+          bash -n dashboard-deploy.sh
+
           python -m py_compile \
             lambda/authorizer/lambda_function.py \
             lambda/product/lambda_function.py \
             lambda/order/lambda_function.py \
             lambda/order_processor/lambda_function.py \
             lambda/report/lambda_function.py \
+            lambda/customer/lambda_function.py \
             dashboard/app.py
 
           echo "All required source files are present and Python syntax is valid."
@@ -257,6 +264,12 @@ jobs:
               exit 1
             }
 
+          grep -Eiq '^[[:space:]]*PyMySQL([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
+            lambda/customer/requirements.txt || {
+            echo "ERROR: PyMySQL missing from Customer Lambda."
+            exit 1
+          }
+
           echo "Lambda requirements verified."
 
       # ==========================================================
@@ -272,6 +285,7 @@ jobs:
           mkdir -p build/order
           mkdir -p build/order_processor
           mkdir -p build/report
+          mkdir -p build/customer
 
           # ------------------------------------------------------
           # AUTHORIZER
@@ -381,6 +395,30 @@ jobs:
           cd ../..
 
           # ------------------------------------------------------
+          # CUSTOMER
+          # ------------------------------------------------------
+          echo "Packaging Customer Lambda..."
+
+          cp lambda/customer/lambda_function.py build/customer/index.py
+
+          python -m pip install \
+            --upgrade \
+            --no-cache-dir \
+            --target build/customer \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.13 \
+            --only-binary=:all: \
+            -r lambda/customer/requirements.txt
+
+          test -f build/customer/index.py
+          test -d build/customer/pymysql
+
+          cd build/customer
+          zip -r "../customer-lambda-${{ github.sha }}.zip" .
+          cd ../..
+
+          # ------------------------------------------------------
           # REPORT
           # ------------------------------------------------------
           echo "Packaging Report Lambda..."
@@ -419,7 +457,8 @@ jobs:
             "build/product-lambda-${{ github.sha }}.zip" \
             "build/order-lambda-${{ github.sha }}.zip" \
             "build/order-processor-${{ github.sha }}.zip" \
-            "build/report-lambda-${{ github.sha }}.zip"
+            "build/report-lambda-${{ github.sha }}.zip" \
+            "build/customer-lambda-${{ github.sha }}.zip"
           do
             if [ ! -s "$zip_file" ]; then
               echo "ERROR: Missing or empty package: $zip_file"
@@ -437,6 +476,8 @@ jobs:
           unzip -l "build/product-lambda-${{ github.sha }}.zip" | grep -q "index.py"
           unzip -l "build/order-processor-${{ github.sha }}.zip" | grep -q "index.py"
           unzip -l "build/report-lambda-${{ github.sha }}.zip" | grep -q "index.py"
+          unzip -l "build/customer-lambda-${{ github.sha }}.zip" | grep -q "index.py"
+          unzip -l "build/customer-lambda-${{ github.sha }}.zip" | grep -qi "pymysql"
 
           echo "All Lambda packages verified."
 
@@ -499,51 +540,6 @@ jobs:
             --no-fail-on-empty-changeset
 
           echo "Data stack deployment completed."
-
-      # ==========================================================
-      # STORE GENERATED REPORTS BUCKET NAME IN SSM
-      #
-      # The S3 bucket has a CloudFormation-generated physical name.
-      # Store that real name after the Data Stack exists instead of
-      # creating a fixed-name SSM parameter inside CloudFormation.
-      # This avoids ResourceExistenceCheck conflicts from stale SSM
-      # parameters left by previous deployments.
-      # ==========================================================
-      - name: Store Reports Bucket in SSM
-        id: reports_bucket
-        run: |
-          set -euo pipefail
-
-          REPORTS_BUCKET=$(aws cloudformation describe-stacks \
-            --region "$AWS_REGION" \
-            --stack-name cloudmart-data-stack \
-            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucket'].OutputValue" \
-            --output text)
-
-          if [ -z "$REPORTS_BUCKET" ] || [ "$REPORTS_BUCKET" = "None" ]; then
-            echo "ERROR: ReportsBucket output was not found."
-            exit 1
-          fi
-
-          aws ssm put-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/$ENVIRONMENT_NAME/reports-bucket" \
-            --type "String" \
-            --value "$REPORTS_BUCKET" \
-            --overwrite
-
-          STORED_BUCKET=$(aws ssm get-parameter \
-            --region "$AWS_REGION" \
-            --name "/cloudmart/$ENVIRONMENT_NAME/reports-bucket" \
-            --query "Parameter.Value" \
-            --output text)
-
-          if [ "$STORED_BUCKET" != "$REPORTS_BUCKET" ]; then
-            echo "ERROR: Reports bucket SSM parameter verification failed."
-            exit 1
-          fi
-
-          echo "Reports bucket stored in SSM: $REPORTS_BUCKET"
 
       - name: Show Data Stack Errors
         if: failure() && steps.deploy_data.outcome == 'failure'
@@ -641,6 +637,30 @@ jobs:
           echo "Lambda artifact bucket stored and verified in SSM."
 
       # ==========================================================
+      # 29. UPLOAD DASHBOARD DEPLOYMENT SCRIPT
+      # EC2 UserData downloads this small external script from S3.
+      # This keeps EC2 UserData below the 16 KB EC2 limit.
+      # ==========================================================
+      - name: Upload Dashboard Deployment Script
+        run: |
+          set -euo pipefail
+
+          DASHBOARD_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+
+          test -s dashboard-deploy.sh || {
+            echo "ERROR: dashboard-deploy.sh is missing or empty."
+            exit 1
+          }
+
+          bash -n dashboard-deploy.sh
+
+          aws s3 cp \
+            dashboard-deploy.sh \
+            "s3://$DASHBOARD_BUCKET/dashboard/cloudmart-dashboard-deploy.sh"
+
+          echo "Dashboard deployment script uploaded."
+
+      # ==========================================================
       # 29. UPLOAD AUTHORIZER PACKAGE
       # ==========================================================
       - name: Upload Authorizer Lambda
@@ -706,6 +726,83 @@ jobs:
           echo "Report Lambda uploaded."
 
       # ==========================================================
+      # 29. UPLOAD CUSTOMER LAMBDA
+      # ==========================================================
+      - name: Upload Customer Lambda
+        run: |
+          set -euo pipefail
+
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+          CUSTOMER_ZIP="build/customer-lambda-${{ github.sha }}.zip"
+          CUSTOMER_KEY="customer/customer-lambda-${{ github.sha }}.zip"
+
+          echo "=================================================="
+          echo "UPLOADING CUSTOMER LAMBDA"
+          echo "=================================================="
+
+          if [ ! -s "$CUSTOMER_ZIP" ]; then
+            echo "ERROR: Customer Lambda ZIP is missing or empty."
+            echo "Expected file: $CUSTOMER_ZIP"
+            exit 1
+          fi
+
+          aws s3 cp \
+            "$CUSTOMER_ZIP" \
+            "s3://$BUCKET/$CUSTOMER_KEY" \
+            --region "$AWS_REGION"
+
+          echo "Customer Lambda uploaded."
+
+          echo "=================================================="
+          echo "VERIFYING CUSTOMER LAMBDA S3 OBJECT"
+          echo "=================================================="
+
+          aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$BUCKET" \
+            --key "$CUSTOMER_KEY"
+
+          echo "Customer Lambda S3 object verified successfully."
+
+      # ==========================================================
+      # 29. VERIFY ALL LAMBDA S3 ARTIFACTS
+      # ==========================================================
+      - name: Verify All Lambda S3 Artifacts
+        run: |
+          set -euo pipefail
+
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+
+          echo "=================================================="
+          echo "VERIFYING ALL LAMBDA S3 ARTIFACTS"
+          echo "=================================================="
+
+          declare -a LAMBDA_KEYS=(
+            "auth/authorizer-lambda-${{ github.sha }}.zip"
+            "product/product-lambda-${{ github.sha }}.zip"
+            "order/order-lambda-${{ github.sha }}.zip"
+            "order-processor/order-processor-${{ github.sha }}.zip"
+            "report/report-lambda-${{ github.sha }}.zip"
+            "customer/customer-lambda-${{ github.sha }}.zip"
+          )
+
+          for KEY in "${LAMBDA_KEYS[@]}"; do
+            echo "--------------------------------------------------"
+            echo "Checking: $KEY"
+
+            aws s3api head-object \
+              --region "$AWS_REGION" \
+              --bucket "$BUCKET" \
+              --key "$KEY"
+
+            echo "OK: $KEY"
+          done
+
+          echo "=================================================="
+          echo "ALL LAMBDA S3 ARTIFACTS VERIFIED"
+          echo "=================================================="
+
+      # ==========================================================
       # 29. PACKAGE DASHBOARD
       # ==========================================================
       - name: Package Dashboard
@@ -757,8 +854,6 @@ jobs:
       # ==========================================================
       - name: Deploy Auth Stack
         id: deploy_auth
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -772,7 +867,6 @@ jobs:
             --template-file cloudformation/auth-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
-              "DBPassword=$DB_PASSWORD" \
               "CodeVersion=${{ github.sha }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset

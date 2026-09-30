@@ -500,6 +500,51 @@ jobs:
 
           echo "Data stack deployment completed."
 
+      # ==========================================================
+      # STORE GENERATED REPORTS BUCKET NAME IN SSM
+      #
+      # The S3 bucket has a CloudFormation-generated physical name.
+      # Store that real name after the Data Stack exists instead of
+      # creating a fixed-name SSM parameter inside CloudFormation.
+      # This avoids ResourceExistenceCheck conflicts from stale SSM
+      # parameters left by previous deployments.
+      # ==========================================================
+      - name: Store Reports Bucket in SSM
+        id: reports_bucket
+        run: |
+          set -euo pipefail
+
+          REPORTS_BUCKET=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name cloudmart-data-stack \
+            --query "Stacks[0].Outputs[?OutputKey=='ReportsBucket'].OutputValue" \
+            --output text)
+
+          if [ -z "$REPORTS_BUCKET" ] || [ "$REPORTS_BUCKET" = "None" ]; then
+            echo "ERROR: ReportsBucket output was not found."
+            exit 1
+          fi
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/reports-bucket" \
+            --type "String" \
+            --value "$REPORTS_BUCKET" \
+            --overwrite
+
+          STORED_BUCKET=$(aws ssm get-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/reports-bucket" \
+            --query "Parameter.Value" \
+            --output text)
+
+          if [ "$STORED_BUCKET" != "$REPORTS_BUCKET" ]; then
+            echo "ERROR: Reports bucket SSM parameter verification failed."
+            exit 1
+          fi
+
+          echo "Reports bucket stored in SSM: $REPORTS_BUCKET"
+
       - name: Show Data Stack Errors
         if: failure() && steps.deploy_data.outcome == 'failure'
         run: |

@@ -65,6 +65,21 @@ Resources:
             Statement:
 
               # ==================================================
+              # SSM DATABASE PASSWORD
+              # ==================================================
+
+              - Sid: ReadDatabasePassword
+
+                Effect: Allow
+
+                Action:
+                  - ssm:GetParameter
+
+                Resource:
+                  !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
+
+              # ==================================================
               # VPC NETWORK INTERFACES
               # ==================================================
 
@@ -122,7 +137,6 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -132,6 +146,7 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -242,7 +257,6 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -252,6 +266,7 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -362,7 +377,6 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -372,6 +386,7 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -500,7 +515,6 @@ Resources:
             Version: '2012-10-17'
 
             Statement:
-
               - Sid: ReadDatabasePassword
 
                 Effect: Allow
@@ -510,6 +524,7 @@ Resources:
 
                 Resource:
                   !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cloudmart/${EnvironmentName}/database/password
+
 
 
               # ==================================================
@@ -546,7 +561,8 @@ Resources:
                     - ${ReportsBucketArn}/*
 
                     - ReportsBucketArn:
-                        Fn::ImportValue: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
+                        Fn::ImportValue:
+                          cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
               # ==================================================
@@ -561,28 +577,8 @@ Resources:
                   - s3:ListBucket
 
                 Resource:
-                  Fn::ImportValue: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
-
-
-              # ==================================================
-              # CLOUDWATCH CUSTOM METRICS
-              # ==================================================
-
-              - Sid: PublishReportMetrics
-
-                Effect: Allow
-
-                Action:
-                  - cloudwatch:PutMetricData
-
-                Resource: "*"
-
-                Condition:
-
-                  StringEquals:
-
-                    cloudwatch:namespace:
-                      - CloudMart/Application
+                  Fn::ImportValue:
+                    cloudmart-reports-bucket-arn-${EnvironmentName}
 
 
               # ==================================================
@@ -622,7 +618,8 @@ Outputs:
       !GetAtt AuthorizerLambdaRole.Arn
 
     Export:
-      Name: !Sub cloudmart-authorizer-role-arn-${EnvironmentName}
+      Name:
+        cloudmart-authorizer-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -637,7 +634,8 @@ Outputs:
       !GetAtt ProductLambdaRole.Arn
 
     Export:
-      Name: !Sub cloudmart-product-role-arn-${EnvironmentName}
+      Name:
+        cloudmart-product-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -652,7 +650,8 @@ Outputs:
       !GetAtt OrderLambdaRole.Arn
 
     Export:
-      Name: !Sub cloudmart-order-role-arn-${EnvironmentName}
+      Name:
+        cloudmart-order-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -667,7 +666,8 @@ Outputs:
       !GetAtt OrderProcessingLambdaRole.Arn
 
     Export:
-      Name: !Sub cloudmart-order-processing-role-arn-${EnvironmentName}
+      Name:
+        cloudmart-order-processing-role-arn-${EnvironmentName}
 
 
   # ==============================================================
@@ -682,4 +682,5 @@ Outputs:
       !GetAtt ReportLambdaRole.Arn
 
     Export:
-      Name: !Sub cloudmart-report-role-arn-${EnvironmentName}
+      Name:
+        cloudmart-report-role-arn-${EnvironmentName}

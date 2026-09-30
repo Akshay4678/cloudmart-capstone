@@ -17,6 +17,8 @@ DB_USER = os.environ["DB_USER"]
 
 DB_PASSWORD_PARAMETER = os.environ["DB_PASSWORD_PARAMETER"]
 
+ssm_client = boto3.client("ssm")
+
 DB_PORT = int(
     os.environ.get(
         "DB_PORT",
@@ -24,12 +26,10 @@ DB_PORT = int(
     )
 )
 
-APP_ENVIRONMENT = os.environ.get(
-    "APP_ENVIRONMENT",
+ENVIRONMENT = os.environ.get(
+    "ENVIRONMENT",
     "dev"
 )
-
-ssm_client = boto3.client("ssm")
 
 
 # =========================================================
@@ -76,7 +76,6 @@ def get_connection():
 # =========================================================
 
 def normalize_token(token):
-
     """
     Extract the token from the Authorization header.
 
@@ -148,6 +147,7 @@ def get_customer_by_token(authorization):
     )
 
     if not provided_token:
+
         return None
 
     token_hash = hash_token(
@@ -212,9 +212,6 @@ def is_allowed(role, method, path):
 
         PATCH is not allowed for users.
 
-        GET    /customers/{customerId}
-        PUT    /customers/{customerId}
-
     ADMIN permissions:
 
         GET    /products
@@ -230,9 +227,6 @@ def is_allowed(role, method, path):
         GET    /orders/{orderId}
         PUT    /orders/{orderId}
         PATCH  /orders/{orderId}
-
-        GET    /customers/{customerId}
-        PUT    /customers/{customerId}
     """
 
     role = (
@@ -304,10 +298,14 @@ def is_allowed(role, method, path):
         # -------------------------------------------------
         # Customers
         # -------------------------------------------------
+        # POST /customers is public and does not use
+        # this authorizer.
+        #
+        # Authenticated users can GET/PUT customer records.
+        # Customer Lambda enforces ownership for USER.
+        # -------------------------------------------------
 
-        if normalized_path.startswith(
-            "/customers/"
-        ):
+        if normalized_path.startswith("/customers/"):
 
             return method in {
                 "GET",
@@ -379,10 +377,14 @@ def is_allowed(role, method, path):
         # -------------------------------------------------
         # Customers
         # -------------------------------------------------
+        # POST /customers is public and does not use
+        # this authorizer.
+        #
+        # Authenticated ADMIN users can GET/PUT customer
+        # records.
+        # -------------------------------------------------
 
-        if normalized_path.startswith(
-            "/customers/"
-        ):
+        if normalized_path.startswith("/customers/"):
 
             return method in {
                 "GET",
@@ -455,6 +457,7 @@ def parse_method_arn(method_arn):
 
         path = "/"
 
+
     return method, path
 
 
@@ -512,7 +515,7 @@ def create_allow_policy(
                 customer_id
             ),
 
-            "environment": APP_ENVIRONMENT
+            "environment": ENVIRONMENT
 
         }
 
@@ -707,7 +710,7 @@ def lambda_handler(event, context):
         # =================================================
         # RETURN IAM POLICY
         # =================================================
-
+         
         policy = create_allow_policy(
 
             principal_id=principal_id,

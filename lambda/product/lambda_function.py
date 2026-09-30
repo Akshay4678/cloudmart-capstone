@@ -228,11 +228,22 @@ def write_audit_log(
     """
     Write an entry into audit_logs.
 
-    old_value:
-        State before the operation.
+    The current CloudMart audit_logs table contains:
 
-    new_value:
-        State after the operation.
+        audit_id
+        customer_id
+        action
+        entity_type
+        entity_id
+        details
+        created_at
+
+    Therefore old_value, new_value and performed_by are
+    stored inside the details JSON column.
+
+    This function does not commit the transaction.
+    The caller controls commit/rollback so that the
+    product operation and audit record remain atomic.
     """
 
     print(
@@ -242,23 +253,55 @@ def write_audit_log(
         entity_id
     )
 
-    old_json = None
+    # ---------------------------------------------------------
+    # DETERMINE CUSTOMER ID
+    # ---------------------------------------------------------
 
-    if old_value is not None:
+    customer_id = None
 
-        old_json = json.dumps(
-            old_value,
-            default=str
-        )
+    if performed_by:
 
-    new_json = None
+        candidate_customer_id = str(
+            performed_by
+        ).strip()
 
-    if new_value is not None:
+        if candidate_customer_id:
 
-        new_json = json.dumps(
-            new_value,
-            default=str
-        )
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    SELECT customer_id
+                    FROM customers
+                    WHERE customer_id = %s
+                    LIMIT 1
+                    """,
+                    (
+                        candidate_customer_id,
+                    )
+                )
+
+                customer = cursor.fetchone()
+
+                if customer:
+                    customer_id = candidate_customer_id
+
+    # ---------------------------------------------------------
+    # BUILD AUDIT DETAILS
+    # ---------------------------------------------------------
+
+    details = json.dumps(
+        {
+            "performed_by": performed_by,
+            "old_value": old_value,
+            "new_value": new_value
+        },
+        default=str
+    )
+
+    # ---------------------------------------------------------
+    # INSERT AUDIT LOG
+    # ---------------------------------------------------------
 
     with connection.cursor() as cursor:
 
@@ -266,12 +309,12 @@ def write_audit_log(
             """
             INSERT INTO audit_logs
             (
+                customer_id,
+                action,
                 entity_type,
                 entity_id,
-                action,
-                old_value,
-                new_value,
-                performed_by
+                details,
+                created_at
             )
             VALUES
             (
@@ -280,18 +323,26 @@ def write_audit_log(
                 %s,
                 %s,
                 %s,
-                %s
+                NOW()
             )
             """,
             (
+                customer_id,
+                action,
                 entity_type,
                 str(entity_id),
-                action,
-                old_json,
-                new_json,
-                performed_by
+                details
             )
         )
+
+    print(
+        "Audit log written:",
+        action,
+        entity_type,
+        entity_id,
+        "by",
+        performed_by
+    )
 
 
 # =========================================================

@@ -199,7 +199,7 @@ jobs:
 
             "dashboard/app.py"
             "dashboard/requirements.txt"
-            "dashboard-deploy.sh"
+            "dashboard/cloudmart-dashboard-deploy.sh"
           )
 
           for file in "${required_files[@]}"; do
@@ -208,8 +208,6 @@ jobs:
               exit 1
             fi
           done
-
-          bash -n dashboard-deploy.sh
 
           python -m py_compile \
             lambda/authorizer/lambda_function.py \
@@ -220,7 +218,9 @@ jobs:
             lambda/customer/lambda_function.py \
             dashboard/app.py
 
-          echo "All required source files are present and Python syntax is valid."
+          bash -n dashboard/cloudmart-dashboard-deploy.sh
+
+          echo "All required source files are present and syntax is valid."
 
       # ==========================================================
       # 29. VERIFY LAMBDA REQUIREMENTS
@@ -608,6 +608,35 @@ jobs:
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
 
       # ==========================================================
+      # 29. VERIFY LAMBDA ARTIFACT BUCKET EXPORT
+      # ==========================================================
+      - name: Verify Lambda Artifact Bucket Export
+        run: |
+          set -euo pipefail
+
+          WORKFLOW_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+
+          EXPORTED_BUCKET=$(aws cloudformation list-exports \
+            --region "$AWS_REGION" \
+            --query "Exports[?Name=='cloudmart-lambda-bucket-${ENVIRONMENT_NAME}'].Value" \
+            --output text)
+
+          if [ -z "$EXPORTED_BUCKET" ] || [ "$EXPORTED_BUCKET" = "None" ]; then
+            echo "ERROR: CloudFormation export cloudmart-lambda-bucket-${ENVIRONMENT_NAME} was not found."
+            exit 1
+          fi
+
+          if [ "$WORKFLOW_BUCKET" != "$EXPORTED_BUCKET" ]; then
+            echo "ERROR: Lambda artifact bucket mismatch."
+            echo "Workflow bucket : $WORKFLOW_BUCKET"
+            echo "Exported bucket : $EXPORTED_BUCKET"
+            exit 1
+          fi
+
+          echo "Lambda artifact bucket verified."
+          echo "Bucket: $WORKFLOW_BUCKET"
+
+      # ==========================================================
       # 29. STORE LAMBDA ARTIFACT BUCKET IN SSM
       # ==========================================================
       - name: Store Lambda Artifact Bucket in SSM
@@ -637,170 +666,198 @@ jobs:
           echo "Lambda artifact bucket stored and verified in SSM."
 
       # ==========================================================
-      # 29. UPLOAD DASHBOARD DEPLOYMENT SCRIPT
-      # EC2 UserData downloads this small external script from S3.
-      # This keeps EC2 UserData below the 16 KB EC2 limit.
-      # ==========================================================
-      - name: Upload Dashboard Deployment Script
-        run: |
-          set -euo pipefail
-
-          DASHBOARD_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
-
-          test -s dashboard-deploy.sh || {
-            echo "ERROR: dashboard-deploy.sh is missing or empty."
-            exit 1
-          }
-
-          bash -n dashboard-deploy.sh
-
-          aws s3 cp \
-            dashboard-deploy.sh \
-            "s3://$DASHBOARD_BUCKET/dashboard/cloudmart-dashboard-deploy.sh"
-
-          echo "Dashboard deployment script uploaded."
-
-      # ==========================================================
-      # 29. UPLOAD AUTHORIZER PACKAGE
+      # 29. UPLOAD AND VERIFY AUTHORIZER PACKAGE
       # ==========================================================
       - name: Upload Authorizer Lambda
         run: |
           set -euo pipefail
 
-          aws s3 cp \
-            "build/authorizer-lambda-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/auth/authorizer-lambda-${{ github.sha }}.zip"
+          ZIP_FILE="build/authorizer-lambda-${{ github.sha }}.zip"
+          S3_KEY="auth/authorizer-lambda-${{ github.sha }}.zip"
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
 
-          echo "Authorizer Lambda uploaded."
+          test -s "$ZIP_FILE"
+
+          aws s3 cp "$ZIP_FILE" "s3://$BUCKET/$S3_KEY" --region "$AWS_REGION"
+
+          aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$BUCKET" \
+            --key "$S3_KEY"
+
+          echo "Authorizer Lambda uploaded and verified: s3://$BUCKET/$S3_KEY"
 
       # ==========================================================
-      # 29. UPLOAD PRODUCT
+      # 29. UPLOAD AND VERIFY PRODUCT
       # ==========================================================
       - name: Upload Product Lambda
         run: |
           set -euo pipefail
 
-          aws s3 cp \
-            "build/product-lambda-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/product/product-lambda-${{ github.sha }}.zip"
+          ZIP_FILE="build/product-lambda-${{ github.sha }}.zip"
+          S3_KEY="product/product-lambda-${{ github.sha }}.zip"
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
 
-          echo "Product Lambda uploaded."
+          test -s "$ZIP_FILE"
+
+          aws s3 cp "$ZIP_FILE" "s3://$BUCKET/$S3_KEY" --region "$AWS_REGION"
+
+          aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$BUCKET" \
+            --key "$S3_KEY"
+
+          echo "Product Lambda uploaded and verified: s3://$BUCKET/$S3_KEY"
 
       # ==========================================================
-      # 29. UPLOAD ORDER
+      # 29. UPLOAD AND VERIFY ORDER
       # ==========================================================
       - name: Upload Order Lambda
         run: |
           set -euo pipefail
 
-          aws s3 cp \
-            "build/order-lambda-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order/order-lambda-${{ github.sha }}.zip"
+          ZIP_FILE="build/order-lambda-${{ github.sha }}.zip"
+          S3_KEY="order/order-lambda-${{ github.sha }}.zip"
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
 
-          echo "Order Lambda uploaded."
+          test -s "$ZIP_FILE"
+
+          aws s3 cp "$ZIP_FILE" "s3://$BUCKET/$S3_KEY" --region "$AWS_REGION"
+
+          aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$BUCKET" \
+            --key "$S3_KEY"
+
+          echo "Order Lambda uploaded and verified: s3://$BUCKET/$S3_KEY"
 
       # ==========================================================
-      # 29. UPLOAD ORDER PROCESSOR
+      # 29. UPLOAD AND VERIFY ORDER PROCESSOR
       # ==========================================================
       - name: Upload Order Processor Lambda
         run: |
           set -euo pipefail
 
-          aws s3 cp \
-            "build/order-processor-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/order-processor/order-processor-${{ github.sha }}.zip"
+          ZIP_FILE="build/order-processor-${{ github.sha }}.zip"
+          S3_KEY="order-processor/order-processor-${{ github.sha }}.zip"
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
 
-          echo "Order Processor Lambda uploaded."
+          test -s "$ZIP_FILE"
+
+          aws s3 cp "$ZIP_FILE" "s3://$BUCKET/$S3_KEY" --region "$AWS_REGION"
+
+          aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$BUCKET" \
+            --key "$S3_KEY"
+
+          echo "Order Processor Lambda uploaded and verified: s3://$BUCKET/$S3_KEY"
 
       # ==========================================================
-      # 29. UPLOAD REPORT
+      # 29. UPLOAD AND VERIFY REPORT
       # ==========================================================
       - name: Upload Report Lambda
         run: |
           set -euo pipefail
 
-          aws s3 cp \
-            "build/report-lambda-${{ github.sha }}.zip" \
-            "s3://${{ steps.lambda_bucket.outputs.bucket }}/report/report-lambda-${{ github.sha }}.zip"
+          ZIP_FILE="build/report-lambda-${{ github.sha }}.zip"
+          S3_KEY="report/report-lambda-${{ github.sha }}.zip"
+          BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
 
-          echo "Report Lambda uploaded."
+          test -s "$ZIP_FILE"
+
+          aws s3 cp "$ZIP_FILE" "s3://$BUCKET/$S3_KEY" --region "$AWS_REGION"
+
+          aws s3api head-object \
+            --region "$AWS_REGION" \
+            --bucket "$BUCKET" \
+            --key "$S3_KEY"
+
+          echo "Report Lambda uploaded and verified: s3://$BUCKET/$S3_KEY"
 
       # ==========================================================
-      # 29. UPLOAD CUSTOMER LAMBDA
+      # 29. UPLOAD AND VERIFY CUSTOMER LAMBDA
       # ==========================================================
       - name: Upload Customer Lambda
         run: |
           set -euo pipefail
 
+          ZIP_FILE="build/customer-lambda-${{ github.sha }}.zip"
+          S3_KEY="customer/customer-lambda-${{ github.sha }}.zip"
           BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
-          CUSTOMER_ZIP="build/customer-lambda-${{ github.sha }}.zip"
-          CUSTOMER_KEY="customer/customer-lambda-${{ github.sha }}.zip"
 
-          echo "=================================================="
-          echo "UPLOADING CUSTOMER LAMBDA"
-          echo "=================================================="
+          test -s "$ZIP_FILE"
 
-          if [ ! -s "$CUSTOMER_ZIP" ]; then
-            echo "ERROR: Customer Lambda ZIP is missing or empty."
-            echo "Expected file: $CUSTOMER_ZIP"
-            exit 1
-          fi
-
-          aws s3 cp \
-            "$CUSTOMER_ZIP" \
-            "s3://$BUCKET/$CUSTOMER_KEY" \
-            --region "$AWS_REGION"
-
-          echo "Customer Lambda uploaded."
-
-          echo "=================================================="
-          echo "VERIFYING CUSTOMER LAMBDA S3 OBJECT"
-          echo "=================================================="
+          aws s3 cp "$ZIP_FILE" "s3://$BUCKET/$S3_KEY" --region "$AWS_REGION"
 
           aws s3api head-object \
             --region "$AWS_REGION" \
             --bucket "$BUCKET" \
-            --key "$CUSTOMER_KEY"
+            --key "$S3_KEY"
 
-          echo "Customer Lambda S3 object verified successfully."
+          echo "Customer Lambda uploaded and verified: s3://$BUCKET/$S3_KEY"
 
       # ==========================================================
-      # 29. VERIFY ALL LAMBDA S3 ARTIFACTS
+      # 29. VERIFY ALL LAMBDA ARTIFACTS BEFORE CLOUDFORMATION
       # ==========================================================
-      - name: Verify All Lambda S3 Artifacts
+      - name: Verify All Lambda Artifacts
         run: |
           set -euo pipefail
 
           BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+          SHA="${{ github.sha }}"
 
-          echo "=================================================="
-          echo "VERIFYING ALL LAMBDA S3 ARTIFACTS"
-          echo "=================================================="
-
-          declare -a LAMBDA_KEYS=(
-            "auth/authorizer-lambda-${{ github.sha }}.zip"
-            "product/product-lambda-${{ github.sha }}.zip"
-            "order/order-lambda-${{ github.sha }}.zip"
-            "order-processor/order-processor-${{ github.sha }}.zip"
-            "report/report-lambda-${{ github.sha }}.zip"
-            "customer/customer-lambda-${{ github.sha }}.zip"
+          ARTIFACTS=(
+            "auth/authorizer-lambda-${SHA}.zip"
+            "product/product-lambda-${SHA}.zip"
+            "customer/customer-lambda-${SHA}.zip"
+            "order/order-lambda-${SHA}.zip"
+            "order-processor/order-processor-${SHA}.zip"
+            "report/report-lambda-${SHA}.zip"
           )
 
-          for KEY in "${LAMBDA_KEYS[@]}"; do
-            echo "--------------------------------------------------"
-            echo "Checking: $KEY"
+          echo "=================================================="
+          echo "VERIFYING ALL LAMBDA ARTIFACTS"
+          echo "=================================================="
+
+          for KEY in "${ARTIFACTS[@]}"; do
+            echo "Checking: s3://$BUCKET/$KEY"
 
             aws s3api head-object \
               --region "$AWS_REGION" \
               --bucket "$BUCKET" \
-              --key "$KEY"
+              --key "$KEY" \
+              >/dev/null
 
-            echo "OK: $KEY"
+            echo "Verified: $KEY"
           done
 
-          echo "=================================================="
-          echo "ALL LAMBDA S3 ARTIFACTS VERIFIED"
-          echo "=================================================="
+          echo "All Lambda artifacts exist in the exact S3 keys expected by CloudFormation."
+
+      # ==========================================================
+      # 29. UPLOAD DASHBOARD DEPLOYMENT SCRIPT
+      #
+      # The Network Stack EC2 UserData is intentionally kept below
+      # the EC2 16 KB UserData limit. The full dashboard deployment
+      # script is stored in the Lambda artifact bucket and downloaded
+      # by EC2 after the infrastructure and SSM parameter exist.
+      # ==========================================================
+      - name: Upload Dashboard Deployment Script
+        run: |
+          set -euo pipefail
+
+          SCRIPT_FILE="dashboard/cloudmart-dashboard-deploy.sh"
+          DASHBOARD_BUCKET="${{ steps.lambda_bucket.outputs.bucket }}"
+
+          test -s "$SCRIPT_FILE"
+          bash -n "$SCRIPT_FILE"
+
+          aws s3 cp \
+            "$SCRIPT_FILE" \
+            "s3://$DASHBOARD_BUCKET/dashboard/cloudmart-dashboard-deploy.sh" \
+            --region "$AWS_REGION"
+
+          echo "Dashboard deployment script uploaded."
 
       # ==========================================================
       # 29. PACKAGE DASHBOARD
@@ -854,6 +911,8 @@ jobs:
       # ==========================================================
       - name: Deploy Auth Stack
         id: deploy_auth
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -867,6 +926,7 @@ jobs:
             --template-file cloudformation/auth-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
+              "DBPassword=$DB_PASSWORD" \
               "CodeVersion=${{ github.sha }}" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset

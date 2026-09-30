@@ -29,7 +29,11 @@ app = Flask(__name__)
 
 AWS_REGION = os.environ.get("AWS_REGION", "ap-south-1")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
-REPORTS_BUCKET = os.environ.get("REPORTS_BUCKET", "")
+REPORTS_BUCKET = os.environ.get("REPORTS_BUCKET", "").strip()
+REPORTS_BUCKET_PARAMETER = os.environ.get(
+    "REPORTS_BUCKET_PARAMETER",
+    f"/cloudmart/{ENVIRONMENT}/reports-bucket",
+)
 DB_HOST = os.environ.get("DB_HOST", "")
 DB_NAME = os.environ.get("DB_NAME", "cloudmart")
 DB_USER = os.environ.get("DB_USER", "cloudmartadmin")
@@ -447,15 +451,47 @@ def fetch_dashboard_data():
 # REPORTS
 # ============================================================
 
+def get_reports_bucket():
+    """Return the real CloudFormation-generated reports bucket name.
+
+    The S3 bucket has no fixed physical name, so the dashboard must
+    not construct a bucket name from the environment/account/region.
+    The Data stack stores the actual name in SSM Parameter Store.
+    The environment variable remains as a backwards-compatible
+    fallback during migration.
+    """
+    try:
+        response = ssm.get_parameter(
+            Name=REPORTS_BUCKET_PARAMETER,
+        )
+
+        bucket = response["Parameter"]["Value"].strip()
+
+        if bucket:
+            return bucket
+
+    except (BotoCoreError, ClientError) as exc:
+        print(
+            f"Unable to read reports bucket from SSM: {exc}"
+        )
+
+    if REPORTS_BUCKET:
+        return REPORTS_BUCKET
+
+    raise RuntimeError(
+        "Reports bucket is not configured. "
+        f"SSM parameter {REPORTS_BUCKET_PARAMETER} was not available."
+    )
+
+
 def get_report_objects():
-    if not REPORTS_BUCKET:
-        return []
+    reports_bucket = get_reports_bucket()
 
     reports = []
     paginator = s3.get_paginator("list_objects_v2")
 
     for page in paginator.paginate(
-        Bucket=REPORTS_BUCKET,
+        Bucket=reports_bucket,
         Prefix="reports/",
     ):
         for obj in page.get("Contents", []):
@@ -493,8 +529,10 @@ def read_report_csv(key):
     if not key.startswith("reports/"):
         raise ValueError("Invalid report path")
 
+    reports_bucket = get_reports_bucket()
+
     response = s3.get_object(
-        Bucket=REPORTS_BUCKET,
+        Bucket=reports_bucket,
         Key=key,
     )
 
@@ -1252,10 +1290,12 @@ def download_report():
     try:
         # The S3 bucket remains private. The dashboard creates a
         # short-lived signed URL only when the user clicks Download.
+        reports_bucket = get_reports_bucket()
+
         url = s3.generate_presigned_url(
             "get_object",
             Params={
-                "Bucket": REPORTS_BUCKET,
+                "Bucket": reports_bucket,
                 "Key": key,
                 "ResponseContentType": "text/csv",
                 "ResponseContentDisposition": (

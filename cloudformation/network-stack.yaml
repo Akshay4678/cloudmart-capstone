@@ -42,10 +42,6 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Latest Amazon Linux 2023 AMI
 
-  LambdaArtifactBucketParameter:
-    Type: String
-    Default: /cloudmart/dev/lambda-artifact-bucket
-    Description: SSM parameter containing the CloudMart Lambda artifact S3 bucket name
 
 # ================================================================
 # RESOURCES
@@ -628,10 +624,9 @@ Resources:
           exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
 
           AWS_REGION_VALUE="${AWS::Region}"
-          LAMBDA_BUCKET_PARAMETER="${LambdaArtifactBucketParameter}"
+          LAMBDA_BUCKET_PARAMETER="/cloudmart/${EnvironmentName}/lambda-artifact-bucket"
           DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
           DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
-          REPORTS_BUCKET_PARAMETER="/cloudmart/${EnvironmentName}/reports-bucket"
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
 
           echo "=================================================="
@@ -755,7 +750,6 @@ Resources:
           LAMBDA_BUCKET_PARAMETER="$2"
           DASHBOARD_KEY="$3"
           DB_HOST_CONFIG_KEY="$4"
-          REPORTS_BUCKET_PARAMETER="$5"
 
           DASHBOARD_DIR="/opt/cloudmart-dashboard"
           ZIP_FILE="/tmp/cloudmart-dashboard.zip"
@@ -823,67 +817,12 @@ Resources:
           done
 
           # ============================================================
-          # READ THE ACTUAL GENERATED REPORTS BUCKET NAME
-          # The Data Stack creates the physical bucket name dynamically.
-          # CloudFormation stores that actual name in:
-          # /cloudmart/${EnvironmentName}/reports-bucket
-          # ============================================================
-
-          REPORTS_BUCKET_VALUE=""
-
-          for attempt in $(seq 1 60); do
-            REPORTS_BUCKET_VALUE=$(aws ssm get-parameter \
-              --region "$AWS_REGION_VALUE" \
-              --name "$REPORTS_BUCKET_PARAMETER" \
-              --query "Parameter.Value" \
-              --output text 2>/dev/null || true)
-
-            if [ -n "$REPORTS_BUCKET_VALUE" ] && [ "$REPORTS_BUCKET_VALUE" != "None" ]; then
-              echo "Reports bucket parameter is available."
-              echo "Reports bucket: $REPORTS_BUCKET_VALUE"
-              break
-            fi
-
-            echo "Waiting for Reports bucket parameter... attempt $attempt/60"
-            sleep 5
-
-            if [ "$attempt" -eq 60 ]; then
-              echo "ERROR: Reports bucket parameter was not available."
-              echo "Parameter: $REPORTS_BUCKET_PARAMETER"
-              exit 1
-            fi
-          done
-
-          # ============================================================
-          # VERIFY THE REPORTS BUCKET ACTUALLY EXISTS AND IS READABLE
-          # ============================================================
-          # This prevents the dashboard from continuing with a stale
-          # or deleted bucket name stored in SSM.
-
-          for attempt in $(seq 1 30); do
-            if aws s3api head-bucket               --region "$AWS_REGION_VALUE"               --bucket "$REPORTS_BUCKET_VALUE" >/dev/null 2>&1; then
-              echo "Reports bucket exists and is accessible."
-              break
-            fi
-
-            echo "Waiting for Reports bucket to become accessible... attempt $attempt/30"
-            sleep 5
-
-            if [ "$attempt" -eq 30 ]; then
-              echo "ERROR: Reports bucket does not exist or is not accessible."
-              echo "Reports bucket: $REPORTS_BUCKET_VALUE"
-              exit 1
-            fi
-          done
-
-          # ============================================================
           # SKIP ONLY IF THE CURRENT DEPLOYMENT IS ALREADY HEALTHY
           # ============================================================
 
           if [ -f "$STATE_FILE" ] \
              && grep -q "^ARTIFACT_ETAG=$ARTIFACT_ETAG$" "$STATE_FILE" 2>/dev/null \
              && grep -q "^DB_CONFIG_ETAG=$DB_CONFIG_ETAG$" "$STATE_FILE" 2>/dev/null \
-             && grep -q "^REPORTS_BUCKET=$REPORTS_BUCKET_VALUE$" "$STATE_FILE" 2>/dev/null \
              && systemctl is-active --quiet cloudmart-dashboard; then
 
             echo "Dashboard is already deployed and healthy."
@@ -997,12 +936,13 @@ Resources:
           ENVIRONMENT=${EnvironmentName}
           API_NAME=cloudmart-api-${EnvironmentName}
           API_STAGE=${EnvironmentName}
-          REPORTS_BUCKET=$REPORTS_BUCKET_VALUE
+          REPORTS_BUCKET=
           DB_HOST=$DB_HOST_VALUE
           DB_NAME=cloudmart
           DB_USER=cloudmartadmin
           DB_PORT=3306
           DB_PASSWORD_PARAMETER=/cloudmart/${EnvironmentName}/database/password
+          REPORTS_BUCKET_PARAMETER=/cloudmart/${EnvironmentName}/reports-bucket
           ENVEOF
 
           chown root:root /etc/cloudmart-dashboard.env
@@ -1105,8 +1045,8 @@ Resources:
           echo "NGINX is ACTIVE."
 
           # Save deployment state ONLY after Gunicorn and NGINX are healthy.
-          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\nREPORTS_BUCKET=%s\n' \
-            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" "$REPORTS_BUCKET_VALUE" > "$TMP_STATE_FILE"
+          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\n' \
+            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" > "$TMP_STATE_FILE"
 
           mv "$TMP_STATE_FILE" "$STATE_FILE"
 
@@ -1129,7 +1069,7 @@ Resources:
 
           [Service]
           Type=oneshot
-          ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_PARAMETER" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY" "$REPORTS_BUCKET_PARAMETER"
+          ExecStart=/usr/local/bin/cloudmart-dashboard-deploy.sh "$AWS_REGION_VALUE" "$LAMBDA_BUCKET_PARAMETER" "$DASHBOARD_KEY" "$DB_HOST_CONFIG_KEY"
           UPDATEEOF
 
           cat > /etc/systemd/system/cloudmart-dashboard-update.timer <<TIMEREOF
@@ -1397,6 +1337,101 @@ Resources:
 # ================================================================
 
 Outputs:
+
+  # ================================================================
+  # LEGACY EXPORTS - KEEP FOR BACKWARD COMPATIBILITY
+  #
+  # Older CloudFormation stacks may still import these names.
+  # Removing an export while another stack imports it causes:
+  #   Export ... cannot be deleted as it is in use by ...
+  #
+  # Keep these exports until every dependent stack has migrated.
+  # ================================================================
+
+  LegacyVPCId:
+    Value: !Ref CloudMartVPC
+    Export:
+      Name: cloudmart-vpc-id
+
+  LegacyPublicSubnetId:
+    Value: !Ref PublicSubnet
+    Export:
+      Name: cloudmart-public-subnet-id
+
+  LegacyPrivateSubnetId:
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: cloudmart-private-subnet-id
+
+  LegacyPrivateSubnet2Id:
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: cloudmart-private-subnet-2-id
+
+  LegacyLambdaSG:
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: cloudmart-lambda-sg
+
+  LegacyRDSSG:
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: cloudmart-rds-sg
+
+  LegacyEC2SG:
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: cloudmart-ec2-sg
+
+  LegacyVPCEndpointSG:
+    Value: !Ref VPCEndpointSecurityGroup
+    Export:
+      Name: cloudmart-vpc-endpoint-sg
+
+  LegacyEventBridgeEndpointId:
+    Value: !Ref EventBridgeVPCEndpoint
+    Export:
+      Name: cloudmart-eventbridge-vpc-endpoint
+
+  LegacyS3EndpointId:
+    Value: !Ref S3VPCEndpoint
+    Export:
+      Name: cloudmart-s3-vpc-endpoint
+
+  LegacySSMEndpointId:
+    Value: !Ref SSMVPCEndpoint
+    Export:
+      Name: cloudmart-ssm-vpc-endpoint
+
+  LegacySNSEndpointId:
+    Value: !Ref SNSVPCEndpoint
+    Export:
+      Name: cloudmart-sns-vpc-endpoint
+
+  LegacyCloudWatchLogsEndpointId:
+    Value: !Ref CloudWatchLogsVPCEndpoint
+    Export:
+      Name: cloudmart-cloudwatch-logs-vpc-endpoint
+
+  LegacyCloudWatchMonitoringEndpointId:
+    Value: !Ref CloudWatchMonitoringVPCEndpoint
+    Export:
+      Name: cloudmart-cloudwatch-monitoring-vpc-endpoint
+
+  LegacyEC2InstanceId:
+    Value: !Ref CloudMartEC2V3
+    Export:
+      Name: cloudmart-ec2-instance-id
+
+  LegacyEC2PublicIP:
+    Value: !GetAtt CloudMartEC2V3.PublicIp
+    Export:
+      Name: cloudmart-ec2-public-ip
+
+  LegacyEC2PrivateIP:
+    Value: !GetAtt CloudMartEC2V3.PrivateIp
+    Export:
+      Name: cloudmart-ec2-private-ip
 
 
   # ================================================================

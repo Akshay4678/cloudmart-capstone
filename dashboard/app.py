@@ -2008,34 +2008,113 @@ footer {
     </footer>
 </main>
 
-{% if page_title in ["Dashboard", "Products", "Orders", "Order Items", "Audit Logs", "Customers"] %}
+{% if page_title in ["Dashboard", "Products", "Orders", "Order Items", "Audit Logs", "Customers", "Monitoring", "Reports"] %}
 <script>
+/*
+ * Live dashboard refresh:
+ * - Re-fetches the current Flask page every 2 seconds.
+ * - Reads fresh data from RDS through the existing Flask route.
+ * - Updates only #page-content; the browser page is never reloaded.
+ * - Keeps the user's current URL and query string (for example product search).
+ * - Pauses in background tabs to avoid unnecessary database/AWS requests.
+ */
 (function () {
-    const refreshIntervalMs = 5000;
+    "use strict";
+
+    const refreshIntervalMs = 2000;
     let refreshInProgress = false;
+    let lastSuccessfulRefresh = 0;
+
     async function refreshPageData() {
         if (document.hidden || refreshInProgress) return;
         refreshInProgress = true;
+
         try {
-            const response = await fetch(window.location.href, {
-                method: "GET", cache: "no-store",
-                headers: { "X-Requested-With": "XMLHttpRequest" }
-            });
-            if (!response.ok) return;
+            const response = await fetch(
+                window.location.pathname + window.location.search,
+                {
+                    method: "GET",
+                    credentials: "same-origin",
+                    cache: "no-store",
+                    headers: {
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Cache-Control": "no-cache"
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                console.warn("CloudMart live refresh returned HTTP", response.status);
+                return;
+            }
+
             const html = await response.text();
             const parsed = new DOMParser().parseFromString(html, "text/html");
-            const next = parsed.querySelector("#page-content");
-            const current = document.querySelector("#page-content");
-            if (next && current) {
-                current.innerHTML = next.innerHTML;
-                const footer = current.querySelector("footer");
-                if (footer) footer.textContent = parsed.querySelector("footer")?.textContent || footer.textContent;
+            const nextContent = parsed.querySelector("#page-content");
+            const currentContent = document.querySelector("#page-content");
+
+            if (!nextContent || !currentContent) {
+                console.warn("CloudMart live refresh could not find #page-content.");
+                return;
             }
+
+            // Preserve an in-progress search/input value and focus when possible.
+            const active = document.activeElement;
+            const activeId = active && active.id ? active.id : null;
+            const activeName = active && active.name ? active.name : null;
+            const selectionStart = active && typeof active.selectionStart === "number"
+                ? active.selectionStart : null;
+            const selectionEnd = active && typeof active.selectionEnd === "number"
+                ? active.selectionEnd : null;
+            const activeValue = active && "value" in active ? active.value : null;
+
+            currentContent.innerHTML = nextContent.innerHTML;
+
+            if (activeId || activeName) {
+                let replacement = activeId
+                    ? currentContent.querySelector("#" + CSS.escape(activeId))
+                    : null;
+                if (!replacement && activeName) {
+                    replacement = Array.from(currentContent.querySelectorAll("[name]")).find(
+                        element => element.name === activeName
+                    );
+                }
+                if (replacement) {
+                    if (activeValue !== null && "value" in replacement) {
+                        replacement.value = activeValue;
+                    }
+                    replacement.focus({ preventScroll: true });
+                    if (selectionStart !== null && typeof replacement.setSelectionRange === "function") {
+                        try { replacement.setSelectionRange(selectionStart, selectionEnd); }
+                        catch (_) { /* Some input types do not support text selection. */ }
+                    }
+                }
+            }
+
+            // Update the generated timestamp outside the content if the template changes later.
+            const nextFooter = parsed.querySelector("#page-content footer");
+            const currentFooter = currentContent.querySelector("footer");
+            if (nextFooter && currentFooter) {
+                currentFooter.textContent = nextFooter.textContent;
+            }
+
+            lastSuccessfulRefresh = Date.now();
+            document.documentElement.dataset.cloudmartLastRefresh = String(lastSuccessfulRefresh);
         } catch (error) {
             console.error("CloudMart live refresh failed:", error);
-        } finally { refreshInProgress = false; }
+        } finally {
+            refreshInProgress = false;
+        }
     }
+
+    // Refresh shortly after opening the page, then keep it current.
+    window.setTimeout(refreshPageData, 500);
     window.setInterval(refreshPageData, refreshIntervalMs);
+
+    // Refresh immediately when returning to the tab after it was hidden.
+    document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) refreshPageData();
+    });
 })();
 </script>
 {% endif %}

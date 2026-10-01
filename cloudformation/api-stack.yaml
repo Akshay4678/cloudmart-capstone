@@ -1720,7 +1720,7 @@ Resources:
   # API DEPLOYMENT
   # ==============================================================
 
-  ApiDeploymentv2:
+  ApiDeploymentv3:
     Type: AWS::ApiGateway::Deployment
 
     DependsOn:
@@ -1763,7 +1763,7 @@ Resources:
         !Ref CloudMartApi
 
       DeploymentId:
-        !Ref ApiDeploymentv2
+        !Ref ApiDeploymentv3
 
       StageName:
         !Ref EnvironmentName

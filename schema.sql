@@ -9,6 +9,9 @@
 -- 1. No DROP TABLE commands are used.
 -- 2. Existing tables and data are preserved.
 -- 3. Column names match the existing RDS tables.
+-- 4. Audit logs store old_value, new_value, and performed_by.
+-- 5. Existing audit_logs tables are upgraded safely by adding
+--    only columns that do not already exist.
 -- ============================================================
 
 
@@ -400,6 +403,14 @@ CREATE TABLE IF NOT EXISTS order_items (
 -- ============================================================
 -- AUDIT LOGS TABLE
 -- ============================================================
+-- Updated audit table:
+-- old_value      = snapshot of the record before the action
+-- new_value      = snapshot of the record after the action
+-- performed_by   = actor associated with the action
+--
+-- details is retained for compatibility with existing code and
+-- existing audit records.
+-- ============================================================
 
 CREATE TABLE IF NOT EXISTS audit_logs (
 
@@ -415,6 +426,12 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
     details TEXT,
 
+    old_value JSON NULL,
+
+    new_value JSON NULL,
+
+    performed_by VARCHAR(100) NULL,
+
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_audit_customer
@@ -423,6 +440,85 @@ CREATE TABLE IF NOT EXISTS audit_logs (
         ON DELETE SET NULL
         ON UPDATE CASCADE
 );
+
+
+-- ============================================================
+-- UPGRADE EXISTING AUDIT LOGS TABLE
+-- ============================================================
+-- CREATE TABLE IF NOT EXISTS does not modify a table that already
+-- exists. The checks below add each new column only if it is
+-- missing. No tables or existing rows are dropped.
+-- These statements can be run repeatedly.
+-- ============================================================
+
+SET @has_old_value = (
+    SELECT COUNT(*)
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'audit_logs'
+      AND column_name = 'old_value'
+);
+
+SET @sql = IF(
+    @has_old_value = 0,
+    'ALTER TABLE audit_logs ADD COLUMN old_value JSON NULL',
+    'SELECT ''old_value column already exists'''
+);
+
+PREPARE audit_stmt FROM @sql;
+EXECUTE audit_stmt;
+DEALLOCATE PREPARE audit_stmt;
+
+
+SET @has_new_value = (
+    SELECT COUNT(*)
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'audit_logs'
+      AND column_name = 'new_value'
+);
+
+SET @sql = IF(
+    @has_new_value = 0,
+    'ALTER TABLE audit_logs ADD COLUMN new_value JSON NULL',
+    'SELECT ''new_value column already exists'''
+);
+
+PREPARE audit_stmt FROM @sql;
+EXECUTE audit_stmt;
+DEALLOCATE PREPARE audit_stmt;
+
+
+SET @has_performed_by = (
+    SELECT COUNT(*)
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'audit_logs'
+      AND column_name = 'performed_by'
+);
+
+SET @sql = IF(
+    @has_performed_by = 0,
+    'ALTER TABLE audit_logs ADD COLUMN performed_by VARCHAR(100) NULL',
+    'SELECT ''performed_by column already exists'''
+);
+
+PREPARE audit_stmt FROM @sql;
+EXECUTE audit_stmt;
+DEALLOCATE PREPARE audit_stmt;
+
+
+-- ============================================================
+-- BACKFILL PERFORMED_BY FOR LEGACY AUDIT RECORDS
+-- ============================================================
+-- Existing customer_id values are not modified.
+-- Records without an actor are labeled Legacy/API.
+-- ============================================================
+
+UPDATE audit_logs
+SET performed_by = COALESCE(NULLIF(customer_id, ''), 'Legacy/API')
+WHERE performed_by IS NULL
+   OR performed_by = '';
 
 
 -- ============================================================
@@ -458,6 +554,37 @@ SELECT
 FROM orders;
 
 
+-- ============================================================
+-- VERIFY AUDIT LOG TABLE COLUMNS
+-- ============================================================
+
+SHOW COLUMNS FROM audit_logs;
+
+
+-- ============================================================
+-- VERIFY RECENT AUDIT LOG RECORDS
+-- ============================================================
+
+SELECT
+    audit_id,
+    customer_id,
+    action,
+    entity_type,
+    entity_id,
+    details,
+    old_value,
+    new_value,
+    performed_by,
+    created_at
+FROM audit_logs
+ORDER BY audit_id DESC
+LIMIT 20;
+
+
+-- ============================================================
+-- VERIFY DATABASE TABLES
+-- ============================================================
+
 SELECT
     TABLE_NAME,
     TABLE_ROWS
@@ -467,6 +594,9 @@ WHERE table_schema = 'cloudmart';
 
 -- ============================================================
 -- TEST TOKENS
+-- ============================================================
+-- Development/test credentials only.
+-- Do not use these credentials in production.
 -- ============================================================
 
 -- Admin token:

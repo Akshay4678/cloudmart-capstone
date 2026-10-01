@@ -1,8 +1,6 @@
 import json
 import os
 import math
-import hashlib
-import hmac
 from decimal import Decimal
 
 import boto3
@@ -224,127 +222,29 @@ def write_audit_log(
     action,
     old_value=None,
     new_value=None,
-    performed_by="api"
+    performed_by="CUST_ADMIN",
 ):
-
-    """
-    Write an entry into audit_logs.
-
-    The current CloudMart audit_logs table contains:
-
-        audit_id
-        customer_id
-        action
-        entity_type
-        entity_id
-        details
-        created_at
-
-    Therefore old_value, new_value and performed_by are
-    stored inside the details JSON column.
-
-    This function does not commit the transaction.
-    The caller controls commit/rollback so that the
-    product operation and audit record remain atomic.
-    """
-
-    print(
-        "Writing audit log:",
-        action,
-        entity_type,
-        entity_id
+    """Persist a before/after snapshot without losing existing audit columns."""
+    old_json = json.dumps(old_value, default=str) if old_value is not None else None
+    new_json = json.dumps(new_value, default=str) if new_value is not None else None
+    actor = (performed_by or "CUST_ADMIN")[:100]
+    # customer_id has an FK to customers; only store it if it is a real customer ID.
+    customer_id = actor if actor.startswith("CUST") else None
+    summary = json.dumps(
+        {"performed_by": actor, "old_value": old_value, "new_value": new_value},
+        default=str,
     )
-
-    # ---------------------------------------------------------
-    # DETERMINE CUSTOMER ID
-    # ---------------------------------------------------------
-
-    customer_id = None
-
-    if performed_by:
-
-        candidate_customer_id = str(
-            performed_by
-        ).strip()
-
-        if candidate_customer_id:
-
-            with connection.cursor() as cursor:
-
-                cursor.execute(
-                    """
-                    SELECT customer_id
-                    FROM customers
-                    WHERE customer_id = %s
-                    LIMIT 1
-                    """,
-                    (
-                        candidate_customer_id,
-                    )
-                )
-
-                customer = cursor.fetchone()
-
-                if customer:
-                    customer_id = candidate_customer_id
-
-    # ---------------------------------------------------------
-    # BUILD AUDIT DETAILS
-    # ---------------------------------------------------------
-
-    details = json.dumps(
-        {
-            "performed_by": performed_by,
-            "old_value": old_value,
-            "new_value": new_value
-        },
-        default=str
-    )
-
-    # ---------------------------------------------------------
-    # INSERT AUDIT LOG
-    # ---------------------------------------------------------
-
     with connection.cursor() as cursor:
-
         cursor.execute(
             """
             INSERT INTO audit_logs
-            (
-                customer_id,
-                action,
-                entity_type,
-                entity_id,
-                details,
-                created_at
-            )
-            VALUES
-            (
-                %s,
-                %s,
-                %s,
-                %s,
-                %s,
-                NOW()
-            )
+                (customer_id, action, entity_type, entity_id, details,
+                 old_value, new_value, performed_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (
-                customer_id,
-                action,
-                entity_type,
-                str(entity_id),
-                details
-            )
+            (customer_id, action, entity_type, str(entity_id), summary,
+             old_json, new_json, actor),
         )
-
-    print(
-        "Audit log written:",
-        action,
-        entity_type,
-        entity_id,
-        "by",
-        performed_by
-    )
 
 
 # =========================================================
@@ -723,8 +623,7 @@ def create_product(
             "message": (
                 "Product created successfully"
             ),
-            "product_id": new_product_id,
-            "status": status
+            "product_id": new_product_id
         }
     )
 
@@ -779,6 +678,10 @@ def get_product(
             }
         )
 
+    # Do not expose internal inventory status in the public API response.
+    if product:
+        product.pop("status", None)
+
     return response(
         200,
         {
@@ -826,6 +729,10 @@ def get_products(
         print(
             "AFTER SELECT ACTIVE PRODUCTS"
         )
+
+    # Do not expose internal inventory status in the public API response.
+    for product in products:
+        product.pop("status", None)
 
     return response(
         200,
@@ -1159,8 +1066,7 @@ def update_product(
                 "Product updated successfully"
             ),
             "product_id": int(product_id),
-            "stock_count": stock_count,
-            "status": new_status
+            "stock_count": stock_count
         }
     )
 
@@ -1316,208 +1222,6 @@ def delete_product(
     )
 
 
-
-# =========================================================
-# OPTIONAL CUSTOMER AUTHENTICATION FOR GET PRODUCTS
-# =========================================================
-def validate_optional_customer_access(
-    event,
-    connection
-):
-    """
-    Allow public product reads while supporting optional
-    customer authentication.
-
-    No customer_id + no token:
-        Public access.
-
-    customer_id + token:
-        Both values are validated together.
-
-    Only one of the two values:
-        Request is rejected.
-
-    The customer token is compared against the SHA-256
-    auth_token_hash stored in the customers table.
-    """
-
-    query_parameters = (
-        event.get("queryStringParameters")
-        or {}
-    )
-
-    customer_id = (
-        query_parameters.get("customer_id")
-        or ""
-    ).strip()
-
-    headers = (
-        event.get("headers")
-        or {}
-    )
-
-    authorization = ""
-
-    for header_name, header_value in headers.items():
-
-        if str(header_name).lower() == "authorization":
-
-            authorization = (
-                str(header_value or "").strip()
-            )
-
-            break
-
-    # ---------------------------------------------------------
-    # PUBLIC REQUEST
-    # ---------------------------------------------------------
-
-    if not customer_id and not authorization:
-
-        print(
-            "PRODUCT GET: PUBLIC ACCESS"
-        )
-
-        return None
-
-    # ---------------------------------------------------------
-    # CUSTOMER ID IS REQUIRED WITH TOKEN
-    # ---------------------------------------------------------
-
-    if not customer_id:
-
-        print(
-            "PRODUCT GET: CUSTOMER ID MISSING"
-        )
-
-        return response(
-            400,
-            {
-                "message": (
-                    "customer_id is required when "
-                    "an Authorization token is provided"
-                )
-            }
-        )
-
-    # ---------------------------------------------------------
-    # TOKEN IS REQUIRED WITH CUSTOMER ID
-    # ---------------------------------------------------------
-
-    if not authorization:
-
-        print(
-            "PRODUCT GET: AUTHORIZATION TOKEN MISSING"
-        )
-
-        return response(
-            400,
-            {
-                "message": (
-                    "Authorization token is required "
-                    "when customer_id is provided"
-                )
-            }
-        )
-
-    # ---------------------------------------------------------
-    # NORMALIZE BEARER TOKEN
-    # ---------------------------------------------------------
-
-    token = authorization
-
-    if token.lower().startswith("bearer "):
-
-        token = token[7:].strip()
-
-    if not token:
-
-        return response(
-            401,
-            {
-                "message": "Authorization token is invalid"
-            }
-        )
-
-    # ---------------------------------------------------------
-    # FIND CUSTOMER
-    # ---------------------------------------------------------
-
-    with connection.cursor() as cursor:
-
-        cursor.execute(
-            """
-            SELECT
-                customer_id,
-                auth_token_hash,
-                role
-            FROM customers
-            WHERE customer_id = %s
-            LIMIT 1
-            """,
-            (
-                customer_id,
-            )
-        )
-
-        customer = cursor.fetchone()
-
-    if not customer:
-
-        print(
-            "PRODUCT GET: INVALID CUSTOMER ID:",
-            customer_id
-        )
-
-        return response(
-            401,
-            {
-                "message": "Invalid customer_id or token"
-            }
-        )
-
-    # ---------------------------------------------------------
-    # HASH SUPPLIED TOKEN
-    # ---------------------------------------------------------
-
-    supplied_hash = hashlib.sha256(
-        token.encode("utf-8")
-    ).hexdigest()
-
-    stored_hash = str(
-        customer.get("auth_token_hash")
-        or ""
-    )
-
-    # ---------------------------------------------------------
-    # VALIDATE TOKEN AGAINST CUSTOMER ID
-    # ---------------------------------------------------------
-
-    if not stored_hash or not hmac.compare_digest(
-        supplied_hash,
-        stored_hash
-    ):
-
-        print(
-            "PRODUCT GET: INVALID TOKEN FOR CUSTOMER:",
-            customer_id
-        )
-
-        return response(
-            401,
-            {
-                "message": "Invalid customer_id or token"
-            }
-        )
-
-    print(
-        "PRODUCT GET: AUTHENTICATED ACCESS:",
-        customer_id,
-        customer.get("role")
-    )
-
-    return None
-
 # =========================================================
 # LAMBDA HANDLER
 # =========================================================
@@ -1609,23 +1313,6 @@ def lambda_handler(
         # =====================================================
 
         connection = get_connection()
-
-        # =====================================================
-        # OPTIONAL CUSTOMER AUTHENTICATION FOR GET REQUESTS
-        # =====================================================
-
-        if http_method == "GET":
-
-            authentication_error = (
-                validate_optional_customer_access(
-                    event,
-                    connection
-                )
-            )
-
-            if authentication_error:
-
-                return authentication_error
 
         # =====================================================
         # GET /products/{id}

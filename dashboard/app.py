@@ -1,9 +1,9 @@
 import csv
 import io
+import json
 import os
 from datetime import datetime, timedelta
 import hashlib
-import json
 import secrets
 from zoneinfo import ZoneInfo
 
@@ -1167,118 +1167,43 @@ def order_items():
 # AUDIT LOGS
 # ============================================================
 
-def format_audit_value(value, indent=0):
-    """Format audit values as readable plain text instead of JSON."""
-
-    prefix = " " * indent
-
-    if value is None:
-        return "None"
-
-    if isinstance(value, dict):
-        lines = []
-
-        for key, item in value.items():
-            if isinstance(item, (dict, list)):
-                lines.append(f"{prefix}{key}:")
-                lines.append(format_audit_value(item, indent + 2))
-            else:
-                lines.append(f"{prefix}{key}: {item}")
-
-        return "\n".join(lines)
-
-    if isinstance(value, list):
-        lines = []
-
-        for item in value:
-            if isinstance(item, (dict, list)):
-                lines.append(format_audit_value(item, indent + 2))
-            else:
-                lines.append(f"{prefix}- {item}")
-
-        return "\n".join(lines)
-
-    return str(value)
-
-
-def format_audit_details(details):
-    """Convert the stored audit details JSON into readable text."""
-
-    if not details:
-        return "No additional details"
-
-    try:
-        data = json.loads(details) if isinstance(details, str) else details
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return str(details)
-
-    if not isinstance(data, dict):
-        return format_audit_value(data)
-
-    lines = []
-
-    if "performed_by" in data:
-        lines.append(f"1. Performed By: {data.get('performed_by') or '—'}")
-
-    if "old_value" in data:
-        old_value = data.get("old_value")
-        if isinstance(old_value, (dict, list)):
-            lines.append("2. Old Value:")
-            lines.append(format_audit_value(old_value, 4))
-        else:
-            lines.append(f"2. Old Value: {format_audit_value(old_value)}")
-
-    if "new_value" in data:
-        new_value = data.get("new_value")
-        if isinstance(new_value, (dict, list)):
-            lines.append("3. New Value:")
-            lines.append(format_audit_value(new_value, 4))
-        else:
-            lines.append(f"3. New Value: {format_audit_value(new_value)}")
-
-    for key, value in data.items():
-        if key not in {"performed_by", "old_value", "new_value"}:
-            if isinstance(value, (dict, list)):
-                lines.append(f"{key}:")
-                lines.append(format_audit_value(value, 2))
-            else:
-                lines.append(f"{key}: {format_audit_value(value)}")
-
-    return "\n".join(lines) if lines else "No additional details"
-
-
 @app.route("/audit-logs")
 def audit_logs():
     rows = query_db(
         """
-        SELECT
-            audit_id,
-            customer_id,
-            action,
-            entity_type,
-            entity_id,
-            details,
-            created_at
+        SELECT audit_id, customer_id, action, entity_type, entity_id,
+               details, old_value, new_value, performed_by, created_at
         FROM audit_logs
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, audit_id DESC
         LIMIT 200
         """
     )
-
-    for log in rows:
-        log["display_details"] = format_audit_details(
-            log.get("details")
-        )
+    for row in rows:
+        for field in ("old_value", "new_value"):
+            raw = row.get(field)
+            if isinstance(raw, str) and raw:
+                try:
+                    row[field] = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    row[field] = {"details": raw}
+        # Support legacy rows created before the migration.
+        if not row.get("performed_by"):
+            row["performed_by"] = row.get("customer_id") or "Legacy/API"
+        if not row.get("old_value") and not row.get("new_value") and row.get("details"):
+            try:
+                legacy = json.loads(row["details"])
+                row["old_value"] = legacy.get("old_value")
+                row["new_value"] = legacy.get("new_value")
+                row["performed_by"] = legacy.get("performed_by", row["performed_by"])
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                pass
 
     return render_template_string(
         PAGE_HTML,
         page_title="Audit Logs",
         page_subtitle="Recent application activity recorded in audit_logs",
         active="audit",
-        content=render_template_string(
-            AUDIT_BODY,
-            logs=rows,
-        ),
+        content=render_template_string(AUDIT_BODY, logs=rows),
         generated_at=datetime.now().strftime("%d %b %Y, %I:%M %p"),
     )
 
@@ -1707,21 +1632,10 @@ tbody tr:hover {
 
 .description {
     max-width: 270px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--muted);
-}
-
-.audit-details-box {
-    min-width: 360px;
-    max-width: 650px;
-    padding: 12px 14px;
-    border: 1px solid #dbe3ef;
-    border-radius: 10px;
-    background: #f8fafc;
-    color: #344054;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    line-height: 1.6;
-    font-size: 13px;
 }
 
 .money {
@@ -2092,6 +2006,39 @@ footer {
     <footer>
         CloudMart · Generated {{ generated_at }}
     </footer>
+</main>
+
+{% if page_title in ["Dashboard", "Products", "Orders", "Order Items", "Audit Logs", "Customers"] %}
+<script>
+(function () {
+    const refreshIntervalMs = 5000;
+    let refreshInProgress = false;
+    async function refreshPageData() {
+        if (document.hidden || refreshInProgress) return;
+        refreshInProgress = true;
+        try {
+            const response = await fetch(window.location.href, {
+                method: "GET", cache: "no-store",
+                headers: { "X-Requested-With": "XMLHttpRequest" }
+            });
+            if (!response.ok) return;
+            const html = await response.text();
+            const parsed = new DOMParser().parseFromString(html, "text/html");
+            const next = parsed.querySelector("#page-content");
+            const current = document.querySelector("#page-content");
+            if (next && current) {
+                current.innerHTML = next.innerHTML;
+                const footer = current.querySelector("footer");
+                if (footer) footer.textContent = parsed.querySelector("footer")?.textContent || footer.textContent;
+            }
+        } catch (error) {
+            console.error("CloudMart live refresh failed:", error);
+        } finally { refreshInProgress = false; }
+    }
+    window.setInterval(refreshPageData, refreshIntervalMs);
+})();
+</script>
+{% endif %}
 </main>
 
 </div>
@@ -2824,47 +2771,37 @@ AUDIT_BODY = r"""
     <div class="panel-head">
         <div>
             <h3>Audit Logs</h3>
-            <span>Latest 200 records from audit_logs</span>
+            <span>Latest 200 records · old and new values shown separately</span>
         </div>
     </div>
-
     {% if logs %}
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
-                    <th>Audit ID</th>
-                    <th>Customer ID</th>
-                    <th>Action</th>
-                    <th>Entity Type</th>
-                    <th>Entity ID</th>
-                    <th>Details</th>
-                    <th>Created</th>
+                    <th>Audit ID</th><th>Customer ID</th><th>Action</th>
+                    <th>Entity</th><th>Entity ID</th><th>Old Details</th>
+                    <th>New Details</th><th>Performed By</th><th>Created</th>
                 </tr>
             </thead>
-
             <tbody>
             {% for log in logs %}
                 <tr>
                     <td>{{ log.audit_id }}</td>
                     <td>{{ log.customer_id or "—" }}</td>
-                    <td>
-                        <span class="badge badge-blue">{{ log.action }}</span>
-                    </td>
+                    <td><span class="badge badge-blue">{{ log.action }}</span></td>
                     <td>{{ log.entity_type or "—" }}</td>
                     <td>{{ log.entity_id or "—" }}</td>
-                    <td>
-                        <div class="audit-details-box">{{ log.display_details }}</div>
-                    </td>
+                    <td class="description" style="white-space:pre-wrap;min-width:220px;">{% if log.old_value %}{% for key, value in log.old_value.items() %}{{ key }}: {{ value }}{% if not loop.last %}&#10;{% endif %}{% endfor %}{% else %}—{% endif %}</td>
+                    <td class="description" style="white-space:pre-wrap;min-width:220px;">{% if log.new_value %}{% for key, value in log.new_value.items() %}{{ key }}: {{ value }}{% if not loop.last %}&#10;{% endif %}{% endfor %}{% else %}—{% endif %}</td>
+                    <td>{{ log.performed_by or "—" }}</td>
                     <td>{{ log.created_at }}</td>
                 </tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
-    {% else %}
-        <div class="empty">No audit logs found.</div>
-    {% endif %}
+    {% else %}<div class="empty">No audit logs found.</div>{% endif %}
 </section>
 """
 

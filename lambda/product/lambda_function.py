@@ -1,6 +1,8 @@
 import json
 import os
 import math
+import hashlib
+import hmac
 from decimal import Decimal
 
 import boto3
@@ -1314,6 +1316,208 @@ def delete_product(
     )
 
 
+
+# =========================================================
+# OPTIONAL CUSTOMER AUTHENTICATION FOR GET PRODUCTS
+# =========================================================
+def validate_optional_customer_access(
+    event,
+    connection
+):
+    """
+    Allow public product reads while supporting optional
+    customer authentication.
+
+    No customer_id + no token:
+        Public access.
+
+    customer_id + token:
+        Both values are validated together.
+
+    Only one of the two values:
+        Request is rejected.
+
+    The customer token is compared against the SHA-256
+    auth_token_hash stored in the customers table.
+    """
+
+    query_parameters = (
+        event.get("queryStringParameters")
+        or {}
+    )
+
+    customer_id = (
+        query_parameters.get("customer_id")
+        or ""
+    ).strip()
+
+    headers = (
+        event.get("headers")
+        or {}
+    )
+
+    authorization = ""
+
+    for header_name, header_value in headers.items():
+
+        if str(header_name).lower() == "authorization":
+
+            authorization = (
+                str(header_value or "").strip()
+            )
+
+            break
+
+    # ---------------------------------------------------------
+    # PUBLIC REQUEST
+    # ---------------------------------------------------------
+
+    if not customer_id and not authorization:
+
+        print(
+            "PRODUCT GET: PUBLIC ACCESS"
+        )
+
+        return None
+
+    # ---------------------------------------------------------
+    # CUSTOMER ID IS REQUIRED WITH TOKEN
+    # ---------------------------------------------------------
+
+    if not customer_id:
+
+        print(
+            "PRODUCT GET: CUSTOMER ID MISSING"
+        )
+
+        return response(
+            400,
+            {
+                "message": (
+                    "customer_id is required when "
+                    "an Authorization token is provided"
+                )
+            }
+        )
+
+    # ---------------------------------------------------------
+    # TOKEN IS REQUIRED WITH CUSTOMER ID
+    # ---------------------------------------------------------
+
+    if not authorization:
+
+        print(
+            "PRODUCT GET: AUTHORIZATION TOKEN MISSING"
+        )
+
+        return response(
+            400,
+            {
+                "message": (
+                    "Authorization token is required "
+                    "when customer_id is provided"
+                )
+            }
+        )
+
+    # ---------------------------------------------------------
+    # NORMALIZE BEARER TOKEN
+    # ---------------------------------------------------------
+
+    token = authorization
+
+    if token.lower().startswith("bearer "):
+
+        token = token[7:].strip()
+
+    if not token:
+
+        return response(
+            401,
+            {
+                "message": "Authorization token is invalid"
+            }
+        )
+
+    # ---------------------------------------------------------
+    # FIND CUSTOMER
+    # ---------------------------------------------------------
+
+    with connection.cursor() as cursor:
+
+        cursor.execute(
+            """
+            SELECT
+                customer_id,
+                auth_token_hash,
+                role
+            FROM customers
+            WHERE customer_id = %s
+            LIMIT 1
+            """,
+            (
+                customer_id,
+            )
+        )
+
+        customer = cursor.fetchone()
+
+    if not customer:
+
+        print(
+            "PRODUCT GET: INVALID CUSTOMER ID:",
+            customer_id
+        )
+
+        return response(
+            401,
+            {
+                "message": "Invalid customer_id or token"
+            }
+        )
+
+    # ---------------------------------------------------------
+    # HASH SUPPLIED TOKEN
+    # ---------------------------------------------------------
+
+    supplied_hash = hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
+
+    stored_hash = str(
+        customer.get("auth_token_hash")
+        or ""
+    )
+
+    # ---------------------------------------------------------
+    # VALIDATE TOKEN AGAINST CUSTOMER ID
+    # ---------------------------------------------------------
+
+    if not stored_hash or not hmac.compare_digest(
+        supplied_hash,
+        stored_hash
+    ):
+
+        print(
+            "PRODUCT GET: INVALID TOKEN FOR CUSTOMER:",
+            customer_id
+        )
+
+        return response(
+            401,
+            {
+                "message": "Invalid customer_id or token"
+            }
+        )
+
+    print(
+        "PRODUCT GET: AUTHENTICATED ACCESS:",
+        customer_id,
+        customer.get("role")
+    )
+
+    return None
+
 # =========================================================
 # LAMBDA HANDLER
 # =========================================================
@@ -1405,6 +1609,23 @@ def lambda_handler(
         # =====================================================
 
         connection = get_connection()
+
+        # =====================================================
+        # OPTIONAL CUSTOMER AUTHENTICATION FOR GET REQUESTS
+        # =====================================================
+
+        if http_method == "GET":
+
+            authentication_error = (
+                validate_optional_customer_access(
+                    event,
+                    connection
+                )
+            )
+
+            if authentication_error:
+
+                return authentication_error
 
         # =====================================================
         # GET /products/{id}

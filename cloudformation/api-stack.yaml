@@ -1016,10 +1016,7 @@ Resources:
 
       HttpMethod: GET
 
-      AuthorizationType: CUSTOM
-
-      AuthorizerId:
-        !Ref CloudMartAuthorizer
+      AuthorizationType: NONE
 
       Integration:
 

@@ -602,7 +602,7 @@ Resources:
   # EC2 DASHBOARD INSTANCE
   # ================================================================
 
-  CloudMartEC2V3:
+  CloudMartEC2V4:
     Type: AWS::EC2::Instance
 
     DependsOn:
@@ -633,29 +633,31 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          set -u
+          set -euo pipefail
 
           exec > >(tee -a /var/log/cloudmart-dashboard-userdata.log | logger -t cloudmart-userdata -s 2>/dev/console) 2>&1
 
-          AWS_REGION_VALUE="${AWS::Region}"
-          LAMBDA_BUCKET_PARAMETER="/cloudmart/${EnvironmentName}/lambda-artifact-bucket"
-          DASHBOARD_KEY="dashboard/cloudmart-dashboard.zip"
-          DB_HOST_CONFIG_KEY="dashboard/db-host.txt"
-          DASHBOARD_DIR="/opt/cloudmart-dashboard"
-          ZIP_FILE="/tmp/cloudmart-dashboard.zip"
-          STATE_FILE="/var/lib/cloudmart-dashboard-state"
-          TMP_STATE_FILE="/tmp/cloudmart-dashboard-state.new"
-
           echo "=================================================="
-          echo "Starting CloudMart Dashboard Bootstrap"
+          echo "CloudMart EC2 Bootstrap"
           echo "=================================================="
 
-          # ============================================================
-          # LOW-MEMORY EC2 PROTECTION
-          # ============================================================
-          # t3.micro has limited RAM. Create 1 GB swap automatically.
-          # This is infrastructure bootstrap, not a manual installation.
+          # This bootstrap intentionally installs only infrastructure-level
+          # packages. The application itself is deployed later by GitHub
+          # Actions through AWS Systems Manager after the S3 artifacts,
+          # database, and SSM parameters exist.
 
+          dnf install -y --allowerasing \
+            python3 \
+            python3-pip \
+            unzip \
+            curl \
+            openssl \
+            nginx \
+            amazon-ssm-agent
+
+          systemctl enable --now amazon-ssm-agent
+
+          # t3.micro has limited memory. Create a small swap file once.
           if ! swapon --show | grep -q "/swapfile"; then
             if [ ! -f /swapfile ]; then
               dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
@@ -669,56 +671,22 @@ Resources:
             echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
           fi
 
-          echo "Memory after swap setup:"
-          free -h
-
-          # Use disk-backed temporary storage instead of the small /tmp tmpfs.
           mkdir -p /var/tmp/cloudmart-pip
           chmod 1777 /var/tmp/cloudmart-pip
-          export TMPDIR=/var/tmp/cloudmart-pip
 
-          # ============================================================
-          # SYSTEM PACKAGES
-          # ============================================================
-
-          echo "Installing required system packages..."
-
-          dnf install -y --allowerasing \
-            python3 \
-            python3-pip \
-            unzip \
-            openssl \
-            nginx \
-            amazon-ssm-agent
-
-          systemctl enable --now amazon-ssm-agent || true
-
-          command -v aws
-          command -v python3
-          command -v nginx
-
-          mkdir -p "$DASHBOARD_DIR"
-          mkdir -p "$(dirname "$STATE_FILE")"
-
-          # ============================================================
-          # NGINX CONFIGURATION
-          # NGINX IS STARTED ONLY AFTER GUNICORN IS HEALTHY.
-          # ============================================================
-
+          # NGINX is configured here but the application is started by the
+          # GitHub Actions SSM deployment after the dashboard is installed.
           rm -f /etc/nginx/conf.d/default.conf
 
           cat > /etc/nginx/conf.d/cloudmart.conf <<'NGINXEOF'
           server {
               listen 80;
               listen [::]:80;
-
               server_name _;
-
               client_max_body_size 10M;
 
               location / {
                   proxy_pass http://127.0.0.1:5000;
-
                   proxy_set_header Host $host;
                   proxy_set_header X-Real-IP $remote_addr;
                   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -727,8 +695,6 @@ Resources:
           }
           NGINXEOF
 
-          # Replace the Amazon Linux default server configuration so there is
-          # only one server listening on port 80.
           cat > /etc/nginx/nginx.conf <<'NGINXCONFEOF'
           user nginx;
           worker_processes auto;
@@ -753,355 +719,11 @@ Resources:
           NGINXCONFEOF
 
           nginx -t
-
-          echo "NGINX configuration validated successfully."
-
-          # ============================================================
-          # READ LAMBDA ARTIFACT BUCKET FROM SSM
-          # ============================================================
-
-          echo "Reading Lambda artifact bucket from SSM..."
-
-          LAMBDA_BUCKET_VALUE=$(aws ssm get-parameter \
-            --region "$AWS_REGION_VALUE" \
-            --name "$LAMBDA_BUCKET_PARAMETER" \
-            --query "Parameter.Value" \
-            --output text 2>/dev/null || true)
-
-          if [ -z "$LAMBDA_BUCKET_VALUE" ] || [ "$LAMBDA_BUCKET_VALUE" = "None" ]; then
-            echo "Lambda artifact bucket parameter is not available yet."
-          else
-            echo "Lambda artifact bucket: $LAMBDA_BUCKET_VALUE"
-          fi
-
-          # ============================================================
-          # WAIT FOR DASHBOARD ARTIFACTS
-          # GitHub Actions uploads these after the infrastructure exists.
-          # No separate dashboard .sh file is created.
-          # ============================================================
-
-          ARTIFACT_ETAG=""
-          DB_CONFIG_ETAG=""
-
-          for attempt in $(seq 1 120); do
-
-            if [ -z "$LAMBDA_BUCKET_VALUE" ] || [ "$LAMBDA_BUCKET_VALUE" = "None" ]; then
-              LAMBDA_BUCKET_VALUE=$(aws ssm get-parameter \
-                --region "$AWS_REGION_VALUE" \
-                --name "$LAMBDA_BUCKET_PARAMETER" \
-                --query "Parameter.Value" \
-                --output text 2>/dev/null || true)
-            fi
-
-            if [ -n "$LAMBDA_BUCKET_VALUE" ] && [ "$LAMBDA_BUCKET_VALUE" != "None" ]; then
-
-              ARTIFACT_ETAG=$(aws s3api head-object \
-                --region "$AWS_REGION_VALUE" \
-                --bucket "$LAMBDA_BUCKET_VALUE" \
-                --key "$DASHBOARD_KEY" \
-                --query "ETag" \
-                --output text 2>/dev/null || true)
-
-              DB_CONFIG_ETAG=$(aws s3api head-object \
-                --region "$AWS_REGION_VALUE" \
-                --bucket "$LAMBDA_BUCKET_VALUE" \
-                --key "$DB_HOST_CONFIG_KEY" \
-                --query "ETag" \
-                --output text 2>/dev/null || true)
-
-              if [ -n "$ARTIFACT_ETAG" ] && [ "$ARTIFACT_ETAG" != "None" ] \
-                 && [ -n "$DB_CONFIG_ETAG" ] && [ "$DB_CONFIG_ETAG" != "None" ]; then
-                echo "Dashboard artifacts are available."
-                break
-              fi
-            fi
-
-            echo "Waiting for dashboard artifacts... attempt $attempt/120"
-            sleep 5
-
-            if [ "$attempt" -eq 120 ]; then
-              echo "ERROR: Dashboard artifacts were not available."
-              exit 1
-            fi
-          done
-
-          # ============================================================
-          # SKIP ONLY IF THE CURRENT DEPLOYMENT IS ALREADY HEALTHY
-          # ============================================================
-
-          if [ -f "$STATE_FILE" ] \
-             && grep -q "^ARTIFACT_ETAG=$ARTIFACT_ETAG$" "$STATE_FILE" 2>/dev/null \
-             && grep -q "^DB_CONFIG_ETAG=$DB_CONFIG_ETAG$" "$STATE_FILE" 2>/dev/null \
-             && systemctl is-active --quiet cloudmart-dashboard; then
-
-            echo "Dashboard is already deployed and healthy."
-
-            if systemctl is-active --quiet nginx; then
-              echo "NGINX is already active."
-              exit 0
-            fi
-
-            echo "NGINX is not active. Starting NGINX..."
-            nginx -t
-            systemctl enable nginx
-            systemctl restart nginx
-
-            if systemctl is-active --quiet nginx; then
-              echo "NGINX is ACTIVE."
-              exit 0
-            fi
-
-            echo "ERROR: NGINX failed to start."
-            systemctl status nginx --no-pager || true
-            journalctl -u nginx --no-pager -n 100 || true
-            exit 1
-          fi
-
-          # ============================================================
-          # READ DATABASE HOST
-          # ============================================================
-
-          echo "Reading dashboard database host..."
-
-          DB_HOST_VALUE=$(aws s3 cp \
-            "s3://$LAMBDA_BUCKET_VALUE/$DB_HOST_CONFIG_KEY" \
-            - \
-            --region "$AWS_REGION_VALUE")
-
-          DB_HOST_VALUE=$(printf '%s' "$DB_HOST_VALUE" | tr -d '\r\n')
-
-          if [ -z "$DB_HOST_VALUE" ]; then
-            echo "ERROR: Database host configuration is empty."
-            exit 1
-          fi
-
-          # ============================================================
-          # READ REPORTS BUCKET
-          # ============================================================
-
-          REPORTS_BUCKET_VALUE=$(aws ssm get-parameter \
-            --region "$AWS_REGION_VALUE" \
-            --name "/cloudmart/${EnvironmentName}/reports-bucket" \
-            --query "Parameter.Value" \
-            --output text 2>/dev/null || true)
-
-          if [ -z "$REPORTS_BUCKET_VALUE" ] || [ "$REPORTS_BUCKET_VALUE" = "None" ]; then
-            echo "ERROR: Reports bucket parameter is unavailable."
-            exit 1
-          fi
-
-          # ============================================================
-          # DOWNLOAD DASHBOARD PACKAGE
-          # ============================================================
-
-          echo "Downloading dashboard package..."
-
-          rm -f "$ZIP_FILE"
-
-          aws s3 cp \
-            "s3://$LAMBDA_BUCKET_VALUE/$DASHBOARD_KEY" \
-            "$ZIP_FILE" \
-            --region "$AWS_REGION_VALUE"
-
-          test -s "$ZIP_FILE"
-
-          echo "Dashboard package downloaded successfully."
-
-          # ============================================================
-          # EXTRACT DASHBOARD
-          # ============================================================
-
-          rm -rf "$DASHBOARD_DIR"
-          mkdir -p "$DASHBOARD_DIR"
-
-          unzip -o "$ZIP_FILE" -d "$DASHBOARD_DIR"
-          rm -f "$ZIP_FILE"
-
-          test -s "$DASHBOARD_DIR/app.py"
-          test -s "$DASHBOARD_DIR/requirements.txt"
-
-          echo "Dashboard files extracted successfully."
-
-          # ============================================================
-          # CREATE VIRTUAL ENVIRONMENT
-          # ============================================================
-
-          echo "Creating Python virtual environment..."
-
-          python3 -m venv "$DASHBOARD_DIR/venv"
-
-          test -x "$DASHBOARD_DIR/venv/bin/python"
-
-          "$DASHBOARD_DIR/venv/bin/pip" install \
-            --no-cache-dir \
-            --disable-pip-version-check \
-            -r "$DASHBOARD_DIR/requirements.txt"
-
-          test -x "$DASHBOARD_DIR/venv/bin/gunicorn"
-
-          echo "Gunicorn installed: $("$DASHBOARD_DIR/venv/bin/gunicorn" --version)"
-          rm -rf /var/tmp/cloudmart-pip/* /tmp/pip-* 2>/dev/null || true
-
-          # ============================================================
-          # VALIDATE PYTHON
-          # ============================================================
-
-          "$DASHBOARD_DIR/venv/bin/python" \
-            -m py_compile "$DASHBOARD_DIR/app.py"
-
-          echo "app.py syntax validation successful."
-
-          # ============================================================
-          # DASHBOARD ENVIRONMENT
-          # ============================================================
-
-          cat > /etc/cloudmart-dashboard.env <<ENVEOF
-          AWS_REGION=$AWS_REGION_VALUE
-          ENVIRONMENT=${EnvironmentName}
-          API_NAME=cloudmart-api-${EnvironmentName}
-          API_STAGE=${EnvironmentName}
-          REPORTS_BUCKET=$REPORTS_BUCKET_VALUE
-          DB_HOST=$DB_HOST_VALUE
-          DB_NAME=cloudmart
-          DB_USER=cloudmartadmin
-          DB_PORT=3306
-          DB_PASSWORD_PARAMETER=/cloudmart/${EnvironmentName}/database/password
-          REPORTS_BUCKET_PARAMETER=/cloudmart/${EnvironmentName}/reports-bucket
-          ENVEOF
-
-          chown root:root /etc/cloudmart-dashboard.env
-          chmod 600 /etc/cloudmart-dashboard.env
-
-          # ============================================================
-          # GUNICORN SERVICE
-          # FOLLOWING THE WORKING FRIEND CODE:
-          # - User=root
-          # - localhost:5000
-          # - restart automatically
-          # ============================================================
-
-          cat > /etc/systemd/system/cloudmart-dashboard.service <<'SERVICEEOF'
-          [Unit]
-          Description=CloudMart Flask Dashboard
-          After=network-online.target
-          Wants=network-online.target
-
-          [Service]
-          Type=simple
-          User=root
-          WorkingDirectory=/opt/cloudmart-dashboard
-          EnvironmentFile=/etc/cloudmart-dashboard.env
-          ExecStart=/opt/cloudmart-dashboard/venv/bin/gunicorn \
-            --workers 2 \
-            --bind 127.0.0.1:5000 \
-            --access-logfile - \
-            --error-logfile - \
-            app:app
-          Restart=always
-          RestartSec=5
-
-          [Install]
-          WantedBy=multi-user.target
-          SERVICEEOF
-
-          systemctl daemon-reload
-
-          # ============================================================
-          # START GUNICORN FIRST
-          # ============================================================
-
-          echo "Starting CloudMart Gunicorn..."
-
-          systemctl enable cloudmart-dashboard
-          systemctl restart cloudmart-dashboard
-
-          sleep 5
-
-          if ! systemctl is-active --quiet cloudmart-dashboard; then
-            echo "ERROR: Gunicorn service failed to start."
-            systemctl status cloudmart-dashboard --no-pager || true
-            journalctl -u cloudmart-dashboard --no-pager -n 100 || true
-            exit 1
-          fi
-
-          echo "Gunicorn service is ACTIVE."
-
-          # ============================================================
-          # GUNICORN HEALTH CHECK
-          # ============================================================
-
-          for attempt in $(seq 1 12); do
-
-            if python3 -c \
-              'import urllib.request; urllib.request.urlopen("http://127.0.0.1:5000/health", timeout=5)' >/dev/null 2>&1; then
-
-              echo "Gunicorn /health check passed."
-              break
-            fi
-
-            echo "Waiting for Gunicorn health... attempt $attempt/12"
-            sleep 5
-
-            if [ "$attempt" -eq 12 ]; then
-              echo "ERROR: Gunicorn started but /health is not responding."
-              systemctl status cloudmart-dashboard --no-pager || true
-              journalctl -u cloudmart-dashboard --no-pager -n 100 || true
-              exit 1
-            fi
-          done
-
-          # ============================================================
-          # START NGINX ONLY AFTER GUNICORN IS HEALTHY
-          # ============================================================
-
-          echo "Starting NGINX..."
-
-          nginx -t
           systemctl enable nginx
-          systemctl restart nginx
+          systemctl stop nginx || true
 
-          if ! systemctl is-active --quiet nginx; then
-            echo "ERROR: NGINX failed to start."
-            systemctl status nginx --no-pager || true
-            journalctl -u nginx --no-pager -n 100 || true
-            exit 1
-          fi
-
-          echo "NGINX is ACTIVE."
-
-          # Save deployment state ONLY after Gunicorn and NGINX are healthy.
-          printf 'ARTIFACT_ETAG=%s\nDB_CONFIG_ETAG=%s\nREPORTS_BUCKET=%s\n' \
-            "$ARTIFACT_ETAG" "$DB_CONFIG_ETAG" "$REPORTS_BUCKET_VALUE" > "$TMP_STATE_FILE"
-
-          mv "$TMP_STATE_FILE" "$STATE_FILE"
-
-          echo "Dashboard deployment completed successfully."
-
-          # ============================================================
-          # FINAL STATUS CHECK
-          # ============================================================
-
-          if systemctl is-active --quiet cloudmart-dashboard; then
-            echo "CloudMart Dashboard is ACTIVE."
-          else
-            echo "ERROR: CloudMart Dashboard is not active."
-            systemctl status cloudmart-dashboard --no-pager || true
-            journalctl -u cloudmart-dashboard --no-pager -n 100 || true
-            exit 1
-          fi
-
-          if systemctl is-active --quiet nginx; then
-            echo "NGINX is ACTIVE."
-          else
-            echo "ERROR: NGINX is not active."
-            systemctl status nginx --no-pager || true
-            journalctl -u nginx --no-pager -n 100 || true
-            exit 1
-          fi
-
-          echo "=================================================="
-          echo "CloudMart Dashboard Bootstrap Completed"
-          echo "=================================================="
+          mkdir -p /opt/cloudmart-dashboard
+          echo "CloudMart EC2 bootstrap completed successfully."
       Tags:
         - Key: Name
           Value: !Sub cloudmart-ec2-${EnvironmentName}
@@ -1382,17 +1004,17 @@ Outputs:
       Name: cloudmart-cloudwatch-monitoring-vpc-endpoint
 
   LegacyEC2InstanceId:
-    Value: !Ref CloudMartEC2V3
+    Value: !Ref CloudMartEC2V4
     Export:
       Name: cloudmart-ec2-instance-id
 
   LegacyEC2PublicIP:
-    Value: !GetAtt CloudMartEC2V3.PublicIp
+    Value: !GetAtt CloudMartEC2V4.PublicIp
     Export:
       Name: cloudmart-ec2-public-ip
 
   LegacyEC2PrivateIP:
-    Value: !GetAtt CloudMartEC2V3.PrivateIp
+    Value: !GetAtt CloudMartEC2V4.PrivateIp
     Export:
       Name: cloudmart-ec2-private-ip
 
@@ -1580,18 +1202,18 @@ Outputs:
 
   EC2InstanceId:
     Description: CloudMart EC2 instance ID
-    Value: !Ref CloudMartEC2V3
+    Value: !Ref CloudMartEC2V4
     Export:
       Name: !Sub cloudmart-ec2-instance-id-${EnvironmentName}
 
   EC2PublicIP:
     Description: CloudMart EC2 public IP address
-    Value: !GetAtt CloudMartEC2V3.PublicIp
+    Value: !GetAtt CloudMartEC2V4.PublicIp
     Export:
       Name: !Sub cloudmart-ec2-public-ip-${EnvironmentName}
 
   EC2PrivateIP:
     Description: CloudMart EC2 private IP address
-    Value: !GetAtt CloudMartEC2V3.PrivateIp
+    Value: !GetAtt CloudMartEC2V4.PrivateIp
     Export:
       Name: !Sub cloudmart-ec2-private-ip-${EnvironmentName}

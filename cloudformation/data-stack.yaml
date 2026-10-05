@@ -257,6 +257,27 @@ Resources:
 
 
   # ==============================================================
+  # REPORTS BUCKET SSM PARAMETER
+  # The dashboard reads the generated physical bucket name from SSM.
+  # ==============================================================
+
+  ReportsBucketParameter:
+    Type: AWS::SSM::Parameter
+
+    Properties:
+      Name: !Sub /cloudmart/${EnvironmentName}/reports-bucket
+      Type: String
+      Value: !Ref ReportsBucket
+      Description: CloudMart reports S3 bucket name
+      Tier: Standard
+
+      Tags:
+        Application: CloudMart
+        Environment: !Ref EnvironmentName
+        Purpose: ReportsBucketConfiguration
+
+
+  # ==============================================================
   # S3 LAMBDA ARTIFACTS BUCKET
   #
   # CloudFormation generates a unique physical bucket name.

@@ -448,7 +448,7 @@ jobs:
 
           do
 
-            grep -Eiq '^[[:space:]]\*PyMySQL([[:space:]]\*[<>=!\~].*)?([[:space:]]\*#.*)?$' "$file" || {
+            grep -Eiq '^[[:space:]]*PyMySQL([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' "$file" || {
 
               echo "ERROR: PyMySQL missing from $file"
 
@@ -458,7 +458,7 @@ jobs:
 
 
 
-            grep -Eiq '^[[:space:]]\*cryptography([[:space:]]\*[<>=!\~].*)?([[:space:]]\*#.*)?$' "$file" || {
+            grep -Eiq '^[[:space:]]*cryptography([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' "$file" || {
 
               echo "ERROR: cryptography missing from $file"
 
@@ -470,7 +470,7 @@ jobs:
 
 
 
-          grep -Eiq '^[[:space:]]\*cffi([[:space:]]\*[<>=!\~].*)?([[:space:]]\*#.*)?$' \
+          grep -Eiq '^[[:space:]]*cffi([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
             lambda/order/requirements.txt || {
 
               echo "ERROR: cffi missing from Order Lambda."
@@ -481,7 +481,7 @@ jobs:
 
 
 
-          grep -Eiq '^[[:space:]]\*PyMySQL([[:space:]]\*[<>=!\~].*)?([[:space:]]\*#.*)?$' \
+          grep -Eiq '^[[:space:]]*PyMySQL([[:space:]]*[<>=!~].*)?([[:space:]]*#.*)?$' \
             lambda/customer/requirements.txt || {
 
             echo "ERROR: PyMySQL missing from Customer Lambda."

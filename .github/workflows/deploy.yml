@@ -922,10 +922,8 @@ jobs:
 
           echo "Data stack deployment completed."
 
-      - name: Verify Reports Bucket SSM Parameter
-
+      - name: Store and Verify Reports Bucket SSM Parameter
         run: |
-
           set -euo pipefail
 
           REPORTS_BUCKET=$(aws cloudformation describe-stacks \
@@ -935,12 +933,16 @@ jobs:
             --output text)
 
           if [ -z "$REPORTS_BUCKET" ] || [ "$REPORTS_BUCKET" = "None" ]; then
-
             echo "ERROR: ReportsBucket output not found."
-
             exit 1
-
           fi
+
+          aws ssm put-parameter \
+            --region "$AWS_REGION" \
+            --name "/cloudmart/$ENVIRONMENT_NAME/reports-bucket" \
+            --type "String" \
+            --value "$REPORTS_BUCKET" \
+            --overwrite
 
           SSM_REPORTS_BUCKET=$(aws ssm get-parameter \
             --region "$AWS_REGION" \
@@ -949,15 +951,10 @@ jobs:
             --output text)
 
           if [ "$SSM_REPORTS_BUCKET" != "$REPORTS_BUCKET" ]; then
-
             echo "ERROR: Reports bucket SSM parameter does not match CloudFormation output."
-
             echo "CloudFormation: $REPORTS_BUCKET"
-
             echo "SSM:            $SSM_REPORTS_BUCKET"
-
             exit 1
-
           fi
 
           echo "Reports bucket SSM parameter verified: $REPORTS_BUCKET"
@@ -2009,10 +2006,6 @@ jobs:
 
           echo "Dashboard deployment completed successfully."
 
-
-
-
-
       # ==========================================================
       # 29. INITIALIZE RDS DATABASE SCHEMA
       # ==========================================================
@@ -2102,9 +2095,6 @@ jobs:
 
           print("Database schema initialized successfully.")
           PY
-
-      
-
 
       # ==========================================================
 

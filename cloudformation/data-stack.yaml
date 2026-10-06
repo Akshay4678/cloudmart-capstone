@@ -72,8 +72,6 @@ Resources:
 
       DBSubnetGroupDescription: CloudMart private RDS subnet group
 
-      DBSubnetGroupName: !Sub cloudmart-rds-subnet-group-${EnvironmentName}
-
       SubnetIds:
 
         - Fn::ImportValue: !Sub cloudmart-private-subnet-id-${EnvironmentName}
@@ -123,8 +121,6 @@ Resources:
     Type: AWS::RDS::DBInstance
 
     Properties:
-
-      DBInstanceIdentifier: !Sub cloudmart-rds-${EnvironmentName}
 
       Engine: mysql
 
@@ -225,8 +221,6 @@ Resources:
     Type: AWS::S3::Bucket
 
     Properties:
-
-      BucketName: !Sub cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
 
       BucketEncryption:
 
@@ -353,150 +347,6 @@ Resources:
   # The dashboard reads the generated physical bucket name from SSM.
 
   # ==============================================================
-
-  ReportsBucketParameter:
-
-    Type: AWS::SSM::Parameter
-
-    Properties:
-
-      Name: !Sub /cloudmart/${EnvironmentName}/reports-bucket
-
-      Type: String
-
-      Value: !Ref ReportsBucket
-
-      Description: CloudMart reports S3 bucket name
-
-      Tier: Standard
-
-      Tags:
-
-        Application: CloudMart
-
-        Environment: !Ref EnvironmentName
-
-        Purpose: ReportsBucketConfiguration
-
-  # ==============================================================
-
-  # S3 LAMBDA ARTIFACTS BUCKET
-
-  #
-
-  # CloudFormation generates a unique physical bucket name.
-
-  # ==============================================================
-
-  LambdaArtifactsBucket:
-
-    Type: AWS::S3::Bucket
-
-    Properties:
-
-      BucketName: !Sub cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
-
-      BucketEncryption:
-
-        ServerSideEncryptionConfiguration:
-
-          - ServerSideEncryptionByDefault:
-
-              SSEAlgorithm: AES256
-
-      PublicAccessBlockConfiguration:
-
-        BlockPublicAcls: true
-
-        BlockPublicPolicy: true
-
-        IgnorePublicAcls: true
-
-        RestrictPublicBuckets: true
-
-      VersioningConfiguration:
-
-        Status: Enabled
-
-      Tags:
-
-        - Key: Name
-
-          Value: !Sub cloudmart-lambda-artifacts-${EnvironmentName}
-
-        - Key: Service
-
-          Value: CloudMart
-
-        - Key: DataType
-
-          Value: LambdaArtifacts
-
-        - Key: Environment
-
-          Value: !Ref EnvironmentName
-
-  # ==============================================================
-
-  # LAMBDA ARTIFACTS BUCKET POLICY
-
-  # Allows only the CloudMart EC2 instance role to list this bucket
-
-  # and read objects from it.
-
-  # ==============================================================
-
-  LambdaArtifactsBucketPolicy:
-
-    Type: AWS::S3::BucketPolicy
-
-    Properties:
-
-      Bucket: !Ref LambdaArtifactsBucket
-
-      PolicyDocument:
-
-        Version: '2012-10-17'
-
-        Statement:
-
-          - Sid: AllowDashboardEC2ReadObjects
-
-            Effect: Allow
-
-            Principal:
-
-              AWS:
-
-                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
-
-            Action:
-
-              - s3:GetObject
-
-              - s3:GetObjectVersion
-
-            Resource:
-
-              - !Sub '${LambdaArtifactsBucket.Arn}/*'
-
-          - Sid: AllowDashboardEC2ListBucket
-
-            Effect: Allow
-
-            Principal:
-
-              AWS:
-
-                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
-
-            Action:
-
-              - s3:ListBucket
-
-            Resource:
-
-              - !GetAtt LambdaArtifactsBucket.Arn
 
 # ================================================================
 

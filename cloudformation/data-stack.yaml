@@ -518,7 +518,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-identifier
+      Name: !Sub cloudmart-database-identifier-${EnvironmentName}
 
   LegacyDatabaseResourceId:
 
@@ -526,7 +526,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-resource-id
+      Name: !Sub cloudmart-database-resource-id-${EnvironmentName}
 
   LegacyDatabaseEndpoint:
 
@@ -534,7 +534,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-endpoint
+      Name: !Sub cloudmart-database-endpoint-${EnvironmentName}
 
   LegacyDatabasePort:
 
@@ -542,7 +542,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-port
+      Name: !Sub cloudmart-database-port-${EnvironmentName}
 
   LegacyDatabaseConnectionEndpoint:
 
@@ -556,7 +556,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-connection-endpoint
+      Name: !Sub cloudmart-database-connection-endpoint-${EnvironmentName}
 
   LegacyDatabaseName:
 
@@ -564,7 +564,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-name
+      Name: !Sub cloudmart-database-name-${EnvironmentName}
 
   LegacyDatabaseUsername:
 
@@ -572,7 +572,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-username
+      Name: !Sub cloudmart-database-username-${EnvironmentName}
 
   LegacyDatabaseSubnetGroup:
 
@@ -580,7 +580,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-database-subnet-group
+      Name: !Sub cloudmart-database-subnet-group-${EnvironmentName}
 
   LegacyReportsBucket:
 
@@ -588,7 +588,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-reports-bucket
+      Name: !Sub cloudmart-reports-bucket-${EnvironmentName}
 
   LegacyReportsBucketArn:
 
@@ -596,7 +596,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-reports-bucket-arn
+      Name: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
   LegacyLambdaBucket:
 
@@ -604,7 +604,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-lambda-bucket
+      Name: !Sub cloudmart-lambda-bucket-${EnvironmentName}
 
   LegacyLambdaBucketArn:
 
@@ -612,7 +612,7 @@ Outputs:
 
     Export:
 
-      Name: cloudmart-lambda-bucket-arn
+      Name: !Sub cloudmart-lambda-bucket-arn-${EnvironmentName}
 
   # ==============================================================
 

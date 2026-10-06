@@ -350,6 +350,65 @@ Resources:
 
 # ================================================================
 
+  # ==============================================================
+  # S3 LAMBDA ARTIFACTS BUCKET
+  # ==============================================================
+
+  LambdaArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub cloudmart-lambda-artifacts-${EnvironmentName}
+        - Key: Service
+          Value: CloudMart
+        - Key: DataType
+          Value: LambdaArtifacts
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # ==============================================================
+  # LAMBDA ARTIFACTS BUCKET POLICY
+  # ==============================================================
+
+  LambdaArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LambdaArtifactsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowDashboardEC2ReadObjects
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource:
+              - !Sub '${LambdaArtifactsBucket.Arn}/*'
+          - Sid: AllowDashboardEC2ListBucket
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
+            Action:
+              - s3:ListBucket
+            Resource:
+              - !GetAtt LambdaArtifactsBucket.Arn
+
 # OUTPUTS
 
 # ================================================================

@@ -2009,10 +2009,12 @@ jobs:
 
           echo "Dashboard deployment completed successfully."
 
+
+
+
+
       # ==========================================================
-
       # 29. INITIALIZE RDS DATABASE SCHEMA
-
       # ==========================================================
 
       - name: Initialize RDS Database Schema
@@ -2040,7 +2042,7 @@ jobs:
           echo "Lambda schema initialization response:"
           cat /tmp/schema-init-response.json
 
-          python3 /tmp/validate-schema-response.py /tmp/schema-init-response.json <<'PY'
+          python3 - /tmp/schema-init-response.json <<'PY'
           import json
           import sys
 
@@ -2101,7 +2103,8 @@ jobs:
           print("Database schema initialized successfully.")
           PY
 
-          python3 /tmp/validate-schema-response.py /tmp/schema-init-response.json
+      
+
 
       # ==========================================================
 

@@ -24,7 +24,7 @@ jobs:
 
       AWS_REGION: ap-south-1
 
-      ENVIRONMENT_NAME: dev
+      ENVIRONMENT_NAME: prod
 
     steps:
 

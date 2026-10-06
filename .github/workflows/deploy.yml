@@ -2016,23 +2016,16 @@ jobs:
       # ==========================================================
 
       - name: Initialize RDS Database Schema
-
         id: initialize_schema
-
         run: |
-
           set -euo pipefail
 
           FUNCTION_NAME="cloudmart-order-${ENVIRONMENT_NAME}"
 
           cat > /tmp/schema-init.json <<'EOF'
-
           {
-
             "action": "initialize_schema"
-
           }
-
           EOF
 
           rm -f /tmp/schema-init-response.json
@@ -2044,41 +2037,71 @@ jobs:
             --cli-binary-format raw-in-base64-out \
             /tmp/schema-init-response.json
 
+          echo "Lambda schema initialization response:"
           cat /tmp/schema-init-response.json
 
-          if grep -qi '"FunctionError"' /tmp/schema-init-response.json; then
+          python3 /tmp/validate-schema-response.py /tmp/schema-init-response.json <<'PY'
+          import json
+          import sys
 
-            echo "ERROR: Lambda reported a FunctionError."
+          response_file = sys.argv[1]
 
-            exit 1
+          with open(response_file, "r", encoding="utf-8") as f:
+              raw = f.read().strip()
 
-          fi
+          if not raw:
+              print("ERROR: Lambda returned an empty response.")
+              sys.exit(1)
 
-          if grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*500' /tmp/schema-init-response.json; then
+          try:
+              response = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              print(f"ERROR: Lambda response is not valid JSON: {exc}")
+              sys.exit(1)
 
-            echo "ERROR: Database schema initialization returned HTTP 500."
+          if not isinstance(response, dict):
+              print("ERROR: Lambda response is not a JSON object.")
+              sys.exit(1)
 
-            exit 1
+          status_code = response.get("statusCode")
+          body = response.get("body", {})
 
-          fi
+          if isinstance(body, str):
+              try:
+                  body = json.loads(body)
+              except json.JSONDecodeError:
+                  body = {}
 
-          if grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*400' /tmp/schema-init-response.json; then
+          if not isinstance(body, dict):
+              body = {}
 
-            echo "ERROR: Database schema initialization returned HTTP 400."
+          statements_executed = body.get("statements_executed", 0)
+          statements_failed = body.get("statements_failed", 0)
+          message = body.get("message", "")
 
-            exit 1
+          print(f"statusCode: {status_code}")
+          print(f"statements_executed: {statements_executed}")
+          print(f"statements_failed: {statements_failed}")
+          print(f"message: {message}")
 
-          fi
+          if str(status_code) != "200":
+              print("ERROR: Database schema initialization did not return statusCode 200.")
+              sys.exit(1)
 
-          if ! grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*200' /tmp/schema-init-response.json; then
+          try:
+              failed = int(statements_failed)
+          except (TypeError, ValueError):
+              print("ERROR: statements_failed is not a valid number.")
+              sys.exit(1)
 
-            echo "ERROR: Did not receive successful schema initialization response."
+          if failed != 0:
+              print("ERROR: Database schema initialization reported failed SQL statements.")
+              sys.exit(1)
 
-            exit 1
+          print("Database schema initialized successfully.")
+          PY
 
-          fi
-
-          echo "Database schema initialized successfully."
+          python3 /tmp/validate-schema-response.py /tmp/schema-init-response.json
 
       # ==========================================================
 

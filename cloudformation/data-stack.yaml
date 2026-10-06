@@ -1,574 +1,164 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
-
-
-
-
-
-
 Description: CloudMart Data Stack
 
-
-
-
-
-
-
-
-
-
-
 # ================================================================
-
-
-
 # PARAMETERS
-
-
-
 # ================================================================
-
-
-
-
-
-
 
 Parameters:
 
-
-
-
-
-
-
   EnvironmentName:
 
-
-
     Type: String
-
-
 
     Default: dev
 
-
-
     AllowedValues:
-
-
 
       - dev
 
-
-
       - prod
-
-
 
     Description: CloudMart deployment environment
 
-
-
-
-
-
-
   DBName:
 
-
-
     Type: String
-
-
 
     Default: cloudmart
 
-
-
     Description: CloudMart RDS database name
-
-
-
-
-
-
 
   DBUsername:
 
-
-
     Type: String
-
-
 
     Default: cloudmartadmin
 
-
-
     Description: CloudMart RDS master username
-
-
-
-
-
-
 
   DBPassword:
 
-
-
     Type: String
-
-
 
     NoEcho: true
 
-
-
     MinLength: 8
-
-
 
     Description: CloudMart RDS master password
 
-
-
-
-
-
-
-
-
-
-
 # ================================================================
-
-
-
 # RESOURCES
-
-
-
 # ================================================================
-
-
-
-
-
-
 
 Resources:
 
-
-
-
-
-
-
   # ==============================================================
-
-
-
   # RDS SUBNET GROUP
-
-
-
   # ==============================================================
-
-
-
-
-
-
-
   RdsSubnetGroup:
 
-
-
     Type: AWS::RDS::DBSubnetGroup
-
-
-
-
-
-
-
     Properties:
 
-
-
-
-
-
-
       DBSubnetGroupDescription: CloudMart private RDS subnet group
-
-
-
       DBSubnetGroupName: !Sub cloudmart-rds-subnet-group-${EnvironmentName}
-
-
-
-
-
-
-
       SubnetIds:
 
-
-
-
-
-
-
         - Fn::ImportValue: !Sub cloudmart-private-subnet-id-${EnvironmentName}
-
-
-
-
-
-
-
         - Fn::ImportValue: !Sub cloudmart-private-subnet-2-id-${EnvironmentName}
-
-
-
-
-
-
 
       Tags:
 
-
-
-
-
-
-
         - Key: Name
-
-
 
           Value: !Sub cloudmart-rds-subnet-group-${EnvironmentName}
 
-
-
-
-
-
-
         - Key: Application
-
-
 
           Value: CloudMart
 
-
-
-
-
-
-
         - Key: Environment
-
-
 
           Value: !Ref EnvironmentName
 
 
-
-
-
-
-
-
-
-
-
   # ==============================================================
-
-
-
   # RDS MYSQL DATABASE
-
-
-
   #
-
-
-
   # Stores:
-
-
-
   #   Customers
-
-
-
   #   Products
-
-
-
   #   Orders
-
-
-
   #   Order Items
-
-
-
   #   Product History
-
-
-
   #
-
-
-
   # Database is private inside the VPC.
-
-
-
   # ==============================================================
-
-
-
-
-
-
 
   CloudMartDatabase:
-
-
-
     Type: AWS::RDS::DBInstance
-
-
-
-
-
-
 
     Properties:
 
-
-
-
-
-
-
       DBInstanceIdentifier: !Sub cloudmart-rds-${EnvironmentName}
-
-
 
       Engine: mysql
 
-
-
-
-
-
-
       EngineVersion: '8.4.11'
-
-
-
-
-
-
 
       AllowMajorVersionUpgrade: true
 
-
-
-
-
-
-
       DBInstanceClass: db.t3.micro
-
-
-
-
-
-
-
       AllocatedStorage: 20
 
-
-
-
-
-
-
       StorageType: gp3
-
-
-
-
-
-
-
       StorageEncrypted: true
-
-
-
-
-
-
 
       MultiAZ: false
 
-
-
-
-
-
-
       PubliclyAccessible: false
 
-
-
-
-
-
-
       DBName:
-
-
-
         !Ref DBName
-
-
-
-
-
 
 
       MasterUsername:
 
-
-
         !Ref DBUsername
-
-
-
-
-
-
 
       MasterUserPassword:
 
-
-
         !Ref DBPassword
-
-
-
-
-
-
 
       Port: 3306
 
-
-
-
-
-
-
       VPCSecurityGroups:
-
-
-
-
-
-
 
         - Fn::ImportValue: !Sub cloudmart-rds-sg-${EnvironmentName}
 
-
-
-
-
-
-
       DBSubnetGroupName:
-
-
 
         !Ref RdsSubnetGroup
 
-
-
-
-
-
-
       BackupRetentionPeriod: 0
-
-
-
-
-
-
 
       DeletionProtection: false
 
-
-
-
-
-
-
       CopyTagsToSnapshot: true
-
-
-
-
-
-
 
       AutoMinorVersionUpgrade: true
 
-
-
-
-
-
-
       Tags:
-
-
-
-
-
-
 
         - Key: Name
 
-
-
           Value: !Sub cloudmart-rds-mysql-${EnvironmentName}
-
-
-
-
-
-
 
         - Key: Application
 
-
-
           Value: CloudMart
-
-
-
-
-
-
 
         - Key: Service
 
@@ -576,490 +166,144 @@ Resources:
 
           Value: RDS
 
-
-
-
-
-
-
         - Key: Environment
-
-
 
           Value: !Ref EnvironmentName
 
 
-
-
-
-
-
-
-
-
-
   # ==============================================================
-
-
-
   # S3 REPORTS BUCKET
-
-
-
-  #
-
-
-
   # Report Lambda
-
-
-
   #       |
-
-
-
   #       v
-
-
-
   #      S3
-
-
-
   #       |
-
-
-
   #       v
-
-
-
   # EC2 Flask Dashboard
-
-
-
   #
-
-
-
   # CloudFormation generates a unique physical bucket name.
-
-
-
   # This avoids conflicts with buckets left by previous deployments.
-
-
-
   # ==============================================================
-
-
-
-
-
-
-
   ReportsBucket:
-
-
 
     Type: AWS::S3::Bucket
 
-
-
-
-
-
-
     Properties:
-
-
-
-
-
-
-
       BucketName: !Sub cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
-
-
-
       BucketEncryption:
-
-
-
-
-
-
 
         ServerSideEncryptionConfiguration:
 
-
-
-
-
-
-
           - ServerSideEncryptionByDefault:
-
-
 
               SSEAlgorithm: AES256
 
-
-
-
-
-
-
       PublicAccessBlockConfiguration:
-
-
-
-
-
-
 
         BlockPublicAcls: true
 
-
-
-
-
-
-
         BlockPublicPolicy: true
-
-
-
-
-
-
 
         IgnorePublicAcls: true
 
-
-
-
-
-
-
         RestrictPublicBuckets: true
-
-
-
-
-
-
 
       VersioningConfiguration:
 
-
-
-
-
-
-
         Status: Enabled
-
-
-
-
-
-
 
       Tags:
 
-
-
-
-
-
-
         - Key: Name
-
-
 
           Value: !Sub cloudmart-reports-${EnvironmentName}
 
-
-
-
-
-
-
         - Key: Service
 
-
-
           Value: CloudMart
-
-
-
-
-
-
 
         - Key: DataType
 
 
-
           Value: Reports
 
-
-
-
-
-
-
         - Key: Environment
-
-
 
           Value: !Ref EnvironmentName
 
 
-
-
-
-
-
-
-
-
-
   # ==============================================================
-
-
-
   # REPORTS BUCKET POLICY
-
-
-
-  #
-
-
-
   # The dashboard EC2 role is created in the Network stack, while
-
-
-
   # this bucket is created here. The bucket policy is therefore the
-
-
-
   # correct place to grant the EC2 role access to the real physical
-
-
-
   # bucket name generated by CloudFormation.
-
-
-
   # ==============================================================
-
-
-
-
-
-
 
   ReportsBucketPolicy:
-
-
-
     Type: AWS::S3::BucketPolicy
 
-
-
-
-
-
-
     Properties:
-
-
-
       Bucket: !Ref ReportsBucket
-
-
-
-
-
-
 
       PolicyDocument:
 
-
-
         Version: '2012-10-17'
-
-
-
-
-
-
 
         Statement:
 
-
-
-
-
-
-
           - Sid: AllowDashboardEC2ReadReports
-
-
 
             Effect: Allow
 
-
-
-
-
-
-
             Principal:
-
-
 
               AWS:
 
-
-
                 Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
 
-
-
-
-
-
-
             Action:
-
-
 
               - s3:GetObject
 
-
-
               - s3:GetObjectVersion
 
-
-
-
-
-
-
             Resource:
-
-
 
               - !Sub '${ReportsBucket.Arn}/*'
 
-
-
-
-
-
-
           - Sid: AllowDashboardEC2ListReports
-
-
 
             Effect: Allow
 
-
-
-
-
-
-
             Principal:
-
-
 
               AWS:
 
-
-
                 Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
-
-
-
-
-
-
 
             Action:
 
-
-
               - s3:ListBucket
 
-
-
-
-
-
-
             Resource:
-
-
-
               - !GetAtt ReportsBucket.Arn
-
-
-
-
-
 
 
             Condition:
 
-
-
               StringLike:
-
-
 
                 s3:prefix:
 
-
-
                   - reports/*
-
-
 
                   - reports
 
-
-
-
-
-
-
-
-
-
-
   # ==============================================================
-
-
-
   # REPORTS BUCKET SSM PARAMETER
-
-
-
   # The dashboard reads the generated physical bucket name from SSM.
-
-
-
   # ==============================================================
-
-
-
-
-
 
 
   ReportsBucketParameter:

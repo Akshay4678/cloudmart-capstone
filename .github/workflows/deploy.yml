@@ -1849,6 +1849,32 @@ jobs:
             exit 1
           fi
 
+          # ----------------------------------------------------------
+          # Configure NGINX as the reverse proxy for Flask/Gunicorn.
+          # Without this configuration, NGINX serves its default
+          # "Welcome to nginx!" page.
+          # ----------------------------------------------------------
+          rm -f /etc/nginx/conf.d/default.conf
+
+          cat > /etc/nginx/conf.d/cloudmart.conf <<'NGINXEOF'
+          server {
+              listen 80;
+              listen [::]:80;
+
+              server_name _;
+
+              client_max_body_size 10M;
+
+              location / {
+                  proxy_pass http://127.0.0.1:5000;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+          NGINXEOF
+
           nginx -t
 
           systemctl daemon-reload

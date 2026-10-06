@@ -2,17 +2,35 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 
 
+
+
+
+
 Description: CloudMart Data Stack
 
 
 
 
 
+
+
+
+
+
+
 # ================================================================
+
+
 
 # PARAMETERS
 
+
+
 # ================================================================
+
+
+
+
 
 
 
@@ -20,49 +38,97 @@ Parameters:
 
 
 
+
+
+
+
   EnvironmentName:
+
+
 
     Type: String
 
+
+
     Default: dev
+
+
 
     AllowedValues:
 
+
+
       - dev
 
+
+
       - prod
+
+
 
     Description: CloudMart deployment environment
 
 
 
+
+
+
+
   DBName:
+
+
 
     Type: String
 
+
+
     Default: cloudmart
+
+
 
     Description: CloudMart RDS database name
 
 
 
+
+
+
+
   DBUsername:
+
+
 
     Type: String
 
+
+
     Default: cloudmartadmin
+
+
 
     Description: CloudMart RDS master username
 
 
 
+
+
+
+
   DBPassword:
+
+
 
     Type: String
 
+
+
     NoEcho: true
 
+
+
     MinLength: 8
+
+
 
     Description: CloudMart RDS master password
 
@@ -70,11 +136,25 @@ Parameters:
 
 
 
+
+
+
+
+
+
 # ================================================================
+
+
 
 # RESOURCES
 
+
+
 # ================================================================
+
+
+
+
 
 
 
@@ -82,17 +162,35 @@ Resources:
 
 
 
+
+
+
+
   # ==============================================================
+
+
 
   # RDS SUBNET GROUP
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
   RdsSubnetGroup:
 
+
+
     Type: AWS::RDS::DBSubnetGroup
+
+
+
+
 
 
 
@@ -100,9 +198,19 @@ Resources:
 
 
 
+
+
+
+
       DBSubnetGroupDescription: CloudMart private RDS subnet group
 
+
+
       DBSubnetGroupName: !Sub cloudmart-rds-subnet-group-${EnvironmentName}
+
+
+
+
 
 
 
@@ -110,7 +218,15 @@ Resources:
 
 
 
+
+
+
+
         - Fn::ImportValue: !Sub cloudmart-private-subnet-id-${EnvironmentName}
+
+
+
+
 
 
 
@@ -118,23 +234,45 @@ Resources:
 
 
 
+
+
+
+
       Tags:
+
+
+
+
 
 
 
         - Key: Name
 
+
+
           Value: !Sub cloudmart-rds-subnet-group-${EnvironmentName}
+
+
+
+
 
 
 
         - Key: Application
 
+
+
           Value: CloudMart
 
 
 
+
+
+
+
         - Key: Environment
+
+
 
           Value: !Ref EnvironmentName
 
@@ -142,35 +280,73 @@ Resources:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # RDS MYSQL DATABASE
 
+
+
   #
+
+
 
   # Stores:
 
+
+
   #   Customers
+
+
 
   #   Products
 
+
+
   #   Orders
+
+
 
   #   Order Items
 
+
+
   #   Product History
+
+
 
   #
 
+
+
   # Database is private inside the VPC.
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
   CloudMartDatabase:
 
+
+
     Type: AWS::RDS::DBInstance
+
+
+
+
 
 
 
@@ -178,9 +354,19 @@ Resources:
 
 
 
+
+
+
+
       DBInstanceIdentifier: !Sub cloudmart-rds-${EnvironmentName}
 
+
+
       Engine: mysql
+
+
+
+
 
 
 
@@ -188,7 +374,15 @@ Resources:
 
 
 
+
+
+
+
       AllowMajorVersionUpgrade: true
+
+
+
+
 
 
 
@@ -196,7 +390,15 @@ Resources:
 
 
 
+
+
+
+
       AllocatedStorage: 20
+
+
+
+
 
 
 
@@ -204,7 +406,15 @@ Resources:
 
 
 
+
+
+
+
       StorageEncrypted: true
+
+
+
+
 
 
 
@@ -212,25 +422,51 @@ Resources:
 
 
 
+
+
+
+
       PubliclyAccessible: false
+
+
+
+
 
 
 
       DBName:
 
+
+
         !Ref DBName
+
+
+
+
 
 
 
       MasterUsername:
 
+
+
         !Ref DBUsername
+
+
+
+
 
 
 
       MasterUserPassword:
 
+
+
         !Ref DBPassword
+
+
+
+
 
 
 
@@ -238,7 +474,15 @@ Resources:
 
 
 
+
+
+
+
       VPCSecurityGroups:
+
+
+
+
 
 
 
@@ -246,9 +490,19 @@ Resources:
 
 
 
+
+
+
+
       DBSubnetGroupName:
 
+
+
         !Ref RdsSubnetGroup
+
+
+
+
 
 
 
@@ -256,7 +510,15 @@ Resources:
 
 
 
+
+
+
+
       DeletionProtection: false
+
+
+
+
 
 
 
@@ -264,7 +526,15 @@ Resources:
 
 
 
+
+
+
+
       AutoMinorVersionUpgrade: true
+
+
+
+
 
 
 
@@ -272,25 +542,49 @@ Resources:
 
 
 
+
+
+
+
         - Key: Name
+
+
 
           Value: !Sub cloudmart-rds-mysql-${EnvironmentName}
 
 
 
+
+
+
+
         - Key: Application
+
+
 
           Value: CloudMart
 
 
 
+
+
+
+
         - Key: Service
+
+
 
           Value: RDS
 
 
 
+
+
+
+
         - Key: Environment
+
+
 
           Value: !Ref EnvironmentName
 
@@ -298,39 +592,81 @@ Resources:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # S3 REPORTS BUCKET
 
+
+
   #
+
+
 
   # Report Lambda
 
+
+
   #       |
 
+
+
   #       v
+
+
 
   #      S3
 
+
+
   #       |
+
+
 
   #       v
 
+
+
   # EC2 Flask Dashboard
+
+
 
   #
 
+
+
   # CloudFormation generates a unique physical bucket name.
+
+
 
   # This avoids conflicts with buckets left by previous deployments.
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
   ReportsBucket:
 
+
+
     Type: AWS::S3::Bucket
+
+
+
+
 
 
 
@@ -338,9 +674,19 @@ Resources:
 
 
 
+
+
+
+
       BucketName: !Sub cloudmart-reports-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
 
+
+
       BucketEncryption:
+
+
+
+
 
 
 
@@ -348,9 +694,19 @@ Resources:
 
 
 
+
+
+
+
           - ServerSideEncryptionByDefault:
 
+
+
               SSEAlgorithm: AES256
+
+
+
+
 
 
 
@@ -358,7 +714,15 @@ Resources:
 
 
 
+
+
+
+
         BlockPublicAcls: true
+
+
+
+
 
 
 
@@ -366,7 +730,15 @@ Resources:
 
 
 
+
+
+
+
         IgnorePublicAcls: true
+
+
+
+
 
 
 
@@ -374,7 +746,15 @@ Resources:
 
 
 
+
+
+
+
       VersioningConfiguration:
+
+
+
+
 
 
 
@@ -382,29 +762,57 @@ Resources:
 
 
 
+
+
+
+
       Tags:
+
+
+
+
 
 
 
         - Key: Name
 
+
+
           Value: !Sub cloudmart-reports-${EnvironmentName}
+
+
+
+
 
 
 
         - Key: Service
 
+
+
           Value: CloudMart
+
+
+
+
 
 
 
         - Key: DataType
 
+
+
           Value: Reports
 
 
 
+
+
+
+
         - Key: Environment
+
+
 
           Value: !Ref EnvironmentName
 
@@ -412,39 +820,81 @@ Resources:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # REPORTS BUCKET POLICY
 
+
+
   #
+
+
 
   # The dashboard EC2 role is created in the Network stack, while
 
+
+
   # this bucket is created here. The bucket policy is therefore the
+
+
 
   # correct place to grant the EC2 role access to the real physical
 
+
+
   # bucket name generated by CloudFormation.
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
   ReportsBucketPolicy:
 
+
+
     Type: AWS::S3::BucketPolicy
+
+
+
+
 
 
 
     Properties:
 
+
+
       Bucket: !Ref ReportsBucket
+
+
+
+
 
 
 
       PolicyDocument:
 
+
+
         Version: '2012-10-17'
+
+
+
+
 
 
 
@@ -452,67 +902,133 @@ Resources:
 
 
 
+
+
+
+
           - Sid: AllowDashboardEC2ReadReports
+
+
 
             Effect: Allow
 
 
 
+
+
+
+
             Principal:
 
+
+
               AWS:
+
+
 
                 Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
 
 
 
+
+
+
+
             Action:
 
+
+
               - s3:GetObject
+
+
 
               - s3:GetObjectVersion
 
 
 
+
+
+
+
             Resource:
 
-              - !Sub '${ReportsBucket.Arn}/\*'
+
+
+              - !Sub '${ReportsBucket.Arn}/*'
+
+
+
+
 
 
 
           - Sid: AllowDashboardEC2ListReports
 
+
+
             Effect: Allow
+
+
+
+
 
 
 
             Principal:
 
+
+
               AWS:
+
+
 
                 Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
 
 
 
+
+
+
+
             Action:
+
+
 
               - s3:ListBucket
 
 
 
+
+
+
+
             Resource:
+
+
 
               - !GetAtt ReportsBucket.Arn
 
 
 
+
+
+
+
             Condition:
+
+
 
               StringLike:
 
+
+
                 s3:prefix:
 
-                  - reports/\*
+
+
+                  - reports/*
+
+
 
                   - reports
 
@@ -520,41 +1036,83 @@ Resources:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # REPORTS BUCKET SSM PARAMETER
 
+
+
   # The dashboard reads the generated physical bucket name from SSM.
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
   ReportsBucketParameter:
 
+
+
     Type: AWS::SSM::Parameter
+
+
+
+
 
 
 
     Properties:
 
+
+
       Name: !Sub /cloudmart/${EnvironmentName}/reports-bucket
+
+
 
       Type: String
 
+
+
       Value: !Ref ReportsBucket
 
+
+
       Description: CloudMart reports S3 bucket name
+
+
 
       Tier: Standard
 
 
 
+
+
+
+
       Tags:
+
+
 
         Application: CloudMart
 
+
+
         Environment: !Ref EnvironmentName
+
+
 
         Purpose: ReportsBucketConfiguration
 
@@ -562,21 +1120,45 @@ Resources:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # S3 LAMBDA ARTIFACTS BUCKET
 
+
+
   #
+
+
 
   # CloudFormation generates a unique physical bucket name.
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
   LambdaArtifactsBucket:
 
+
+
     Type: AWS::S3::Bucket
+
+
+
+
 
 
 
@@ -584,9 +1166,19 @@ Resources:
 
 
 
+
+
+
+
       BucketName: !Sub cloudmart-lambda-artifacts-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
 
+
+
       BucketEncryption:
+
+
+
+
 
 
 
@@ -594,9 +1186,19 @@ Resources:
 
 
 
+
+
+
+
           - ServerSideEncryptionByDefault:
 
+
+
               SSEAlgorithm: AES256
+
+
+
+
 
 
 
@@ -604,7 +1206,15 @@ Resources:
 
 
 
+
+
+
+
         BlockPublicAcls: true
+
+
+
+
 
 
 
@@ -612,7 +1222,15 @@ Resources:
 
 
 
+
+
+
+
         IgnorePublicAcls: true
+
+
+
+
 
 
 
@@ -620,7 +1238,15 @@ Resources:
 
 
 
+
+
+
+
       VersioningConfiguration:
+
+
+
+
 
 
 
@@ -628,29 +1254,57 @@ Resources:
 
 
 
+
+
+
+
       Tags:
+
+
+
+
 
 
 
         - Key: Name
 
+
+
           Value: !Sub cloudmart-lambda-artifacts-${EnvironmentName}
+
+
+
+
 
 
 
         - Key: Service
 
+
+
           Value: CloudMart
+
+
+
+
 
 
 
         - Key: DataType
 
+
+
           Value: LambdaArtifacts
 
 
 
+
+
+
+
         - Key: Environment
+
+
 
           Value: !Ref EnvironmentName
 
@@ -658,21 +1312,45 @@ Resources:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # LAMBDA ARTIFACTS BUCKET POLICY
 
+
+
   # Allows only the CloudMart EC2 instance role to list this bucket
+
+
 
   # and read objects from it.
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
   LambdaArtifactsBucketPolicy:
 
+
+
     Type: AWS::S3::BucketPolicy
+
+
+
+
 
 
 
@@ -680,7 +1358,15 @@ Resources:
 
 
 
+
+
+
+
       Bucket: !Ref LambdaArtifactsBucket
+
+
+
+
 
 
 
@@ -688,7 +1374,15 @@ Resources:
 
 
 
+
+
+
+
         Version: '2012-10-17'
+
+
+
+
 
 
 
@@ -696,43 +1390,85 @@ Resources:
 
 
 
+
+
+
+
           - Sid: AllowDashboardEC2ReadObjects
+
+
 
             Effect: Allow
 
+
+
             Principal:
+
+
 
               AWS:
 
+
+
                 Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
+
+
 
             Action:
 
+
+
               - s3:GetObject
+
+
 
               - s3:GetObjectVersion
 
+
+
             Resource:
 
-              - !Sub '${LambdaArtifactsBucket.Arn}/\*'
+
+
+              - !Sub '${LambdaArtifactsBucket.Arn}/*'
+
+
+
+
 
 
 
           - Sid: AllowDashboardEC2ListBucket
 
+
+
             Effect: Allow
+
+
 
             Principal:
 
+
+
               AWS:
+
+
 
                 Fn::ImportValue: !Sub cloudmart-ec2-instance-role-arn-${EnvironmentName}
 
+
+
             Action:
+
+
 
               - s3:ListBucket
 
+
+
             Resource:
+
+
 
               - !GetAtt LambdaArtifactsBucket.Arn
 
@@ -740,11 +1476,25 @@ Resources:
 
 
 
+
+
+
+
+
+
 # ================================================================
+
+
 
 # OUTPUTS
 
+
+
 # ================================================================
+
+
+
+
 
 
 
@@ -754,135 +1504,271 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ================================================================
+
+
 
   # LEGACY EXPORTS - TEMPORARY MIGRATION COMPATIBILITY
 
+
+
   # ================================================================
+
+
+
+
 
 
 
   LegacyDatabaseIdentifier:
 
+
+
     Value: !Ref CloudMartDatabase
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-identifier
 
 
 
+
+
+
+
   LegacyDatabaseResourceId:
+
+
 
     Value: !GetAtt CloudMartDatabase.DbiResourceId
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-resource-id
 
 
 
+
+
+
+
   LegacyDatabaseEndpoint:
+
+
 
     Value: !GetAtt CloudMartDatabase.Endpoint.Address
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-endpoint
 
 
 
+
+
+
+
   LegacyDatabasePort:
+
+
 
     Value: !GetAtt CloudMartDatabase.Endpoint.Port
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-port
 
 
 
+
+
+
+
   LegacyDatabaseConnectionEndpoint:
+
+
 
     Value: !Sub
 
+
+
       - "${Endpoint}:${Port}"
+
+
 
       - Endpoint: !GetAtt CloudMartDatabase.Endpoint.Address
 
+
+
         Port: !GetAtt CloudMartDatabase.Endpoint.Port
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-connection-endpoint
 
 
 
+
+
+
+
   LegacyDatabaseName:
+
+
 
     Value: !Ref DBName
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-name
 
 
 
+
+
+
+
   LegacyDatabaseUsername:
+
+
 
     Value: !Ref DBUsername
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-username
 
 
 
+
+
+
+
   LegacyDatabaseSubnetGroup:
+
+
 
     Value: !Ref RdsSubnetGroup
 
+
+
     Export:
+
+
 
       Name: cloudmart-database-subnet-group
 
 
 
+
+
+
+
   LegacyReportsBucket:
+
+
 
     Value: !Ref ReportsBucket
 
+
+
     Export:
+
+
 
       Name: cloudmart-reports-bucket
 
 
 
+
+
+
+
   LegacyReportsBucketArn:
+
+
 
     Value: !GetAtt ReportsBucket.Arn
 
+
+
     Export:
+
+
 
       Name: cloudmart-reports-bucket-arn
 
 
 
+
+
+
+
   LegacyLambdaBucket:
+
+
 
     Value: !Ref LambdaArtifactsBucket
 
+
+
     Export:
+
+
 
       Name: cloudmart-lambda-bucket
 
 
 
+
+
+
+
   LegacyLambdaBucketArn:
+
+
 
     Value: !GetAtt LambdaArtifactsBucket.Arn
 
+
+
     Export:
+
+
 
       Name: cloudmart-lambda-bucket-arn
 
@@ -890,11 +1776,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # DATABASE IDENTIFIER
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -902,17 +1802,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: RDS MySQL Database Identifier
+
+
+
+
 
 
 
     Value:
 
+
+
       !Ref CloudMartDatabase
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-identifier-${EnvironmentName}
 
@@ -920,11 +1836,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # DATABASE RESOURCE ID
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -932,17 +1862,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: RDS MySQL DB Resource ID
+
+
+
+
 
 
 
     Value:
 
+
+
       !GetAtt CloudMartDatabase.DbiResourceId
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-resource-id-${EnvironmentName}
 
@@ -950,11 +1896,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # DATABASE ENDPOINT
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -962,17 +1922,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: RDS MySQL Endpoint
+
+
+
+
 
 
 
     Value:
 
+
+
       !GetAtt CloudMartDatabase.Endpoint.Address
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-endpoint-${EnvironmentName}
 
@@ -980,11 +1956,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # DATABASE PORT
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -992,17 +1982,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: RDS MySQL Port
+
+
+
+
 
 
 
     Value:
 
+
+
       !GetAtt CloudMartDatabase.Endpoint.Port
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-port-${EnvironmentName}
 
@@ -1010,11 +2016,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # MYSQL CONNECTION ENDPOINT
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1022,27 +2042,53 @@ Outputs:
 
 
 
+
+
+
+
     Description: Complete MySQL connection endpoint for EC2
+
+
+
+
 
 
 
     Value:
 
+
+
       !Sub
+
+
 
         - "${Endpoint}:${Port}"
 
+
+
         - Endpoint:
+
+
 
             !GetAtt CloudMartDatabase.Endpoint.Address
 
+
+
           Port:
+
+
 
             !GetAtt CloudMartDatabase.Endpoint.Port
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-connection-endpoint-${EnvironmentName}
 
@@ -1050,11 +2096,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # DATABASE NAME
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1062,17 +2122,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: CloudMart RDS Database Name
+
+
+
+
 
 
 
     Value:
 
+
+
       !Ref DBName
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-name-${EnvironmentName}
 
@@ -1080,11 +2156,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # DATABASE USERNAME
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1092,17 +2182,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: CloudMart RDS Username
+
+
+
+
 
 
 
     Value:
 
+
+
       !Ref DBUsername
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-username-${EnvironmentName}
 
@@ -1110,11 +2216,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # RDS SUBNET GROUP
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1122,17 +2242,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: CloudMart RDS Subnet Group
+
+
+
+
 
 
 
     Value:
 
+
+
       !Ref RdsSubnetGroup
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-database-subnet-group-${EnvironmentName}
 
@@ -1140,11 +2276,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # REPORTS BUCKET
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1152,17 +2302,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: S3 bucket used for CloudMart daily reports
+
+
+
+
 
 
 
     Value:
 
+
+
       !Ref ReportsBucket
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-reports-bucket-${EnvironmentName}
 
@@ -1170,11 +2336,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # REPORTS BUCKET ARN
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1182,17 +2362,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: ARN of the CloudMart reports bucket
+
+
+
+
 
 
 
     Value:
 
+
+
       !GetAtt ReportsBucket.Arn
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-reports-bucket-arn-${EnvironmentName}
 
@@ -1200,11 +2396,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # LAMBDA ARTIFACTS BUCKET
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1212,17 +2422,33 @@ Outputs:
 
 
 
+
+
+
+
     Description: S3 bucket used for Lambda deployment packages
+
+
+
+
 
 
 
     Value:
 
+
+
       !Ref LambdaArtifactsBucket
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-lambda-bucket-${EnvironmentName}
 
@@ -1230,11 +2456,25 @@ Outputs:
 
 
 
+
+
+
+
+
+
   # ==============================================================
+
+
 
   # LAMBDA ARTIFACTS BUCKET ARN
 
+
+
   # ==============================================================
+
+
+
+
 
 
 
@@ -1242,16 +2482,32 @@ Outputs:
 
 
 
+
+
+
+
     Description: ARN of the CloudMart Lambda deployment packages bucket
+
+
+
+
 
 
 
     Value:
 
+
+
       !GetAtt LambdaArtifactsBucket.Arn
 
 
 
+
+
+
+
     Export:
+
+
 
       Name: !Sub cloudmart-lambda-bucket-arn-${EnvironmentName}

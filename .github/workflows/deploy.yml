@@ -1898,29 +1898,58 @@ jobs:
 
           fi
 
-          if grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*500' /tmp/schema-init-response.json; then
+          # ------------------------------------------------------
+          # Validate the JSON response directly.
+          # Do not use grep for JSON parsing.
+          # ------------------------------------------------------
 
-            echo "ERROR: Database schema initialization returned HTTP 500."
+          if ! command -v jq >/dev/null 2>&1; then
 
-            exit 1
-
-          fi
-
-          if grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*400' /tmp/schema-init-response.json; then
-
-            echo "ERROR: Database schema initialization returned HTTP 400."
+            echo "ERROR: jq is not available on the GitHub runner."
 
             exit 1
 
           fi
 
-          if ! grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*200' /tmp/schema-init-response.json; then
+          STATUS_CODE=$(jq -r '.statusCode // empty' /tmp/schema-init-response.json)
 
-            echo "ERROR: Did not receive successful schema initialization response."
+          if [ -z "$STATUS_CODE" ]; then
+
+            echo "ERROR: Lambda response does not contain statusCode."
 
             exit 1
 
           fi
+
+          echo "Lambda response statusCode: $STATUS_CODE"
+
+          if [ "$STATUS_CODE" != "200" ]; then
+
+            echo "ERROR: Database schema initialization failed."
+
+            echo "Returned statusCode: $STATUS_CODE"
+
+            BODY=$(jq -r '.body // empty' /tmp/schema-init-response.json)
+
+            if [ -n "$BODY" ]; then
+
+              echo "Response body:"
+
+              echo "$BODY"
+
+            fi
+
+            exit 1
+
+          fi
+
+          BODY=$(jq -r '.body // empty' /tmp/schema-init-response.json)
+
+          echo "Schema initialization body:"
+
+          echo "$BODY"
+
+          echo "Database schema initialized successfully."
 
           echo "Database schema initialized successfully."
 

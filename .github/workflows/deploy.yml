@@ -24,7 +24,7 @@ jobs:
 
       AWS_REGION: ap-south-1
 
-      ENVIRONMENT_NAME: prod
+      ENVIRONMENT_NAME: dev
 
     steps:
 
@@ -683,35 +683,191 @@ jobs:
           echo "All Lambda packages verified."
 
       # ==========================================================
+      # 29. CLEAN LEGACY CLOUDFORMATION STACKS
+      #
+      # Older workflow versions used stack names without the
+      # environment suffix. Those stacks can still own exports such as
+      # cloudmart-private-subnet-id-dev. CloudFormation export names
+      # are unique per account/Region, so they must be removed before
+      # the environment-specific stacks can create the same exports.
+      #
+      # Delete order is dependency-safe: consumers first, network last.
+      # Current environment-specific stacks are NOT touched.
+      # ==========================================================
+
+      - name: Clean Legacy CloudFormation Stacks
+        id: clean_legacy_stacks
+        run: |
+          set -euo pipefail
+
+          echo "=================================================="
+          echo "CHECKING FOR LEGACY CLOUDFORMATION STACKS"
+          echo "=================================================="
+
+          LEGACY_STACKS=(
+            cloudmart-monitoring-stack
+            cloudmart-api-stack
+            cloudmart-auth-stack
+            cloudmart-iam-stack
+            cloudmart-data-stack
+            cloudmart-network-stack
+          )
+
+          for STACK in "${LEGACY_STACKS[@]}"; do
+            echo "Checking legacy stack: $STACK"
+
+            STATUS=$(aws cloudformation describe-stacks \
+              --region "$AWS_REGION" \
+              --stack-name "$STACK" \
+              --query "Stacks[0].StackStatus" \
+              --output text 2>/dev/null || true)
+
+            if [ -z "$STATUS" ] || [ "$STATUS" = "None" ]; then
+              echo "Legacy stack not present: $STACK"
+              continue
+            fi
+
+            echo "Found $STACK with status: $STATUS"
+
+            case "$STATUS" in
+              DELETE_COMPLETE)
+                echo "$STACK is already deleted."
+                ;;
+
+              DELETE_IN_PROGRESS)
+                echo "Waiting for existing deletion of $STACK..."
+                aws cloudformation wait stack-delete-complete \
+                  --region "$AWS_REGION" \
+                  --stack-name "$STACK"
+                ;;
+
+              *)
+                echo "Deleting legacy stack: $STACK"
+                aws cloudformation delete-stack \
+                  --region "$AWS_REGION" \
+                  --stack-name "$STACK"
+
+                echo "Waiting for $STACK deletion to complete..."
+                aws cloudformation wait stack-delete-complete \
+                  --region "$AWS_REGION" \
+                  --stack-name "$STACK"
+                ;;
+            esac
+
+            echo "Legacy stack cleanup completed: $STACK"
+          done
+
+          echo "Legacy CloudFormation stack cleanup completed."
+
+      - name: Verify Required Legacy Exports Are Gone
+        id: verify_legacy_exports
+        run: |
+          set -euo pipefail
+
+          echo "=================================================="
+          echo "VERIFYING CLOUDFORMATION EXPORTS"
+          echo "=================================================="
+
+          REQUIRED_EXPORTS=(
+            "cloudmart-vpc-id-${ENVIRONMENT_NAME}"
+            "cloudmart-public-subnet-id-${ENVIRONMENT_NAME}"
+            "cloudmart-private-subnet-id-${ENVIRONMENT_NAME}"
+            "cloudmart-private-subnet-2-id-${ENVIRONMENT_NAME}"
+            "cloudmart-lambda-sg-${ENVIRONMENT_NAME}"
+            "cloudmart-rds-sg-${ENVIRONMENT_NAME}"
+            "cloudmart-ec2-sg-${ENVIRONMENT_NAME}"
+            "cloudmart-vpc-endpoint-sg-${ENVIRONMENT_NAME}"
+          )
+
+          CURRENT_NETWORK_STACK="cloudmart-network-stack-${ENVIRONMENT_NAME}"
+
+          CURRENT_NETWORK_STACK_ID=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "$CURRENT_NETWORK_STACK" \
+            --query "Stacks[0].StackId" \
+            --output text 2>/dev/null || true)
+
+          for EXPORT_NAME in "${REQUIRED_EXPORTS[@]}"; do
+            OWNER=$(aws cloudformation list-exports \
+              --region "$AWS_REGION" \
+              --query "Exports[?Name=='$EXPORT_NAME'].ExportingStackId | [0]" \
+              --output text)
+
+            if [ -n "$OWNER" ] && [ "$OWNER" != "None" ]; then
+              if [ -n "$CURRENT_NETWORK_STACK_ID" ] && [ "$CURRENT_NETWORK_STACK_ID" != "None" ] && [ "$OWNER" = "$CURRENT_NETWORK_STACK_ID" ]; then
+                echo "OK: $EXPORT_NAME is owned by the current network stack."
+              else
+                echo "ERROR: Export $EXPORT_NAME is still owned by:"
+                echo "$OWNER"
+                echo "Expected owner: $CURRENT_NETWORK_STACK"
+                echo "The export is owned by a different stack and must be removed before deployment."
+                exit 1
+              fi
+            else
+              echo "OK: $EXPORT_NAME is available for the new network stack."
+            fi
+          done
+
+          echo "All required network export names are available."
+
+      # ==========================================================
 
       # 29. DEPLOY NETWORK
 
       # ==========================================================
 
       - name: Deploy Network Stack
-
         id: deploy_network
-
         run: |
-
           set -euo pipefail
 
-          echo "=================================================="
-
-          echo "DEPLOYING NETWORK STACK"
+          STACK_NAME="cloudmart-network-stack-${ENVIRONMENT_NAME}"
 
           echo "=================================================="
+          echo "DEPLOYING NETWORK STACK: $STACK_NAME"
+          echo "=================================================="
+
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || true)
+
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+            echo "Stack $STACK_NAME is in ROLLBACK_COMPLETE."
+            echo "Deleting the failed stack before recreating it..."
+
+            aws cloudformation delete-stack \
+              --region "$AWS_REGION" \
+              --stack-name "$STACK_NAME"
+
+            aws cloudformation wait stack-delete-complete \
+              --region "$AWS_REGION" \
+              --stack-name "$STACK_NAME"
+
+            echo "Failed stack deleted successfully."
+          elif [ "$STACK_STATUS" = "DELETE_IN_PROGRESS" ]; then
+            echo "Stack $STACK_NAME is already being deleted."
+
+            aws cloudformation wait stack-delete-complete \
+              --region "$AWS_REGION" \
+              --stack-name "$STACK_NAME"
+          elif [ "$STACK_STATUS" = "ROLLBACK_FAILED" ]; then
+            echo "ERROR: Stack $STACK_NAME is in ROLLBACK_FAILED."
+            echo "CloudFormation must be manually recovered or the stack must be deleted."
+            exit 1
+          fi
 
           aws cloudformation deploy \
             --region "$AWS_REGION" \
-            --stack-name cloudmart-network-stack-${ENVIRONMENT_NAME} \
+            --stack-name "$STACK_NAME" \
             --template-file cloudformation/network-stack.yaml \
             --parameter-overrides \
               "EnvironmentName=$ENVIRONMENT_NAME" \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-          echo "Network stack deployment completed."
+          echo "Network stack deployment completed successfully."
 
       - name: Show Network Stack Errors
 
@@ -1898,58 +2054,29 @@ jobs:
 
           fi
 
-          # ------------------------------------------------------
-          # Validate the JSON response directly.
-          # Do not use grep for JSON parsing.
-          # ------------------------------------------------------
+          if grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*500' /tmp/schema-init-response.json; then
 
-          if ! command -v jq >/dev/null 2>&1; then
-
-            echo "ERROR: jq is not available on the GitHub runner."
+            echo "ERROR: Database schema initialization returned HTTP 500."
 
             exit 1
 
           fi
 
-          STATUS_CODE=$(jq -r '.statusCode // empty' /tmp/schema-init-response.json)
+          if grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*400' /tmp/schema-init-response.json; then
 
-          if [ -z "$STATUS_CODE" ]; then
-
-            echo "ERROR: Lambda response does not contain statusCode."
+            echo "ERROR: Database schema initialization returned HTTP 400."
 
             exit 1
 
           fi
 
-          echo "Lambda response statusCode: $STATUS_CODE"
+          if ! grep -q '"statusCode"[[:space:]]\\*:[[:space:]]\\*200' /tmp/schema-init-response.json; then
 
-          if [ "$STATUS_CODE" != "200" ]; then
-
-            echo "ERROR: Database schema initialization failed."
-
-            echo "Returned statusCode: $STATUS_CODE"
-
-            BODY=$(jq -r '.body // empty' /tmp/schema-init-response.json)
-
-            if [ -n "$BODY" ]; then
-
-              echo "Response body:"
-
-              echo "$BODY"
-
-            fi
+            echo "ERROR: Did not receive successful schema initialization response."
 
             exit 1
 
           fi
-
-          BODY=$(jq -r '.body // empty' /tmp/schema-init-response.json)
-
-          echo "Schema initialization body:"
-
-          echo "$BODY"
-
-          echo "Database schema initialized successfully."
 
           echo "Database schema initialized successfully."
 

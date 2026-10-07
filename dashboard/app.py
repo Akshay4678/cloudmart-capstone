@@ -1992,7 +1992,6 @@ footer {
         <p>{{ page_subtitle }}</p>
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
-        <div class="env">● DEV</div>
         {% if session.get("admin_authenticated") %}
             <span style="font-size:12px;color:#667085;">{{ session.get("admin_id") }}</span>
             <a class="btn" href="{{ url_for('logout') }}">Logout</a>

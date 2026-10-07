@@ -6,10 +6,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import boto3
-
-ssm = boto3.client("ssm")
 import pymysql
 
+ssm = boto3.client("ssm")
 
 # ================================================================
 # AWS CLIENTS
@@ -18,25 +17,20 @@ import pymysql
 sqs = boto3.client("sqs")
 cloudwatch = boto3.client("cloudwatch")
 
-
 # ================================================================
 # ENVIRONMENT VARIABLES
 # ================================================================
 
 QUEUE_URL = os.environ["ORDER_QUEUE_URL"]
-
 DB_HOST = os.environ["DB_HOST"]
 DB_NAME = os.environ["DB_NAME"]
 DB_USER = os.environ["DB_USER"]
 DB_PORT = int(os.environ.get("DB_PORT", "3306"))
-
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
-
 DB_PASSWORD_PARAMETER = os.environ.get(
     "DB_PASSWORD_PARAMETER",
     f"/cloudmart/{ENVIRONMENT}/database/password"
 )
-
 
 # ================================================================
 # FILE PATHS
@@ -47,7 +41,6 @@ SCHEMA_FILE = os.path.join(
     "schema.sql",
 )
 
-
 # ================================================================
 # DATABASE CONNECTION
 # ================================================================
@@ -56,16 +49,13 @@ _db_password = None
 
 def get_db_password():
     global _db_password
-
     if _db_password is None:
         parameter = ssm.get_parameter(
             Name=DB_PASSWORD_PARAMETER,
             WithDecryption=True
         )
         _db_password = parameter["Parameter"]["Value"]
-
     return _db_password
-
 
 def get_connection():
     return pymysql.connect(
@@ -80,7 +70,6 @@ def get_connection():
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
     )
-
 
 # ================================================================
 # METRICS
@@ -111,24 +100,21 @@ def put_metric(metric_name, value=1):
     except Exception as exc:
         print(f"Metric error: {exc}")
 
-
 # ================================================================
 # JSON SERIALIZATION
 # ================================================================
 
 def json_default(value):
     """
-    Convert MySQL/Python values into JSON-safe values.
-    """
 
+    Convert MySQL/Python values into JSON-safe values.
+
+    """
     if isinstance(value, Decimal):
         return str(value)
-
     if isinstance(value, (datetime,)):
         return value.isoformat()
-
     return str(value)
-
 
 # ================================================================
 # HTTP RESPONSE
@@ -146,90 +132,78 @@ def response(status_code, body):
         ),
     }
 
-
 # ================================================================
 # ACTOR / PERFORMED BY
 # ================================================================
 
 def get_performed_by(event=None, body=None):
     """
+
     Determine who performed the operation.
 
     Priority:
 
     1. Cognito/JWT subject
-    2. Legacy API Gateway authorizer subject
-    3. performed_by supplied in request body
-    4. customer_id from request body
-    5. fallback service identity
-    """
 
+    2. Legacy API Gateway authorizer subject
+
+    3. performed_by supplied in request body
+
+    4. customer_id from request body
+
+    5. fallback service identity
+
+    """
     event = event or {}
     body = body or {}
-
     # ------------------------------------------------------------
     # HTTP API JWT AUTHORIZE
     # ------------------------------------------------------------
-
     request_context = (
         event.get("requestContext")
         or {}
     )
-
     authorizer = (
         request_context.get("authorizer")
         or {}
     )
-
     jwt = (
         authorizer.get("jwt")
         or {}
     )
-
     claims = (
         jwt.get("claims")
         or {}
     )
-
     if claims.get("sub"):
         return str(claims["sub"])
-
     # ------------------------------------------------------------
     # REST API / LEGACY COGNITO AUTHORIZE
     # ------------------------------------------------------------
-
     legacy_claims = (
         authorizer.get("claims")
         or {}
     )
-
     if legacy_claims.get("sub"):
         return str(legacy_claims["sub"])
-
     # ------------------------------------------------------------
     # OPTIONAL REQUEST ACTOR
     # ------------------------------------------------------------
-
     if body.get("performed_by"):
         return str(
             body["performed_by"]
         ).strip()
-
     # ------------------------------------------------------------
     # CUSTOMER FALLBACK
     # ------------------------------------------------------------
-
     if body.get("customer_id"):
         return str(
             body["customer_id"]
         ).strip()
-
     # ------------------------------------------------------------
     # SERVICE FALLBACK
     # ------------------------------------------------------------
-
     return "order-api"
-
 
 # ================================================================
 # AUDIT LOG
@@ -245,14 +219,18 @@ def write_audit_log(
     performed_by=None,
 ):
     """
+
     Write an audit/history record.
 
     This function intentionally does NOT commit.
-    The caller controls the transaction so that
-    the business operation and audit entry commit
-    together.
-    """
 
+    The caller controls the transaction so that
+
+    the business operation and audit entry commit
+
+    together.
+
+    """
     old_json = (
         json.dumps(
             old_value,
@@ -261,7 +239,6 @@ def write_audit_log(
         if old_value is not None
         else None
     )
-
     new_json = (
         json.dumps(
             new_value,
@@ -270,33 +247,31 @@ def write_audit_log(
         if new_value is not None
         else None
     )
-
     # The database schema stores:
     # customer_id, action, entity_type, entity_id, details, created_at.
     # performed_by is kept inside details because it may be a service
     # identity (for example "order-api") and therefore cannot be inserted
     # into the customers.customer_id foreign key column.
     customer_id = None
-
     if performed_by:
         candidate_customer_id = str(performed_by).strip()
-
         if candidate_customer_id:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
+
                     SELECT customer_id
+
                     FROM customers
+
                     WHERE customer_id = %s
+
                     """,
                     (candidate_customer_id,),
                 )
-
                 customer = cursor.fetchone()
-
                 if customer:
                     customer_id = candidate_customer_id
-
     details = json.dumps(
         {
             "performed_by": performed_by,
@@ -305,29 +280,46 @@ def write_audit_log(
         },
         default=json_default,
     )
-
     with connection.cursor() as cursor:
-
         cursor.execute(
             """
+
             INSERT INTO audit_logs
+
             (
+
                 customer_id,
+
                 action,
+
                 entity_type,
+
                 entity_id,
+
                 details,
+
                 created_at
+
             )
+
             VALUES
+
             (
+
                 %s,
+
                 %s,
+
                 %s,
+
                 %s,
+
                 %s,
+
                 %s
+
             )
+
             """,
             (
                 customer_id,
@@ -339,7 +331,6 @@ def write_audit_log(
                 .replace(tzinfo=None),
             ),
         )
-
     print(
         "Audit log written: "
         f"{entity_type} "
@@ -348,25 +339,20 @@ def write_audit_log(
         f"by {performed_by}"
     )
 
-
 # ================================================================
 # REQUEST BODY
 # ================================================================
 
 def parse_request_body(event):
     body = event.get("body")
-
     if body is None:
         return {}
-
     if isinstance(body, dict):
         return body
-
     if not isinstance(body, str):
         raise ValueError(
             "Request body must be JSON"
         )
-
     if event.get("isBase64Encoded"):
         try:
             body = base64.b64decode(
@@ -376,7 +362,6 @@ def parse_request_body(event):
             raise ValueError(
                 "Invalid base64 request body"
             ) from exc
-
     try:
         return json.loads(body)
     except json.JSONDecodeError as exc:
@@ -384,58 +369,47 @@ def parse_request_body(event):
             "Invalid JSON body"
         ) from exc
 
-
 # ================================================================
 # SQL STATEMENT SPLITTER
 # ================================================================
 
 def split_sql_statements(sql):
     """
+
     Split schema.sql into SQL statements.
 
     This handles semicolons inside quoted strings and ignores
-    SQL comments beginning with --.
-    """
 
+    SQL comments beginning with --.
+
+    """
     statements = []
     current = []
-
     in_single_quote = False
     in_double_quote = False
     in_backtick = False
     escape_next = False
-
     lines = sql.splitlines()
-
     for line in lines:
-
         stripped = line.strip()
-
         # --------------------------------------------------------
         # SKIP FULL-LINE COMMENTS
         # --------------------------------------------------------
-
         if stripped.startswith("--"):
             continue
-
         i = 0
-
         while i < len(line):
-
             char = line[i]
-
             if escape_next:
                 current.append(char)
                 escape_next = False
                 i += 1
                 continue
-
-            if char == "\\":
+            if char == "\\\\":
                 current.append(char)
                 escape_next = True
                 i += 1
                 continue
-
             if (
                 char == "'"
                 and not in_double_quote
@@ -447,7 +421,6 @@ def split_sql_statements(sql):
                 current.append(char)
                 i += 1
                 continue
-
             if (
                 char == '"'
                 and not in_single_quote
@@ -459,7 +432,6 @@ def split_sql_statements(sql):
                 current.append(char)
                 i += 1
                 continue
-
             if (
                 char == "`"
                 and not in_single_quote
@@ -471,7 +443,6 @@ def split_sql_statements(sql):
                 current.append(char)
                 i += 1
                 continue
-
             if (
                 char == ";"
                 and not in_single_quote
@@ -482,33 +453,25 @@ def split_sql_statements(sql):
                     "".join(current)
                     .strip()
                 )
-
                 if statement:
                     statements.append(
                         statement
                     )
-
                 current = []
                 i += 1
                 continue
-
             current.append(char)
             i += 1
-
         current.append("\n")
-
     final_statement = (
         "".join(current)
         .strip()
     )
-
     if final_statement:
         statements.append(
             final_statement
         )
-
     return statements
-
 
 # ================================================================
 # PRODUCTS STATUS MIGRATION
@@ -516,125 +479,144 @@ def split_sql_statements(sql):
 
 def migrate_products_status(connection):
     """
+
     Safely migrate an existing products table to support
+
     the new soft-delete/status requirement.
 
     Existing databases may already have the products table
+
     without a status column.
 
     This function:
 
     1. Checks whether products.status exists.
+
     2. Adds it when missing.
+
     3. Sets existing products to ACTIVE when stock > 0.
+
     4. Sets existing products to INACTIVE when stock = 0.
 
     This operation is safe to run multiple times.
-    """
 
+    """
     print(
         "Checking products.status migration..."
     )
-
     with connection.cursor() as cursor:
-
         # --------------------------------------------------------
         # CHECK WHETHER status COLUMN EXISTS
         # --------------------------------------------------------
-
         cursor.execute(
             """
+
             SELECT COUNT(*) AS column_count
+
             FROM INFORMATION_SCHEMA.COLUMNS
+
             WHERE TABLE_SCHEMA = %s
+
               AND TABLE_NAME = 'products'
+
               AND COLUMN_NAME = 'status'
+
             """,
             (DB_NAME,),
         )
-
         result = cursor.fetchone()
-
         column_exists = (
             result
             and int(
                 result["column_count"]
             ) > 0
         )
-
         # --------------------------------------------------------
         # ADD status COLUMN IF REQUIRED
         # --------------------------------------------------------
-
         if not column_exists:
-
             print(
                 "products.status does not exist. "
                 "Adding status column..."
             )
-
             cursor.execute(
                 """
+
                 ALTER TABLE products
+
                 ADD COLUMN status VARCHAR(20)
+
                 NOT NULL DEFAULT 'ACTIVE'
+
                 AFTER stock_count
+
                 """
             )
-
             print(
                 "products.status column added successfully."
             )
-
         else:
-
             print(
                 "products.status already exists. "
                 "No column migration required."
             )
-
         # --------------------------------------------------------
         # SYNCHRONIZE STATUS WITH EXISTING STOCK
         # --------------------------------------------------------
-
         cursor.execute(
             """
+
             UPDATE products
+
             SET status =
+
                 CASE
+
                     WHEN stock_count > 0
+
                         THEN 'ACTIVE'
+
                     ELSE 'INACTIVE'
+
                 END
+
             WHERE status IS NULL
+
                OR status NOT IN (
+
                     'ACTIVE',
+
                     'INACTIVE'
+
                )
+
                OR (
+
                     stock_count = 0
+
                     AND status <> 'INACTIVE'
+
                )
+
                OR (
+
                     stock_count > 0
+
                     AND status <> 'ACTIVE'
+
                )
+
             """
         )
-
         updated_rows = cursor.rowcount
-
         print(
             "Product status synchronization completed. "
             f"Rows updated: {updated_rows}"
         )
-
     connection.commit()
-
     print(
         "Products status migration completed successfully."
     )
-
 
 # ================================================================
 # SCHEMA INITIALIZATION
@@ -642,31 +624,30 @@ def migrate_products_status(connection):
 
 def initialize_schema():
     """
+
     Initialize the CloudMart MySQL schema using schema.sql
+
     packaged inside the Order Lambda deployment ZIP.
 
     Also performs safe migration of the existing products table
+
     so the new status column can be introduced without requiring
+
     manual database changes.
+
     """
-
     connection = None
-
     try:
-
         # --------------------------------------------------------
         # VERIFY schema.sql EXISTS
         # --------------------------------------------------------
-
         if not os.path.exists(
             SCHEMA_FILE
         ):
-
             print(
                 f"Schema file not found: "
                 f"{SCHEMA_FILE}"
             )
-
             return response(
                 500,
                 {
@@ -676,35 +657,27 @@ def initialize_schema():
                     ),
                 },
             )
-
         print(
             f"Reading schema file: "
             f"{SCHEMA_FILE}"
         )
-
         with open(
             SCHEMA_FILE,
             "r",
             encoding="utf-8",
         ) as schema_file:
-
             sql = schema_file.read()
-
         statements = (
             split_sql_statements(sql)
         )
-
         print(
             f"Found {len(statements)} SQL statements "
             f"in schema.sql"
         )
-
         # --------------------------------------------------------
         # CONNECT TO RDS
         # --------------------------------------------------------
-
         connection = get_connection()
-
         # --------------------------------------------------------
         # EXECUTE schema.sql FIRST
         # --------------------------------------------------------
@@ -714,92 +687,69 @@ def initialize_schema():
         # Running it first causes:
         # 1146: Table 'cloudmart.products' doesn't exist
         # --------------------------------------------------------
-
         executed = 0
         skipped = 0
-
         with connection.cursor() as cursor:
-
             for index, statement in enumerate(
                 statements,
                 start=1,
             ):
-
                 try:
-
                     print(
                         f"Executing SQL statement "
                         f"{index}/{len(statements)}"
                     )
-
                     cursor.execute(
                         statement
                     )
-
                     executed += 1
-
                 except pymysql.MySQLError as exc:
-
                     error_code = (
                         exc.args[0]
                         if exc.args
                         else None
                     )
-
                     error_message = str(
                         exc
                     )
-
                     # ------------------------------------------------
                     # EXISTING TABLE / INDEX
                     # ------------------------------------------------
-
                     if error_code in (
                         1050,
                         1061,
                     ):
-
                         print(
                             "Skipping existing "
                             "database object "
                             f"for statement {index}: "
                             f"{error_message}"
                         )
-
                         skipped += 1
                         continue
-
                     # ------------------------------------------------
                     # DUPLICATE DATA
                     # ------------------------------------------------
-
                     if error_code == 1062:
-
                         print(
                             "Skipping duplicate data "
                             f"for statement {index}: "
                             f"{error_message}"
                         )
-
                         skipped += 1
                         continue
-
                     # ------------------------------------------------
                     # REAL SQL FAILURE
                     # ------------------------------------------------
-
                     print(
                         f"Schema statement "
                         f"{index} failed."
                     )
-
                     print(
                         f"MySQL error: "
                         f"{error_message}"
                     )
-
                     raise
-
         # --------------------------------------------------------
         # PERFORM PRODUCTS STATUS MIGRATION
         # --------------------------------------------------------
@@ -807,26 +757,20 @@ def initialize_schema():
         # For a new database, schema.sql already creates status.
         # For an older database, this adds/synchronizes status safely.
         # --------------------------------------------------------
-
         migrate_products_status(
             connection
         )
-
         # --------------------------------------------------------
         # COMMIT
         # --------------------------------------------------------
-
         connection.commit()
-
         print(
             "Database schema initialization "
             "completed successfully."
         )
-
         put_metric(
             "SchemaInitializationSuccess"
         )
-
         return response(
             200,
             {
@@ -841,21 +785,16 @@ def initialize_schema():
                 "statements_skipped": skipped,
             },
         )
-
     except Exception as exc:
-
         if connection:
             connection.rollback()
-
         print(
             "Schema initialization error: "
             f"{type(exc).__name__}: {exc}"
         )
-
         put_metric(
             "SchemaInitializationFailures"
         )
-
         return response(
             500,
             {
@@ -865,117 +804,89 @@ def initialize_schema():
                 "error": str(exc),
             },
         )
-
     finally:
-
         if connection:
             connection.close()
-
 
 # ================================================================
 # CREATE ORDER
 # ================================================================
 
 def create_order(body, performed_by=None):
-
     if not isinstance(body, dict):
         raise ValueError(
             "Request body must be a JSON object"
         )
-
     customer_id = body.get(
         "customer_id"
     )
-
     items = body.get("items")
-
     # ------------------------------------------------------------
     # CUSTOMER VALIDATION
     # ------------------------------------------------------------
-
     if not customer_id:
         raise ValueError(
             "customer_id is required"
         )
-
     customer_id = str(
         customer_id
     ).strip()
-
     if not customer_id:
         raise ValueError(
             "customer_id cannot be empty"
         )
-
     # ------------------------------------------------------------
     # ITEM VALIDATION
     # ------------------------------------------------------------
-
     if not isinstance(items, list):
         raise ValueError(
             "items must be an array"
         )
-
     if len(items) == 0:
         raise ValueError(
             "items must contain at least one item"
         )
-
     if len(items) > 100:
         raise ValueError(
             "Too many order items"
         )
-
     # ------------------------------------------------------------
     # NORMALIZE ITEMS
     # ------------------------------------------------------------
-
     item_map = {}
-
     for item in items:
-
         if not isinstance(item, dict):
             raise ValueError(
                 "Each item must be an object"
             )
-
         if "product_id" not in item:
             raise ValueError(
                 "product_id is required"
             )
-
         if "quantity" not in item:
             raise ValueError(
                 "quantity is required"
             )
-
         try:
-
             product_id = int(
                 item["product_id"]
             )
-
             quantity = int(
                 item["quantity"]
             )
-
         except (TypeError, ValueError):
-
             raise ValueError(
                 "product_id and quantity "
                 "must be numbers"
             )
-
         if product_id <= 0:
             raise ValueError(
                 "product_id must be greater than zero"
             )
-
         if quantity <= 0:
             raise ValueError(
                 "quantity must be greater than zero"
             )
-
         item_map[product_id] = (
             item_map.get(
                 product_id,
@@ -983,7 +894,6 @@ def create_order(body, performed_by=None):
             )
             + quantity
         )
-
     normalized_items = [
         {
             "product_id": product_id,
@@ -994,45 +904,38 @@ def create_order(body, performed_by=None):
             item_map.items()
         )
     ]
-
     order_id = (
         "ORD-"
         + uuid.uuid4().hex[:12].upper()
     )
-
     now = (
         datetime.now(timezone.utc)
         .replace(tzinfo=None)
     )
-
     connection = None
-
     try:
-
         connection = get_connection()
-
         # --------------------------------------------------------
         # VERIFY CUSTOMER
         # --------------------------------------------------------
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 SELECT
+
                     customer_id
+
                 FROM customers
+
                 WHERE customer_id = %s
+
                 """,
                 (customer_id,),
             )
-
             customer = cursor.fetchone()
-
         if not customer:
-
             connection.rollback()
-
             return response(
                 400,
                 {
@@ -1042,78 +945,71 @@ def create_order(body, performed_by=None):
                     "customer_id": customer_id,
                 },
             )
-
         # --------------------------------------------------------
         # READ PRODUCTS AND CHECK STOCK
         # --------------------------------------------------------
-
         total_amount = Decimal(
             "0.00"
         )
-
         priced_items = []
-
         with connection.cursor() as cursor:
-
             for item in normalized_items:
-
                 product_id = item[
                     "product_id"
                 ]
-
                 quantity = item[
                     "quantity"
                 ]
-
                 cursor.execute(
                     """
+
                     SELECT
+
                         product_id,
+
                         name,
+
                         description,
+
                         price,
+
                         stock_count,
+
                         status
+
                     FROM products
+
                     WHERE product_id = %s
+
                     FOR UPDATE
+
                     """,
                     (product_id,),
                 )
-
                 product = cursor.fetchone()
-
                 if not product:
-
                     raise ValueError(
                         f"Product {product_id} "
                         f"does not exist"
                     )
-
                 price = Decimal(
                     str(
                         product["price"]
                     )
                 )
-
                 stock_count = int(
                     product[
                         "stock_count"
                     ]
                 )
-
                 product_status = (
                     product["status"]
                 )
-
                 # ------------------------------------------------
                 # INACTIVE PRODUCT
                 # ------------------------------------------------
-
                 if product_status != "ACTIVE":
-
                     connection.rollback()
-
                     return response(
                         409,
                         {
@@ -1127,15 +1023,11 @@ def create_order(body, performed_by=None):
                             "status": product_status,
                         },
                     )
-
                 # ------------------------------------------------
                 # OUT OF STOCK
                 # ------------------------------------------------
-
                 if stock_count <= 0:
-
                     connection.rollback()
-
                     return response(
                         409,
                         {
@@ -1149,15 +1041,11 @@ def create_order(body, performed_by=None):
                             "available_stock": 0,
                         },
                     )
-
                 # ------------------------------------------------
                 # INSUFFICIENT STOCK
                 # ------------------------------------------------
-
                 if quantity > stock_count:
-
                     connection.rollback()
-
                     return response(
                         409,
                         {
@@ -1172,7 +1060,6 @@ def create_order(body, performed_by=None):
                             "available_stock": stock_count,
                         },
                     )
-
                 priced_items.append(
                     {
                         "product_id": product_id,
@@ -1180,37 +1067,52 @@ def create_order(body, performed_by=None):
                         "price": price,
                     }
                 )
-
                 total_amount += (
                     price * quantity
                 )
-
         # --------------------------------------------------------
         # INSERT ORDER
         # --------------------------------------------------------
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 INSERT INTO orders
+
                 (
+
                     order_id,
+
                     customer_id,
+
                     status,
+
                     total_amount,
+
                     created_at,
+
                     updated_at
+
                 )
+
                 VALUES
+
                 (
+
                     %s,
+
                     %s,
+
                     %s,
+
                     %s,
+
                     %s,
+
                     %s
+
                 )
+
                 """,
                 (
                     order_id,
@@ -1221,35 +1123,50 @@ def create_order(body, performed_by=None):
                     now,
                 ),
             )
-
         # --------------------------------------------------------
         # INSERT ORDER ITEMS
         # --------------------------------------------------------
-
         with connection.cursor() as cursor:
-
             for item in priced_items:
-
                 cursor.execute(
                     """
+
                     INSERT INTO order_items
+
                     (
+
                         order_id,
+
                         product_id,
+
                         quantity,
+
                         unit_price,
+
                         subtotal,
+
                         created_at
+
                     )
+
                     VALUES
+
                     (
+
                         %s,
+
                         %s,
+
                         %s,
+
                         %s,
+
                         %s,
+
                         %s
+
                     )
+
                     """,
                     (
                         order_id,
@@ -1264,11 +1181,9 @@ def create_order(body, performed_by=None):
                         now,
                     ),
                 )
-
         # --------------------------------------------------------
         # AUDIT: ORDER CREATED
         # --------------------------------------------------------
-
         new_order_snapshot = {
             "order_id": order_id,
             "customer_id": customer_id,
@@ -1291,7 +1206,6 @@ def create_order(body, performed_by=None):
             "created_at": now,
             "updated_at": now,
         }
-
         write_audit_log(
             connection=connection,
             entity_type="ORDER",
@@ -1301,22 +1215,17 @@ def create_order(body, performed_by=None):
             new_value=new_order_snapshot,
             performed_by=performed_by,
         )
-
         # --------------------------------------------------------
         # COMMIT ORDER + AUDIT TOGETHER
         # --------------------------------------------------------
-
         connection.commit()
-
         print(
             f"Order {order_id} created successfully "
             f"with PROCESSING status"
         )
-
         # --------------------------------------------------------
         # SEND ORDER TO SQS
         # --------------------------------------------------------
-
         message = {
             "order_id": order_id,
             "customer_id": customer_id,
@@ -1338,22 +1247,18 @@ def create_order(body, performed_by=None):
                 total_amount
             ),
         }
-
         sqs.send_message(
             QueueUrl=QUEUE_URL,
             MessageBody=json.dumps(
                 message
             ),
         )
-
         print(
             f"Order {order_id} sent to SQS successfully"
         )
-
         put_metric(
             "OrdersCreated"
         )
-
         return response(
             202,
             {
@@ -1368,37 +1273,28 @@ def create_order(body, performed_by=None):
                 ),
             },
         )
-
     except ValueError as exc:
-
         if connection:
             connection.rollback()
-
         print(
             f"Order validation error: {exc}"
         )
-
         return response(
             400,
             {
                 "message": str(exc),
             },
         )
-
     except Exception as exc:
-
         if connection:
             connection.rollback()
-
         print(
             "Order creation error: "
             f"{type(exc).__name__}: {exc}"
         )
-
         put_metric(
             "OrdersFailed"
         )
-
         return response(
             500,
             {
@@ -1407,92 +1303,101 @@ def create_order(body, performed_by=None):
                 ),
             },
         )
-
     finally:
-
         if connection:
             connection.close()
-
 
 # ================================================================
 # GET SINGLE ORDER
 # ================================================================
 
 def get_order(order_id):
-
     connection = None
-
     try:
-
         connection = get_connection()
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 SELECT
+
                     o.order_id,
+
                     o.customer_id,
+
                     c.name AS customer_name,
+
                     c.email AS customer_email,
+
                     o.status,
+
                     o.total_amount,
+
                     o.created_at,
+
                     o.updated_at
+
                 FROM orders o
+
                 INNER JOIN customers c
+
                     ON o.customer_id = c.customer_id
+
                 WHERE o.order_id = %s
+
                 """,
                 (order_id,),
             )
-
             order = cursor.fetchone()
-
         if not order:
-
             return response(
                 404,
                 {
                     "message": "Order not found",
                 },
             )
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 SELECT
+
                     oi.product_id,
+
                     p.name AS product_name,
+
                     p.description AS product_description,
+
                     oi.quantity,
+
                     oi.unit_price,
+
                     oi.created_at
+
                 FROM order_items oi
+
                 INNER JOIN products p
+
                     ON oi.product_id = p.product_id
+
                 WHERE oi.order_id = %s
+
                 ORDER BY oi.product_id
+
                 """,
                 (order_id,),
             )
-
             order["items"] = (
                 cursor.fetchall()
             )
-
         return response(
             200,
             order,
         )
-
     except Exception as exc:
-
         print(
             f"Get order error: {exc}"
         )
-
         return response(
             500,
             {
@@ -1501,48 +1406,44 @@ def get_order(order_id):
                 ),
             },
         )
-
     finally:
-
         if connection:
             connection.close()
-
 
 # ================================================================
 # GET CUSTOMER ORDERS
 # ================================================================
 
 def get_customer_orders(customer_id):
-
     connection = None
-
     try:
-
         connection = get_connection()
-
         # --------------------------------------------------------
         # GET CUSTOMER
         # --------------------------------------------------------
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 SELECT
+
                     customer_id,
+
                     name,
+
                     email,
+
                     phone
+
                 FROM customers
+
                 WHERE customer_id = %s
+
                 """,
                 (customer_id,),
             )
-
             customer = cursor.fetchone()
-
         if not customer:
-
             return response(
                 404,
                 {
@@ -1552,62 +1453,68 @@ def get_customer_orders(customer_id):
                     "customer_id": customer_id,
                 },
             )
-
         # --------------------------------------------------------
         # GET ORDERS + PRODUCTS
         # --------------------------------------------------------
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 SELECT
+
                     o.order_id,
+
                     o.customer_id,
+
                     o.status,
+
                     o.total_amount,
+
                     o.created_at,
+
                     o.updated_at,
 
                     oi.product_id,
+
                     p.name AS product_name,
+
                     p.description AS product_description,
+
                     oi.quantity,
+
                     oi.unit_price AS item_price
 
                 FROM orders o
 
                 INNER JOIN order_items oi
+
                     ON o.order_id = oi.order_id
 
                 INNER JOIN products p
+
                     ON oi.product_id = p.product_id
 
                 WHERE o.customer_id = %s
 
                 ORDER BY
+
                     o.created_at DESC,
+
                     oi.product_id
+
                 """,
                 (customer_id,),
             )
-
             rows = cursor.fetchall()
-
         # --------------------------------------------------------
         # GROUP ITEMS BY ORDER
         # --------------------------------------------------------
-
         orders = {}
-
         for row in rows:
-
             order_id = row[
                 "order_id"
             ]
-
             if order_id not in orders:
-
                 orders[order_id] = {
                     "order_id": order_id,
                     "customer_id": row[
@@ -1627,7 +1534,6 @@ def get_customer_orders(customer_id):
                     ],
                     "items": [],
                 }
-
             orders[order_id][
                 "items"
             ].append(
@@ -1649,7 +1555,6 @@ def get_customer_orders(customer_id):
                     ],
                 }
             )
-
         return response(
             200,
             {
@@ -1660,14 +1565,11 @@ def get_customer_orders(customer_id):
                 ),
             },
         )
-
     except Exception as exc:
-
         print(
             "Get customer orders error: "
             f"{exc}"
         )
-
         return response(
             500,
             {
@@ -1676,14 +1578,98 @@ def get_customer_orders(customer_id):
                 ),
             },
         )
-
     finally:
+        if connection:
+            connection.close()
+# ================================================================
+# GET ALL ORDERS
 
+def get_all_orders():
+    connection = None
+    try:
+        connection = get_connection()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    o.order_id,
+                    o.customer_id,
+                    c.name AS customer_name,
+                    c.email AS customer_email,
+                    o.status,
+                    o.total_amount,
+                    o.created_at,
+                    o.updated_at,
+                    oi.product_id,
+                    p.name AS product_name,
+                    p.description AS product_description,
+                    oi.quantity,
+                    oi.unit_price
+                FROM orders o
+                INNER JOIN customers c
+                    ON o.customer_id = c.customer_id
+                LEFT JOIN order_items oi
+                    ON o.order_id = oi.order_id
+                LEFT JOIN products p
+                    ON oi.product_id = p.product_id
+                ORDER BY o.created_at DESC, oi.product_id
+                """
+            )
+            rows = cursor.fetchall()
+        orders = {}
+        for row in rows:
+            order_id = row["order_id"]
+            if order_id not in orders:
+                orders[order_id] = {
+                    "order_id": order_id,
+                    "customer_id": row["customer_id"],
+                    "customer_name": row["customer_name"],
+                    "customer_email": row["customer_email"],
+                    "status": row["status"],
+                    "total_amount": row["total_amount"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "items": [],
+                }
+            if row["product_id"] is not None:
+                orders[order_id]["items"].append(
+                    {
+                        "product_id": row["product_id"],
+                        "product_name": row["product_name"],
+                        "product_description": row["product_description"],
+                        "quantity": row["quantity"],
+                        "price": row["unit_price"],
+                    }
+                )
+        return response(
+            200,
+            {
+                "count": len(orders),
+                "orders": list(orders.values()),
+            },
+        )
+    except Exception as exc:
+        print(f"Get all orders error: {exc}")
+        return response(
+            500,
+            {"message": "Internal server error"},
+        )
+    finally:
         if connection:
             connection.close()
 
-
-# ================================================================
+def get_authorizer_context(event):
+    request_context = event.get("requestContext") or {}
+    authorizer = request_context.get("authorizer") or {}
+    role = str(authorizer.get("role") or "").strip().upper()
+    customer_id = str(authorizer.get("customer_id") or "").strip()
+    if not customer_id:
+        principal_id = str(authorizer.get("principalId") or "").strip()
+        if principal_id.startswith("cloudmart-"):
+            customer_id = principal_id[len("cloudmart-"):]
+        else:
+            customer_id = principal_id
+    return role, customer_id
 # UPDATE ORDER
 # ================================================================
 
@@ -1692,9 +1678,7 @@ def update_order(
     body,
     performed_by=None,
 ):
-
     if not isinstance(body, dict):
-
         return response(
             400,
             {
@@ -1704,20 +1688,16 @@ def update_order(
                 ),
             },
         )
-
     status = body.get(
         "status"
     )
-
     allowed_statuses = [
         "PROCESSING",
         "CONFIRMED",
         "FAILED",
         "CANCELLED",
     ]
-
     if status not in allowed_statuses:
-
         return response(
             400,
             {
@@ -1729,48 +1709,48 @@ def update_order(
                 ),
             },
         )
-
     connection = None
-
     try:
-
         connection = get_connection()
-
         now = (
             datetime.now(timezone.utc)
             .replace(tzinfo=None)
         )
-
         # --------------------------------------------------------
         # GET OLD ORDER
         # --------------------------------------------------------
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 SELECT
+
                     order_id,
+
                     customer_id,
+
                     status,
+
                     total_amount,
+
                     created_at,
+
                     updated_at
+
                 FROM orders
+
                 WHERE order_id = %s
+
                 FOR UPDATE
+
                 """,
                 (order_id,),
             )
-
             old_order = (
                 cursor.fetchone()
             )
-
             if not old_order:
-
                 connection.rollback()
-
                 return response(
                     404,
                     {
@@ -1779,20 +1759,23 @@ def update_order(
                         ),
                     },
                 )
-
         # --------------------------------------------------------
         # UPDATE ORDER
         # --------------------------------------------------------
-
         with connection.cursor() as cursor:
-
             cursor.execute(
                 """
+
                 UPDATE orders
+
                 SET
+
                     status = %s,
+
                     updated_at = %s
+
                 WHERE order_id = %s
+
                 """,
                 (
                     status,
@@ -1800,11 +1783,9 @@ def update_order(
                     order_id,
                 ),
             )
-
         # --------------------------------------------------------
         # AUDIT: ORDER UPDATED
         # --------------------------------------------------------
-
         old_order_snapshot = {
             "order_id": old_order[
                 "order_id"
@@ -1825,7 +1806,6 @@ def update_order(
                 "updated_at"
             ],
         }
-
         new_order_snapshot = {
             "order_id": old_order[
                 "order_id"
@@ -1842,7 +1822,6 @@ def update_order(
             ],
             "updated_at": now,
         }
-
         write_audit_log(
             connection=connection,
             entity_type="ORDER",
@@ -1852,18 +1831,14 @@ def update_order(
             new_value=new_order_snapshot,
             performed_by=performed_by,
         )
-
         # --------------------------------------------------------
         # COMMIT
         # --------------------------------------------------------
-
         connection.commit()
-
         print(
             f"Order {order_id} updated: "
             f"{old_order['status']} -> {status}"
         )
-
         return response(
             200,
             {
@@ -1875,16 +1850,12 @@ def update_order(
                 "status": status,
             },
         )
-
     except Exception as exc:
-
         if connection:
             connection.rollback()
-
         print(
             f"Update order error: {exc}"
         )
-
         return response(
             500,
             {
@@ -1893,12 +1864,9 @@ def update_order(
                 ),
             },
         )
-
     finally:
-
         if connection:
             connection.close()
-
 
 # ================================================================
 # CANCEL ORDER
@@ -1908,41 +1876,42 @@ def cancel_order(
     order_id,
     performed_by=None,
 ):
-
     connection = None
-
     try:
-
         connection = get_connection()
-
         with connection.cursor() as cursor:
-
             # ----------------------------------------------------
             # LOCK ORDER
             # ----------------------------------------------------
-
             cursor.execute(
                 """
+
                 SELECT
+
                     order_id,
+
                     customer_id,
+
                     status,
+
                     total_amount,
+
                     created_at,
+
                     updated_at
+
                 FROM orders
+
                 WHERE order_id = %s
+
                 FOR UPDATE
+
                 """,
                 (order_id,),
             )
-
             order = cursor.fetchone()
-
             if not order:
-
                 connection.rollback()
-
                 return response(
                     404,
                     {
@@ -1951,18 +1920,14 @@ def cancel_order(
                         ),
                     },
                 )
-
             # ----------------------------------------------------
             # ONLY PROCESSING ORDERS CAN BE CANCELLED
             # ----------------------------------------------------
-
             if (
                 order["status"]
                 != "PROCESSING"
             ):
-
                 connection.rollback()
-
                 return response(
                     400,
                     {
@@ -1977,36 +1942,37 @@ def cancel_order(
                         ),
                     },
                 )
-
             now = (
                 datetime.now(
                     timezone.utc
                 )
                 .replace(tzinfo=None)
             )
-
             # ----------------------------------------------------
             # UPDATE ORDER
             # ----------------------------------------------------
-
             cursor.execute(
                 """
+
                 UPDATE orders
+
                 SET
+
                     status = 'CANCELLED',
+
                     updated_at = %s
+
                 WHERE order_id = %s
+
                 """,
                 (
                     now,
                     order_id,
                 ),
             )
-
         # --------------------------------------------------------
         # AUDIT: ORDER CANCELLED
         # --------------------------------------------------------
-
         old_order_snapshot = {
             "order_id": order[
                 "order_id"
@@ -2027,7 +1993,6 @@ def cancel_order(
                 "updated_at"
             ],
         }
-
         new_order_snapshot = {
             "order_id": order[
                 "order_id"
@@ -2044,7 +2009,6 @@ def cancel_order(
             ],
             "updated_at": now,
         }
-
         write_audit_log(
             connection=connection,
             entity_type="ORDER",
@@ -2054,21 +2018,16 @@ def cancel_order(
             new_value=new_order_snapshot,
             performed_by=performed_by,
         )
-
         # --------------------------------------------------------
         # COMMIT
         # --------------------------------------------------------
-
         connection.commit()
-
         print(
             f"Order {order_id} cancelled successfully"
         )
-
         put_metric(
             "OrdersCancelled"
         )
-
         return response(
             200,
             {
@@ -2077,16 +2036,12 @@ def cancel_order(
                 "status": "CANCELLED",
             },
         )
-
     except Exception as exc:
-
         if connection:
             connection.rollback()
-
         print(
             f"Cancel order error: {exc}"
         )
-
         return response(
             500,
             {
@@ -2095,243 +2050,85 @@ def cancel_order(
                 ),
             },
         )
-
     finally:
-
         if connection:
             connection.close()
-
-
 # ================================================================
 # LAMBDA HANDLER
-# ================================================================
 
-def lambda_handler(
-    event,
-    context,
-):
-
+def lambda_handler(event, context):
     if not isinstance(event, dict):
         event = {}
-
-    print(
-        "Order Lambda request: "
-        f"{event.get('httpMethod', '')} "
-        f"{event.get('path', '')}"
-    )
-
-    # ============================================================
-    # INTERNAL SCHEMA INITIALIZATION
-    # ============================================================
-
-    if (
-        event.get("action")
-        == "initialize_schema"
-    ):
-
-        print(
-            "Received initialize_schema action"
-        )
-
+    if event.get("action") == "initialize_schema":
         return initialize_schema()
-
-    # ============================================================
-    # API GATEWAY INFORMATION
-    # ============================================================
-
-    method = (
-        event.get(
-            "httpMethod",
-            "",
-        )
-        .upper()
-    )
-
-    path = event.get(
-        "path",
-        "",
-    )
-
-    path_parameters = (
-        event.get("pathParameters")
-        or {}
-    )
-
-    query_parameters = (
-        event.get(
-            "queryStringParameters"
-        )
-        or {}
-    )
-
-    # Count each Order API request exactly once.
+    method = str(event.get("httpMethod") or "").upper()
+    path = str(event.get("path") or "")
+    path_parameters = event.get("pathParameters") or {}
+    query_parameters = event.get("queryStringParameters") or {}
+    order_id = path_parameters.get("orderId")
     put_metric("OrderRequests")
-
-    order_id = path_parameters.get(
-        "orderId"
-    )
-
-    # ============================================================
-    # POST /orders
-    # ============================================================
-
-    if (
-        method == "POST"
-        and not order_id
-    ):
-
-        try:
-
-            body = parse_request_body(
-                event
-            )
-
-            performed_by = (
-                get_performed_by(
-                    event,
-                    body,
-                )
-            )
-
-            return create_order(
-                body,
-                performed_by,
-            )
-
-        except ValueError as exc:
-
+    role, authenticated_customer_id = get_authorizer_context(event)
+    # POST /orders: only USER credentials can place an order.
+    # An ADMIN token cannot be used to place an order.
+    if method == "POST" and not order_id:
+        if role != "USER":
             return response(
-                400,
-                {
-                    "message": str(exc),
-                },
+                403,
+                {"message": "Only customer credentials can place orders"},
             )
-
-    # ============================================================
-    # POST /orders/{orderId}/cancel
-    # ============================================================
-
-    if (
-        method == "POST"
-        and order_id
-        and path.endswith(
-            "/cancel"
-        )
-    ):
-
-        performed_by = (
-            get_performed_by(
-                event,
-                {},
+        if not authenticated_customer_id:
+            return response(
+                403,
+                {"message": "Customer identity was not found"},
             )
-        )
-
-        return cancel_order(
-            order_id,
-            performed_by,
-        )
-
-    # ============================================================
+        try:
+            body = parse_request_body(event)
+            customer_id = str(body.get("customer_id") or "").strip()
+            if not customer_id:
+                return response(
+                    400,
+                    {"message": "customer_id is required"},
+                )
+            if customer_id != authenticated_customer_id:
+                return response(
+                    403,
+                    {"message": "You can only place orders for your own customer account"},
+                )
+            return create_order(body, authenticated_customer_id)
+        except ValueError as exc:
+            return response(400, {"message": str(exc)})
     # GET /orders/{orderId}
-    # ============================================================
-
-    if (
-        method == "GET"
-        and order_id
-    ):
-
-        return get_order(
-            order_id
-        )
-
-    # ============================================================
-    # GET /orders?customer_id=CUST101
-    # ============================================================
-
-    if method == "GET":
-
-        customer_id = (
-            query_parameters.get(
-                "customer_id"
-            )
-        )
-
-        if not customer_id:
-
+    if method == "GET" and order_id:
+        return get_order(order_id)
+    # GET /orders
+    # ADMIN -> all orders
+    # USER  -> only the authenticated customer's orders
+    if method == "GET" and not order_id:
+        if query_parameters.get("customer_id"):
             return response(
                 400,
-                {
-                    "message": (
-                        "customer_id query "
-                        "parameter is required"
-                    ),
-                },
+                {"message": "customer_id query parameter is not supported. Use GET /orders."},
             )
-
-        customer_id = str(
-            customer_id
-        ).strip()
-
-        if not customer_id:
-
-            return response(
-                400,
-                {
-                    "message": (
-                        "customer_id cannot "
-                        "be empty"
-                    ),
-                },
-            )
-
-        return get_customer_orders(
-            customer_id
-        )
-
-    # ============================================================
-    # PUT /orders/{orderId}
-    # ============================================================
-
-    if (
-        method == "PUT"
-        and order_id
-    ):
-
-        try:
-
-            body = parse_request_body(
-                event
-            )
-
-            performed_by = (
-                get_performed_by(
-                    event,
-                    body,
+        if role == "ADMIN":
+            return get_all_orders()
+        if role == "USER":
+            if not authenticated_customer_id:
+                return response(
+                    403,
+                    {"message": "Customer identity was not found"},
                 )
-            )
-
-            return update_order(
-                order_id,
-                body,
-                performed_by,
-            )
-
+            return get_customer_orders(authenticated_customer_id)
+        return response(403, {"message": "Invalid user role"})
+    # POST /orders/{orderId}/cancel
+    if method == "POST" and order_id and path.endswith("/cancel"):
+        performed_by = authenticated_customer_id or get_performed_by(event, {})
+        return cancel_order(order_id, performed_by)
+    # PUT /orders/{orderId}
+    if method == "PUT" and order_id:
+        try:
+            body = parse_request_body(event)
+            performed_by = authenticated_customer_id or get_performed_by(event, body)
+            return update_order(order_id, body, performed_by)
         except ValueError as exc:
-
-            return response(
-                400,
-                {
-                    "message": str(exc),
-                },
-            )
-
-    # ============================================================
-    # UNKNOWN ROUTE
-    # ============================================================
-
-    return response(
-        404,
-        {
-            "message": "Route not found",
-        },
-    )
+            return response(400, {"message": str(exc)})
+    return response(404, {"message": "Route not found"})

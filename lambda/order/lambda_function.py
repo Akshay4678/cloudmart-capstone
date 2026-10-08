@@ -2106,7 +2106,7 @@ def cancel_order(
             # ----------------------------------------------------
             if (
                 order["status"]
-                != "PROCESSING"
+                != "CONFIRMED"
             ):
                 connection.rollback()
                 return response(

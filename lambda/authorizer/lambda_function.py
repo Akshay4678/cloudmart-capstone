@@ -210,7 +210,6 @@ def is_allowed(role, method, path):
         GET    /orders/{orderId}
         PUT    /orders/{orderId}
 
-        PATCH is not allowed for users.
 
     ADMIN permissions:
 
@@ -273,7 +272,7 @@ def is_allowed(role, method, path):
 
             return method in {
                 "GET",
-                "POST"
+                "POST",
             }
 
 
@@ -291,7 +290,8 @@ def is_allowed(role, method, path):
 
             return method in {
                 "GET",
-                "PUT"
+                "PUT",
+                "PATCH"
             }
 
 
@@ -388,7 +388,8 @@ def is_allowed(role, method, path):
 
             return method in {
                 "GET",
-                "PUT"
+                "PUT",
+                
             }
 
 

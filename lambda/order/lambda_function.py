@@ -2315,14 +2315,57 @@ def lambda_handler(event, context):
         # ONLY ADMIN CAN CANCEL
         # --------------------------------------------------------
 
-        if role != "ADMIN":
+        if role == "USER":
+
+            connection = None
+
+            try:
+                connection = get_connection()
+
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT customer_id
+                        FROM orders
+                        WHERE order_id = %s
+                        LIMIT 1
+                        """,
+                        (order_id,),
+                    )
+
+                    order = cursor.fetchone()
+
+                if not order:
+                    return response(
+                        404,
+                        {
+                            "message": "Order not found"
+                        },
+                    )
+
+                if str(order["customer_id"]) != str(authenticated_customer_id):
+                    return response(
+                        403,
+                        {
+                            "message": (
+                                "You can only cancel "
+                                "your own orders"
+                            )
+                        },
+                    )
+
+            finally:
+                if connection:
+                    connection.close()
+
+        elif role != "ADMIN":
 
             return response(
                 403,
                 {
                     "message": (
-                        "Only ADMIN users "
-                        "can cancel orders"
+                        "Only ADMIN users or the "
+                        "order owner can cancel orders"
                     )
                 },
             )

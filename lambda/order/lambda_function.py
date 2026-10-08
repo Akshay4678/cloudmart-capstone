@@ -1869,6 +1869,187 @@ def update_order(
             connection.close()
 
 # ================================================================
+# DELETE ORDER
+# ================================================================
+
+def delete_order(
+    order_id,
+    performed_by=None,
+):
+    connection = None
+    try:
+        connection = get_connection()
+
+        with connection.cursor() as cursor:
+            # ----------------------------------------------------
+            # LOCK ORDER
+            # ----------------------------------------------------
+            cursor.execute(
+                """
+                SELECT
+                    order_id,
+                    customer_id,
+                    status,
+                    total_amount,
+                    created_at,
+                    updated_at
+                FROM orders
+                WHERE order_id = %s
+                FOR UPDATE
+                """,
+                (order_id,),
+            )
+            order = cursor.fetchone()
+
+            if not order:
+                connection.rollback()
+                return response(
+                    404,
+                    {"message": "Order not found"},
+                )
+
+            # ----------------------------------------------------
+            # CONFIRMED ORDERS CAN BE DELETED.
+            # RESTORE THE STOCK DEDUCTED FOR THE ORDER.
+            # ----------------------------------------------------
+            if order["status"] != "CONFIRMED":
+                connection.rollback()
+                return response(
+                    400,
+                    {
+                        "message": "Only CONFIRMED orders can be deleted",
+                        "current_status": order["status"],
+                    },
+                )
+
+            cursor.execute(
+                """
+                SELECT
+                    product_id,
+                    quantity
+                FROM order_items
+                WHERE order_id = %s
+                """,
+                (order_id,),
+            )
+            order_items = cursor.fetchall()
+
+            # ----------------------------------------------------
+            # RESTORE INVENTORY
+            # ----------------------------------------------------
+            for item in order_items:
+                product_id = item["product_id"]
+                quantity = int(item["quantity"])
+
+                cursor.execute(
+                    """
+                    SELECT
+                        product_id,
+                        stock_count,
+                        status
+                    FROM products
+                    WHERE product_id = %s
+                    FOR UPDATE
+                    """,
+                    (product_id,),
+                )
+                product = cursor.fetchone()
+
+                if not product:
+                    raise ValueError(
+                        f"Product {product_id} not found"
+                    )
+
+                old_stock = int(product["stock_count"])
+                old_status = product["status"]
+                new_stock = old_stock + quantity
+                new_status = "ACTIVE" if new_stock > 0 else "INACTIVE"
+
+                cursor.execute(
+                    """
+                    UPDATE products
+                    SET
+                        stock_count = %s,
+                        status = %s
+                    WHERE product_id = %s
+                    """,
+                    (
+                        new_stock,
+                        new_status,
+                        product_id,
+                    ),
+                )
+
+                write_audit_log(
+                    connection=connection,
+                    entity_type="PRODUCT",
+                    entity_id=product_id,
+                    action="STOCK_INCREASED",
+                    old_value={
+                        "stock_count": old_stock,
+                        "status": old_status,
+                    },
+                    new_value={
+                        "stock_count": new_stock,
+                        "status": new_status,
+                        "quantity_increased": quantity,
+                        "order_id": order_id,
+                    },
+                    performed_by=performed_by,
+                )
+
+            # ----------------------------------------------------
+            # AUDIT ORDER DELETION
+            # ----------------------------------------------------
+            write_audit_log(
+                connection=connection,
+                entity_type="ORDER",
+                entity_id=order_id,
+                action="ORDER_DELETED",
+                old_value={
+                    "order_id": order["order_id"],
+                    "customer_id": order["customer_id"],
+                    "status": order["status"],
+                    "total_amount": order["total_amount"],
+                    "created_at": order["created_at"],
+                    "updated_at": order["updated_at"],
+                },
+                new_value=None,
+                performed_by=performed_by,
+            )
+
+            # order_items are removed by the existing ON DELETE CASCADE.
+            cursor.execute(
+                """
+                DELETE FROM orders
+                WHERE order_id = %s
+                """,
+                (order_id,),
+            )
+
+        connection.commit()
+
+        return response(
+            200,
+            {
+                "message": "Order deleted",
+                "order_id": order_id,
+            },
+        )
+
+    except Exception as exc:
+        if connection:
+            connection.rollback()
+        print(f"Delete order error: {exc}")
+        return response(
+            500,
+            {"message": "Internal server error"},
+        )
+    finally:
+        if connection:
+            connection.close()
+
+# ================================================================
 # CANCEL ORDER
 # ================================================================
 
@@ -2287,6 +2468,40 @@ def lambda_handler(event, context):
             {
                 "message": "Invalid user role"
             },
+        )
+
+    # ============================================================
+    # DELETE /orders/{orderId}
+    #
+    # CONFIRMED orders can be deleted.
+    # Inventory is restored before the order is removed.
+    # ADMIN only.
+    # ============================================================
+
+    if (
+        method == "DELETE"
+        and order_id
+    ):
+
+        if role != "ADMIN":
+            return response(
+                403,
+                {
+                    "message": "Only ADMIN users can delete orders"
+                },
+            )
+
+        performed_by = (
+            authenticated_customer_id
+            or get_performed_by(
+                event,
+                {}
+            )
+        )
+
+        return delete_order(
+            order_id,
+            performed_by
         )
 
     # ============================================================

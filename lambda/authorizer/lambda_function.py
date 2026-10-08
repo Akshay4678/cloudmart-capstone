@@ -370,7 +370,8 @@ def is_allowed(role, method, path):
             return method in {
                 "GET",
                 "PUT",
-                "PATCH"
+                "PATCH",
+                "DELETE"
             }
 
 

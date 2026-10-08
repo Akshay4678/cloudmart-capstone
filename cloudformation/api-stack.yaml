@@ -1524,9 +1524,7 @@ Resources:
 
   # ==============================================================
   # DELETE /orders/{orderId}
-  #
-  # DELETE is intentionally not allowed.
-  # The Lambda authorizer will reject this request.
+  # DELETE is ADMIN only.
   # ==============================================================
 
   OrderIdDeleteMethod:
@@ -1544,18 +1542,22 @@ Resources:
 
       AuthorizationType: CUSTOM
 
-      AuthorizerId:
-        !Ref CloudMartAuthorizer
+      AuthorizerId: !Ref CloudMartAuthorizer
 
       Integration:
-        Type: MOCK
 
-        RequestTemplates:
-          application/json: |
-            {
-              "statusCode": 401
-            }
+        Type: AWS_PROXY
 
+        IntegrationHttpMethod: POST
+
+        Uri:
+
+          Fn::Sub:
+
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+
+            - LambdaArn:
+                !GetAtt OrderLambda.Arn
 
   # ==============================================================
   # API GATEWAY -> AUTHORIZER PERMISSION

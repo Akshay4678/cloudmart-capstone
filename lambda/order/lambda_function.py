@@ -2056,79 +2056,348 @@ def cancel_order(
 # ================================================================
 # LAMBDA HANDLER
 
+# ================================================================
+# LAMBDA HANDLER
+# ================================================================
+
 def lambda_handler(event, context):
+
     if not isinstance(event, dict):
         event = {}
+
+    # ============================================================
+    # INITIALIZE DATABASE SCHEMA
+    # ============================================================
+
     if event.get("action") == "initialize_schema":
         return initialize_schema()
-    method = str(event.get("httpMethod") or "").upper()
-    path = str(event.get("path") or "")
-    path_parameters = event.get("pathParameters") or {}
-    query_parameters = event.get("queryStringParameters") or {}
-    order_id = path_parameters.get("orderId")
-    put_metric("OrderRequests")
-    role, authenticated_customer_id = get_authorizer_context(event)
-    # POST /orders: only USER credentials can place an order.
-    # An ADMIN token cannot be used to place an order.
-    if method == "POST" and not order_id:
+
+    # ============================================================
+    # API GATEWAY INFORMATION
+    # ============================================================
+
+    method = str(
+        event.get("httpMethod") or ""
+    ).upper()
+
+    path = str(
+        event.get("path") or ""
+    )
+
+    path_parameters = (
+        event.get("pathParameters") or {}
+    )
+
+    query_parameters = (
+        event.get("queryStringParameters") or {}
+    )
+
+    order_id = path_parameters.get(
+        "orderId"
+    )
+
+    # ============================================================
+    # METRICS
+    # ============================================================
+
+    put_metric(
+        "OrderRequests"
+    )
+
+    # ============================================================
+    # AUTHORIZER INFORMATION
+    # ============================================================
+
+    role, authenticated_customer_id = (
+        get_authorizer_context(event)
+    )
+
+    # ============================================================
+    # POST /orders
+    #
+    # API STACK:
+    # POST /orders
+    #
+    # USER ONLY
+    #
+    # ADMIN cannot place orders.
+    # USER can place an order only for their own customer account.
+    # ============================================================
+
+    if (
+        method == "POST"
+        and not order_id
+    ):
+
         if role != "USER":
+
             return response(
                 403,
-                {"message": "Only customer credentials can place orders"},
+                {
+                    "message": (
+                        "Only customer credentials "
+                        "can place orders"
+                    )
+                },
             )
+
         if not authenticated_customer_id:
+
             return response(
                 403,
-                {"message": "Customer identity was not found"},
+                {
+                    "message": (
+                        "Customer identity "
+                        "was not found"
+                    )
+                },
             )
+
         try:
-            body = parse_request_body(event)
-            customer_id = str(body.get("customer_id") or "").strip()
+
+            body = parse_request_body(
+                event
+            )
+
+            customer_id = str(
+                body.get("customer_id") or ""
+            ).strip()
+
             if not customer_id:
+
                 return response(
                     400,
-                    {"message": "customer_id is required"},
+                    {
+                        "message": (
+                            "customer_id is required"
+                        )
+                    },
                 )
-            if customer_id != authenticated_customer_id:
+
+            if (
+                customer_id
+                != authenticated_customer_id
+            ):
+
                 return response(
                     403,
-                    {"message": "You can only place orders for your own customer account"},
+                    {
+                        "message": (
+                            "You can only place "
+                            "orders for your own "
+                            "customer account"
+                        )
+                    },
                 )
-            return create_order(body, authenticated_customer_id)
+
+            return create_order(
+                body,
+                authenticated_customer_id
+            )
+
         except ValueError as exc:
-            return response(400, {"message": str(exc)})
-    # GET /orders/{orderId}
-    if method == "GET" and order_id:
-        return get_order(order_id)
-    # GET /orders
-    # ADMIN -> all orders
-    # USER  -> only the authenticated customer's orders
-    if method == "GET" and not order_id:
-        if query_parameters.get("customer_id"):
+
             return response(
                 400,
-                {"message": "customer_id query parameter is not supported. Use GET /orders."},
+                {
+                    "message": str(exc)
+                },
             )
+
+    # ============================================================
+    # GET /orders/{orderId}
+    #
+    # API STACK:
+    # GET /orders/{orderId}
+    # ============================================================
+
+    if (
+        method == "GET"
+        and order_id
+    ):
+
+        return get_order(
+            order_id
+        )
+
+    # ============================================================
+    # GET /orders
+    #
+    # API STACK:
+    # GET /orders
+    #
+    # ADMIN -> ALL ORDERS
+    # USER  -> ONLY THEIR OWN ORDERS
+    #
+    # GET /orders?customer_id=... is NOT supported.
+    # ============================================================
+
+    if (
+        method == "GET"
+        and not order_id
+    ):
+
+        if query_parameters.get(
+            "customer_id"
+        ):
+
+            return response(
+                400,
+                {
+                    "message": (
+                        "customer_id query "
+                        "parameter is not supported. "
+                        "Use GET /orders."
+                    )
+                },
+            )
+
+        # --------------------------------------------------------
+        # ADMIN -> ALL ORDERS
+        # --------------------------------------------------------
+
         if role == "ADMIN":
+
             return get_all_orders()
+
+        # --------------------------------------------------------
+        # USER -> ONLY OWN ORDERS
+        # --------------------------------------------------------
+
         if role == "USER":
+
             if not authenticated_customer_id:
+
                 return response(
                     403,
-                    {"message": "Customer identity was not found"},
+                    {
+                        "message": (
+                            "Customer identity "
+                            "was not found"
+                        )
+                    },
                 )
-            return get_customer_orders(authenticated_customer_id)
-        return response(403, {"message": "Invalid user role"})
-    # POST /orders/{orderId}/cancel
-    if method == "POST" and order_id and path.endswith("/cancel"):
-        performed_by = authenticated_customer_id or get_performed_by(event, {})
-        return cancel_order(order_id, performed_by)
+
+            return get_customer_orders(
+                authenticated_customer_id
+            )
+
+        return response(
+            403,
+            {
+                "message": "Invalid user role"
+            },
+        )
+
+    # ============================================================
+    # PATCH /orders/{orderId}
+    #
+    # API STACK:
+    # PATCH /orders/{orderId}
+    #
+    # PATCH = CANCEL ORDER
+    #
+    # ADMIN ONLY
+    #
+    # This directly calls the existing cancel_order()
+    # function.
+    #
+    # NO /cancel endpoint exists.
+    # NO request body is required.
+    # ============================================================
+
+    if (
+        method == "PATCH"
+        and order_id
+    ):
+
+        # --------------------------------------------------------
+        # ONLY ADMIN CAN CANCEL
+        # --------------------------------------------------------
+
+        if role != "ADMIN":
+
+            return response(
+                403,
+                {
+                    "message": (
+                        "Only ADMIN users "
+                        "can cancel orders"
+                    )
+                },
+            )
+
+        # --------------------------------------------------------
+        # WHO PERFORMED THE ACTION
+        # --------------------------------------------------------
+
+        performed_by = (
+            authenticated_customer_id
+            or get_performed_by(
+                event,
+                {}
+            )
+        )
+
+        # --------------------------------------------------------
+        # EXECUTE EXISTING CANCEL FUNCTION
+        # --------------------------------------------------------
+
+        return cancel_order(
+            order_id,
+            performed_by
+        )
+
+    # ============================================================
     # PUT /orders/{orderId}
-    if method == "PUT" and order_id:
+    #
+    # API STACK:
+    # PUT /orders/{orderId}
+    #
+    # Existing update functionality.
+    # ============================================================
+
+    if (
+        method == "PUT"
+        and order_id
+    ):
+
         try:
-            body = parse_request_body(event)
-            performed_by = authenticated_customer_id or get_performed_by(event, body)
-            return update_order(order_id, body, performed_by)
+
+            body = parse_request_body(
+                event
+            )
+
+            performed_by = (
+                authenticated_customer_id
+                or get_performed_by(
+                    event,
+                    body
+                )
+            )
+
+            return update_order(
+                order_id,
+                body,
+                performed_by
+            )
+
         except ValueError as exc:
-            return response(400, {"message": str(exc)})
-    return response(404, {"message": "Route not found"})
+
+            return response(
+                400,
+                {
+                    "message": str(exc)
+                },
+            )
+
+    # ============================================================
+    # UNKNOWN / UNSUPPORTED ROUTE
+    # ============================================================
+
+    return response(
+        404,
+        {
+            "message": "Route not found"
+        },
+    )
